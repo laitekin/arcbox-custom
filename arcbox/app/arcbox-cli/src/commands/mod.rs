@@ -254,7 +254,12 @@ impl Cli {
                 | Commands::Docker(docker::DockerCommands::Setup)
                 | Commands::Top(_)
                 | Commands::Disk(disk::DiskCommands::Usage)
-                | Commands::Machine(machine::MachineCommands::Inspect(_))
+                | Commands::Machine(
+                    machine::MachineCommands::Inspect(_)
+                    | machine::MachineCommands::Image(
+                        machine::ImageCommands::Ls | machine::ImageCommands::Remote,
+                    ),
+                )
                 | Commands::Sandbox(sandbox::SandboxCommands::Inspect(_))
                 | Commands::Network(_)
                 | Commands::Doctor => true,

@@ -27,6 +27,13 @@ pub struct ExportArgs {
     pub name: String,
     /// Where to write the archive (default: ./<name>.tar.zst)
     pub path: Option<PathBuf>,
+    /// Carry the machine's image in the archive (default: only for images
+    /// imported on this Mac, which no other Mac can download)
+    #[arg(long, conflicts_with = "no_include_image")]
+    pub include_image: bool,
+    /// Never carry the image, even an imported one
+    #[arg(long)]
+    pub no_include_image: bool,
 }
 
 #[derive(Args)]
@@ -94,6 +101,13 @@ pub async fn execute_export(args: ExportArgs) -> Result<()> {
         .export(ExportMachineRequest {
             id: args.name.clone(),
             path: path.to_string_lossy().into_owned(),
+            include_image: if args.include_image {
+                Some(true)
+            } else if args.no_include_image {
+                Some(false)
+            } else {
+                None
+            },
             ..Default::default()
         })
         .await
@@ -216,7 +230,7 @@ fn archive_label(path: &Path) -> String {
     )
 }
 
-fn human_size(bytes: u64) -> String {
+pub(super) fn human_size(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["B", "KiB", "MiB", "GiB"];
     let mut size = bytes as f64;
     let mut unit = 0;

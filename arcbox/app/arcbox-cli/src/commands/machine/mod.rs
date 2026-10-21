@@ -1,5 +1,7 @@
 //! Machine management commands.
 
+mod image;
+pub use image::ImageCommands;
 mod lifecycle;
 mod target;
 
@@ -100,6 +102,9 @@ pub enum MachineCommands {
     Resize(lifecycle::ResizeArgs),
     /// Show or set the machine `exec` and `ssh` use when given no name
     Default(lifecycle::DefaultArgs),
+    /// Manage machine images (list, import your own rootfs, remove)
+    #[command(subcommand)]
+    Image(image::ImageCommands),
 }
 
 #[derive(Args)]
@@ -116,8 +121,12 @@ pub struct CreateArgs {
     #[arg(long, default_value = "50")]
     pub disk: u64,
     /// Distribution (ubuntu, alpine, etc.)
-    #[arg(long)]
+    #[arg(long, conflicts_with = "image")]
     pub distro: Option<String>,
+    /// A local machine image to boot (name or name@version), e.g. one
+    /// added with `abctl machine image import`
+    #[arg(long)]
+    pub image: Option<String>,
     /// Distribution version
     #[arg(long, name = "distro-version")]
     pub distro_version: Option<String>,
@@ -215,7 +224,7 @@ pub struct ExecArgs {
 }
 
 /// Executes the machine command.
-pub async fn execute(cmd: MachineCommands) -> Result<()> {
+pub async fn execute(cmd: MachineCommands, format: super::OutputFormat) -> Result<()> {
     match cmd {
         MachineCommands::Create(args) => execute_create(args).await,
         MachineCommands::Start(args) => execute_start(args).await,
@@ -233,6 +242,7 @@ pub async fn execute(cmd: MachineCommands) -> Result<()> {
         MachineCommands::Import(args) => lifecycle::execute_import(args).await,
         MachineCommands::Resize(args) => lifecycle::execute_resize(args).await,
         MachineCommands::Default(args) => lifecycle::execute_default(args).await,
+        MachineCommands::Image(cmd) => image::execute(cmd, format).await,
     }
 }
 
@@ -258,6 +268,7 @@ async fn execute_create(args: CreateArgs) -> Result<()> {
             ssh_public_key: String::new(),
             kernel: args.kernel.clone().unwrap_or_default(),
             cmdline: args.cmdline.clone().unwrap_or_default(),
+            image: args.image.clone().unwrap_or_default(),
             ..Default::default()
         })
         .await

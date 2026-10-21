@@ -143,7 +143,7 @@ fn run(cli: Cli) -> Result<()> {
 
     let result = runtime.block_on(async {
         match cli.command {
-            Commands::Machine(cmd) => commands::machine::execute(cmd).await,
+            Commands::Machine(cmd) => commands::machine::execute(cmd, cli.format).await,
             #[cfg(target_os = "macos")]
             Commands::Macos(cmd) => commands::macos::execute(cmd).await,
             Commands::Migrate(cmd) => commands::migrate::execute(cmd).await,
