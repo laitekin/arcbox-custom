@@ -23,6 +23,11 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
+backhand = { version = "0.25.5", default-features = false, features = ["xz"] }
+tar = "0.4.46"
+zstd = "0.13.3"
+flate2 = "1"
+liblzma = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

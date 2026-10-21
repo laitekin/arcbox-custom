@@ -213,6 +213,12 @@ impl MachineImageManager {
         }
     }
 
+    /// The registry directory (`<data_dir>/machine-images`).
+    #[must_use]
+    pub fn images_dir(&self) -> &Path {
+        &self.images_dir
+    }
+
     /// Returns a locally registered image, if fully present.
     ///
     /// # Errors

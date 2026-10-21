@@ -32,6 +32,18 @@ impl ImageError {
         Self::Common(CommonError::not_found(resource))
     }
 
+    /// Creates a new already-exists error.
+    #[must_use]
+    pub fn already_exists(resource: impl Into<String>) -> Self {
+        Self::Common(CommonError::already_exists(resource))
+    }
+
+    /// Creates a new invalid-state error.
+    #[must_use]
+    pub fn invalid_state(msg: impl Into<String>) -> Self {
+        Self::Common(CommonError::invalid_state(msg))
+    }
+
     /// Creates a new published-image registry error.
     #[must_use]
     pub fn image(msg: impl Into<String>) -> Self {
