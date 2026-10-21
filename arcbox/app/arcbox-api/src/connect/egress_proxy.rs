@@ -276,15 +276,46 @@ fn step_to_proto(step: &Step) -> pb::EgressProxyTestStep {
     }
 }
 
-/// Re-probes the Mac's proxy settings every `interval` under the `system`
-/// policy, so a change in System Settings reaches new flows without a
-/// daemon restart. Runs until the task is dropped.
+/// How often to re-probe anyway while change notifications are watched: a
+/// safety net for a missed notification.
+const WATCHED_POLL: Duration = Duration::from_secs(300);
+
+/// Notifications arrive in bursts (one per service as macOS re-applies its
+/// settings); settle before re-probing once.
+const SETTLE: Duration = Duration::from_millis(500);
+
+/// Follows changes to the Mac's proxy settings under the `system` policy.
+///
+/// A change in System Settings reaches new flows without a daemon restart.
+/// On macOS a dynamic-store notification triggers the re-probe and polling
+/// drops to a slow safety net; elsewhere it re-probes every `interval`.
+/// Runs until the task is dropped.
 pub async fn follow_system_proxy(early_runtime: SharedRuntime, interval: Duration) {
+    let (wake_tx, mut wake_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let interval = match arcbox_core::network_proxy::watch_system_proxy(move || {
+        let _ = wake_tx.try_send(());
+    }) {
+        Ok(()) => {
+            tracing::debug!("watching the Mac's proxy settings for changes");
+            interval.max(WATCHED_POLL)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::Unsupported => interval,
+        Err(e) => {
+            tracing::warn!(error = %e, "cannot watch the Mac's proxy settings; polling instead");
+            interval
+        }
+    };
     let mut ticker = tokio::time::interval(interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     ticker.tick().await;
     loop {
-        ticker.tick().await;
+        tokio::select! {
+            _ = ticker.tick() => {}
+            Some(()) = wake_rx.recv() => {
+                tokio::time::sleep(SETTLE).await;
+                while wake_rx.try_recv().is_ok() {}
+            }
+        }
         let Ok(runtime) = early_runtime.ready() else {
             continue;
         };

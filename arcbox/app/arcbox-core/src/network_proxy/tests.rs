@@ -236,3 +236,10 @@ fn drafts_resolve_without_storing_or_publishing() {
     assert!(store.get(ACCOUNT).unwrap().is_none());
     assert_eq!(proxy.state().load().revision, 0);
 }
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn proxy_change_notifications_are_unsupported_off_macos() {
+    let error = super::watch_system_proxy(|| ()).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+}

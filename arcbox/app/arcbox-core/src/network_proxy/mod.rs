@@ -8,6 +8,8 @@
 //! already open keep the transport they started with.
 
 pub mod credentials;
+#[cfg(target_os = "macos")]
+mod system_watch;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -420,6 +422,29 @@ pub fn describe(environment: Option<&ProxyEnvironment>) -> Vec<String> {
         out.push(fmt("http", p));
     }
     out
+}
+
+/// Calls `on_change` from a background thread after each change to the
+/// Mac's proxy settings, for the life of the process, so the `system`
+/// policy can re-probe at once instead of on its next poll.
+///
+/// # Errors
+///
+/// Returns an error when the watch cannot be registered, and always off
+/// macOS (`Unsupported`); callers keep polling then.
+pub fn watch_system_proxy(on_change: impl Fn() + Send + 'static) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        system_watch::watch(on_change)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        drop(on_change);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "proxy change notifications need macOS",
+        ))
+    }
 }
 
 #[cfg(test)]

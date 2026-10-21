@@ -41,7 +41,8 @@ pub async fn start_control_plane(ctx: &DaemonContext) -> Result<ControlPlane> {
 }
 
 /// How often the Mac's proxy settings are re-probed under the `system`
-/// policy.
+/// policy where change notifications are unavailable (on macOS they drive
+/// it and polling slows to a safety net).
 const SYSTEM_PROXY_POLL: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Starts the gRPC server with all services.

@@ -59,6 +59,8 @@ arcbox-route.workspace = true
 arcbox-vz.workspace = true
 ifbridge = { workspace = true }
 security-framework = "3.7"
+# Already in the tree through reqwest; used to watch the proxy settings.
+system-configuration = "0.7.0"
 
 [dev-dependencies]
 figment = { workspace = true, features = ["test"] }
