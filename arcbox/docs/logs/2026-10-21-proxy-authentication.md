@@ -72,12 +72,45 @@ CONNECT; loopback and the bypass list direct).
 | Linux machine programs | machine VMs | Yes (same `ProxyState`) | `proxy_coverage` e2e machine row (not yet run) |
 | Kubernetes pods | k3s containerd in the System VM | Yes (same datapath) | `proxy_coverage` e2e pod row (not yet run) |
 | Sandbox microVMs | nested in the System VM | Expected yes (their egress leaves through the System VM) | not yet verified |
-| Built-in DNS (gateway) | host DNS service | Answered on the host; names reach the proxy with the flow | by design |
+| Built-in DNS (gateway) | daemon (host) | **No**: queries go from the host straight to its resolvers over UDP 53 (see "Host-side DNS" below); the flow that follows reaches the proxy by name | `virt/arcbox-net/src/darwin/datapath_loop/intercept.rs` (code reading) |
 | ICMP echo | any VM | No proxy can carry it: direct, or dropped with `icmp = "block"` | `arcbox-proxy` egress |
 | Machine images, image index, Docker CLI tools, macOS IPSW | daemon (host) | Yes | `arcbox-asset` `http_proxy`; `proxy_coverage` e2e (the machine row's image pull) |
 | Boot assets (kernel, rootfs) | daemon via the external `arcbox-boot` crate | No: it builds its own clients (macOS system proxy / environment only) | upstream change needed |
 | Desktop distro catalog | ArcBox.app (URLSession) | macOS system proxy, not ArcBox's | moves to the daemon with the image work (#3) |
 | Port forwards, `host.docker.internal` | Mac ↔ VM | No, by design | — |
+
+## Host-side DNS (R6)
+
+Read on 2026-10-21 (`datapath_loop/intercept.rs` `handle_dns`,
+`forward_dns_async`; `splicetcp` `tcp_bridge/handshake.rs`;
+`arcbox-proxy` `egress/udp.rs`):
+
+- A guest query to the gateway (`*.arcbox.local` and other host mappings
+  aside, which are answered in process) is sent by the daemon over a plain
+  UDP socket, never the proxy, to the host's upstream resolvers
+  (`/etc/resolv.conf`, fake-IP VPN ranges filtered out).
+  The proxy setting is not consulted, in any mode.
+- The A records are recorded in the IP → domain log; TCP and UDP flows to
+  those IPs then reach the proxy *by name* (SOCKS5 domain / CONNECT host), so
+  the proxy re-resolves and bypass rules match names.
+- So in proxy mode the local network sees every name the guest looks up,
+  and where only the proxy may resolve (direct DNS blocked) guest lookups
+  fail. Queries the guest sends to a public resolver itself (`nslookup x
+  1.1.1.1`) are UDP flows and do go through a SOCKS5 proxy.
+
+Not changed yet; the options, for a decision:
+
+1. **Synthetic answers in proxy mode**: answer A queries for names the proxy
+   will carry with addresses from a private pool (`198.18.0.0/15`), recorded
+   in the domain log; no host query. Needs the direct paths fixed first: an
+   excluded name, `udp = "direct"` and ICMP to a pool address must resolve
+   the name on the host and use the real address, and log eviction must not
+   strand a live flow.
+2. **DNS over the proxy**: forward the query over SOCKS5 UDP ASSOCIATE (or
+   DNS-over-TCP through CONNECT) to a resolver the proxy can reach. Breaks
+   split DNS when the host's resolver is a LAN/VPN address the proxy cannot
+   reach, so it would need its own resolver setting.
+3. Keep host resolution (today), documented as a known gap.
 
 ## Evidence
 
