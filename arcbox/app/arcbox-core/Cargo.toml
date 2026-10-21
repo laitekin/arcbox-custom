@@ -51,11 +51,13 @@ arcbox-atomic-file.workspace = true
 toml_edit = "0.25.15"
 arcbox-local-ca.workspace = true
 arcbox-storage.workspace = true
+zeroize = "1.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 arcbox-route.workspace = true
 arcbox-vz.workspace = true
 ifbridge = { workspace = true }
+security-framework = "3.7"
 
 [dev-dependencies]
 figment = { workspace = true, features = ["test"] }

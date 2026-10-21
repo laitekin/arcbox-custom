@@ -9,7 +9,9 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+arc-swap = "1.7"
 percent-encoding = "2.3"
+serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 tracing = { workspace = true }
 zeroize = "1.8"

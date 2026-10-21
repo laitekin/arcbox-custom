@@ -5,6 +5,20 @@ use super::{
 use std::net::Ipv4Addr;
 
 impl TcpBridge {
+    /// Installs a policy source shared with all current and future VMs.
+    pub fn set_proxy_state(
+        &mut self,
+        dns_log: arcbox_fakeip::dns_log::DnsResolutionLog,
+        state: arcbox_fakeip::proxy_state::ProxyState,
+    ) {
+        self.dns_log = Some(dns_log);
+        self.egress = std::sync::Arc::new(crate::egress::DefaultEgress::with_proxy_state(
+            self.gateway_ip,
+            state,
+            SYN_GATE_CONNECT_TIMEOUT_SECS,
+        ));
+    }
+
     /// Configures proxy-aware connection support.
     ///
     /// When set, `handle_outbound_syn` uses the DNS log to resolve destination

@@ -87,8 +87,20 @@ impl HostEgress {
     /// and existing callers are unaffected. HTTP proxies can't carry UDP, so only
     /// a SOCKS proxy engages this.
     pub fn set_proxy_awareness(&mut self, dns_log: DnsResolutionLog, proxy_env: ProxyEnvironment) {
+        self.set_proxy_state(
+            dns_log,
+            arcbox_fakeip::proxy_state::ProxyState::new(Some(proxy_env)),
+        );
+    }
+
+    /// Shares live policy with the TCP path and all running VMs.
+    pub fn set_proxy_state(
+        &mut self,
+        dns_log: DnsResolutionLog,
+        state: arcbox_fakeip::proxy_state::ProxyState,
+    ) {
         self.udp.dns_log = Some(dns_log);
-        self.udp.proxy_env = Some(proxy_env);
+        self.udp.proxy_state = state;
     }
 
     /// Dispatches an outbound IPv4 frame to the appropriate protocol proxy.
@@ -109,7 +121,11 @@ impl HostEgress {
         let protocol = frame[ETH_HEADER_LEN + 9];
         let cancel = self.cancel.clone();
         match protocol {
-            1 => self.icmp.proxy_icmp(frame, guest_mac, cancel),
+            1 if self.udp.proxy_state.load().icmp
+                == arcbox_fakeip::proxy_state::IcmpPolicy::Direct =>
+            {
+                self.icmp.proxy_icmp(frame, guest_mac, cancel);
+            }
             17 => self.udp.proxy_udp(frame, guest_mac, cancel),
             _ => {
                 tracing::trace!("Host egress: dropping protocol {}", protocol);

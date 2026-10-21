@@ -12,6 +12,7 @@
 use std::net::Ipv4Addr;
 
 use arcbox_fakeip::proxy_detect::{ProxyConfig, ProxyEnvironment};
+use arcbox_fakeip::proxy_state::ProxyState;
 use tokio::sync::oneshot;
 
 /// The flow a SYN opened — everything a resolver needs to decide egress.
@@ -70,7 +71,7 @@ pub trait FlowObserver: Send + Sync {
 /// gateway IP to loopback, and dials with a connect timeout.
 pub struct DefaultEgress {
     gateway_ip: Ipv4Addr,
-    proxy_env: Option<ProxyEnvironment>,
+    proxy_state: ProxyState,
     connect_timeout_secs: u64,
 }
 
@@ -82,7 +83,20 @@ impl DefaultEgress {
     ) -> Self {
         Self {
             gateway_ip,
-            proxy_env,
+            proxy_state: ProxyState::new(proxy_env),
+            connect_timeout_secs,
+        }
+    }
+
+    #[must_use]
+    pub fn with_proxy_state(
+        gateway_ip: Ipv4Addr,
+        proxy_state: ProxyState,
+        connect_timeout_secs: u64,
+    ) -> Self {
+        Self {
+            gateway_ip,
+            proxy_state,
             connect_timeout_secs,
         }
     }
@@ -105,7 +119,8 @@ impl DefaultEgress {
             return None;
         }
 
-        let env = self.proxy_env.as_ref()?;
+        let snapshot = self.proxy_state.load();
+        let env = snapshot.environment.as_ref()?;
 
         // No proxy configured → always direct.
         if !env.has_usable_proxy() {

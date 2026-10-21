@@ -14,7 +14,10 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use arcbox_fakeip::dns_log::DnsResolutionLog;
-use arcbox_fakeip::proxy_detect::{ProxyConfig, ProxyEnvironment};
+use arcbox_fakeip::proxy_detect::ProxyConfig;
+#[cfg(test)]
+use arcbox_fakeip::proxy_detect::ProxyEnvironment;
+use arcbox_fakeip::proxy_state::{ProxyState, UdpPolicy};
 use arcbox_packet::ethernet::{ETH_HEADER_LEN, build_udp_ip_ethernet};
 
 use crate::socks5::Socks5UdpAssociation;
@@ -114,7 +117,7 @@ pub(super) struct UdpProxy {
     pub(super) dns_log: Option<DnsResolutionLog>,
     /// Detected host proxy environment; a configured SOCKS proxy routes
     /// non-gateway, non-bypassed flows through it. `None` = always direct.
-    pub(super) proxy_env: Option<ProxyEnvironment>,
+    pub(super) proxy_state: ProxyState,
 }
 
 impl UdpProxy {
@@ -131,7 +134,7 @@ impl UdpProxy {
             gateway_ip,
             mtu,
             dns_log: None,
-            proxy_env: None,
+            proxy_state: ProxyState::default(),
         }
     }
 
@@ -192,14 +195,6 @@ impl UdpProxy {
         // New flow: create a channel and spawn a task that owns the socket.
         let (payload_tx, mut payload_rx) = mpsc::channel::<Vec<u8>>(64);
 
-        self.flows.insert(
-            flow_key,
-            UdpFlow {
-                last_active: Instant::now(),
-                payload_tx,
-            },
-        );
-
         let reply_tx = self.reply_tx.clone();
         let gateway_mac = self.gateway_mac;
         let mtu = self.mtu;
@@ -221,13 +216,34 @@ impl UdpProxy {
         // configured (HTTP can't carry UDP), the destination isn't gateway-local
         // (host services stay direct), and it isn't on the bypass list. Reuses the
         // same `should_bypass` policy the TCP egress uses.
-        let socks = self.proxy_env.as_ref().and_then(|env| {
-            if dst_ip == self.gateway_ip || env.should_bypass(&host) {
-                return None;
-            }
-            env.socks_proxy.as_ref().map(|p| (p.clone(), host.clone()))
-        });
+        let snapshot = self.proxy_state.load();
+        let environment = snapshot.environment.as_ref();
+        let bypass =
+            dst_ip == self.gateway_ip || environment.is_some_and(|env| env.should_bypass(&host));
+        if !bypass
+            && (snapshot.udp == UdpPolicy::Block
+                || (snapshot.udp == UdpPolicy::Proxy
+                    && environment
+                        .is_some_and(|env| env.has_usable_proxy() && env.socks_proxy.is_none())))
+        {
+            return;
+        }
+        let socks = environment
+            .filter(|_| snapshot.udp == UdpPolicy::Proxy)
+            .and_then(|env| {
+                if dst_ip == self.gateway_ip || env.should_bypass(&host) {
+                    return None;
+                }
+                env.socks_proxy.as_ref().map(|p| (p.clone(), host.clone()))
+            });
 
+        self.flows.insert(
+            flow_key,
+            UdpFlow {
+                last_active: Instant::now(),
+                payload_tx,
+            },
+        );
         tokio::spawn(async move {
             // Race the whole flow — including the SOCKS handshake, which can hang
             // on a slow proxy — against cancellation so a stalled setup never
@@ -369,6 +385,57 @@ mod tests {
         assert_eq!(proxy.flows.len(), 0, "Stale flow should be cleaned up");
     }
 
+    #[tokio::test]
+    async fn http_proxy_blocks_udp_until_direct_is_explicitly_selected() {
+        use arcbox_fakeip::proxy_state::ProxySnapshot;
+
+        let target = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (tx, _rx) = mpsc::channel(16);
+        let mut proxy = UdpProxy::new(tx, [2, 0, 0, 0, 0, 1], Ipv4Addr::new(10, 0, 2, 1), 1500);
+        let snapshot = ProxySnapshot {
+            environment: Some(ProxyEnvironment {
+                http_proxy: Some(ProxyConfig {
+                    host: "127.0.0.1".into(),
+                    port: 9,
+                    auth: None,
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        proxy.proxy_state.store(snapshot.clone());
+        let frame = make_udp_frame(
+            Ipv4Addr::new(10, 0, 2, 2),
+            Ipv4Addr::LOCALHOST,
+            49152,
+            target.local_addr().unwrap().port(),
+            b"payload",
+        );
+        let cancel = CancellationToken::new();
+        proxy.proxy_udp(&frame, [2, 0, 0, 0, 0, 2], cancel.clone());
+        let mut buffer = [0; 64];
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                target.recv(&mut buffer)
+            )
+            .await
+            .is_err()
+        );
+        proxy.proxy_state.store(ProxySnapshot {
+            udp: UdpPolicy::Direct,
+            ..snapshot
+        });
+        proxy.proxy_udp(&frame, [2, 0, 0, 0, 0, 2], cancel.clone());
+        let size =
+            tokio::time::timeout(std::time::Duration::from_secs(2), target.recv(&mut buffer))
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(&buffer[..size], b"payload");
+        cancel.cancel();
+    }
+
     /// Verifies that a UDP packet destined for the gateway IP is delivered
     /// to a loopback listener via the gateway→localhost translation.
     #[tokio::test]
@@ -447,14 +514,14 @@ mod tests {
         let gw_mac = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
         let mut proxy = UdpProxy::new(reply_tx, gw_mac, gw_ip, 1500);
         let (phost, pport) = (proxy_addr.ip().to_string(), proxy_addr.port());
-        proxy.proxy_env = Some(ProxyEnvironment {
+        proxy.proxy_state = ProxyState::new(Some(ProxyEnvironment {
             socks_proxy: Some(arcbox_fakeip::proxy_detect::ProxyConfig {
                 auth: None,
                 host: phost,
                 port: pport,
             }),
             ..Default::default()
-        });
+        }));
 
         // Non-gateway destination → routed through the SOCKS5 relay.
         let payload = b"proxied-udp";
