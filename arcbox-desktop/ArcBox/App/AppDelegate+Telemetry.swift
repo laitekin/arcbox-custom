@@ -1,0 +1,136 @@
+import ArcBoxClient
+import Foundation
+import OSLog
+import PostHog
+@preconcurrency import Sentry
+
+extension AppDelegate {
+    /// Initialize Sentry crash reporting if a DSN is configured.
+    /// DSN is read from Info.plist (injected via SENTRY_DSN build setting).
+    /// No-ops gracefully when DSN is empty or placeholder.
+    static func initSentry() {
+        guard let dsn = Bundle.main.object(forInfoDictionaryKey: "SentryDSN") as? String,
+            !dsn.isEmpty, dsn != "YOUR_SENTRY_DSN_HERE", dsn != "$(SENTRY_DSN)"
+        else {
+            Log.startup.info("Sentry DSN not configured, crash reporting disabled")
+            return
+        }
+
+        SentrySDK.start { options in
+            options.dsn = dsn
+            options.enableAutoSessionTracking = true
+            options.enableCrashHandler = true
+            options.enableAutoPerformanceTracing = true
+            options.tracesSampleRate = 0.2
+            options.beforeSend = { event in
+                // Scrub PII: remove user paths from breadcrumbs and exceptions.
+                Self.scrubPII(event)
+                return event
+            }
+            #if DEBUG
+                options.debug = true
+                options.environment = "development"
+            #else
+                options.environment = "production"
+            #endif
+        }
+
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        SentrySDK.configureScope { scope in
+            scope.setTag(value: "app", key: "process_type")
+            scope.setTag(value: version, key: "app_version")
+        }
+
+        // ArcBoxClient emits breadcrumbs and errors into a sink it does not
+        // own; without this its diagnostics are dropped.
+        ClientDiagnostics.install(SentryDiagnosticsSink())
+
+        Log.startup.info("Sentry initialized")
+    }
+
+    /// Initialize PostHog product analytics if an API key is configured.
+    /// API key is read from Info.plist (injected via POSTHOG_API_KEY build setting).
+    /// No-ops gracefully when key is empty or placeholder.
+    ///
+    /// Telemetry collects anonymous events. Users opt out in Settings > Privacy.
+    static func initPostHog() {
+        guard let apiKey = Bundle.main.object(forInfoDictionaryKey: "PostHogAPIKey") as? String,
+            !apiKey.isEmpty, apiKey != "YOUR_POSTHOG_API_KEY_HERE", apiKey != "$(POSTHOG_API_KEY)"
+        else {
+            Log.startup.info("PostHog API key not configured, telemetry disabled")
+            return
+        }
+
+        let config = PostHogConfig(apiKey: apiKey, host: "https://us.i.posthog.com")
+        #if DEBUG
+            // Never send telemetry from development builds.
+            let optedOut = true
+        #else
+            let optedOut = !UserDefaults.standard.bool(forKey: "telemetryEnabled")
+        #endif
+        initPostHog(config: config, defaults: .standard, optedOut: optedOut)
+        Log.startup.info("PostHog initialized (opted \(optedOut ? "out" : "in", privacy: .public))")
+    }
+
+    @discardableResult
+    static func initPostHog(
+        config: PostHogConfig,
+        defaults: UserDefaults,
+        optedOut: Bool,
+        setup: (PostHogConfig) -> PostHogSDK = { config in
+            PostHogSDK.shared.setup(config)
+            return .shared
+        }
+    ) -> PostHogSDK {
+        // SDK setup can emit an update event immediately. Migrate the old identity first.
+        config.captureApplicationLifecycleEvents = !defaults.bool(forKey: Analytics.legacyIdentityKey)
+        config.captureScreenViews = false  // No-op on macOS, track manually
+        config.personProfiles = .never
+        config.optOut = optedOut
+        let sdk = setup(config)
+        if Analytics.resetLegacyIdentityIfNeeded(defaults: defaults, reset: sdk.reset) {
+            // optIn reinstalls lifecycle listeners; changing the config alone does not.
+            sdk.optOut()
+            config.captureApplicationLifecycleEvents = true
+        }
+        // `setup` lets the SDK's own persisted opt-out flag override
+        // `config.optOut`, so restate the app preference — Settings > Privacy
+        // is the only source of truth, and it defaults to opted in.
+        if optedOut {
+            sdk.optOut()
+        } else {
+            sdk.optIn()
+        }
+        sdk.register([
+            "arcbox_profile": Bundle.main.object(forInfoDictionaryKey: "ArcBoxProfile") as? String ?? "unknown",
+            "update_channel": defaults.string(forKey: "updateChannel") ?? "stable",
+        ])
+        return sdk
+    }
+
+    /// Strip home directory paths from Sentry events to avoid leaking usernames.
+    ///
+    /// Exceptions carry them as often as breadcrumbs do: the daemon reports its own
+    /// absolute paths, and those arrive here inside the error's description.
+    static func scrubPII(_ event: Event) {
+        let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
+        guard !homeDir.isEmpty else { return }
+        func scrubbed(_ text: String) -> String {
+            text.replacingOccurrences(of: homeDir, with: "~")
+        }
+        for breadcrumb in event.breadcrumbs ?? [] {
+            if let message = breadcrumb.message {
+                breadcrumb.message = scrubbed(message)
+            }
+        }
+        for exception in event.exceptions ?? [] {
+            if let value = exception.value {
+                exception.value = scrubbed(value)
+            }
+        }
+        // `SentryMessage.formatted` is read-only, so the message is replaced wholesale.
+        if let formatted = event.message?.formatted {
+            event.message = SentryMessage(formatted: scrubbed(formatted))
+        }
+    }
+}

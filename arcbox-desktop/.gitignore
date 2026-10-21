@@ -1,0 +1,49 @@
+# Xcode user-specific
+xcuserdata/
+*.xcuserdatad/
+
+# Xcode shared schemes (regenerated per-user)
+*.xcodeproj/xcshareddata/
+
+# Xcode workspace user settings
+*.xcworkspace/xcuserdata/
+
+# macOS
+.DS_Store
+
+# VSCode
+.vscode/
+
+# Claude AI
+.claude/
+.playwright-mcp/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Rust (xtask)
+/xtask/target/
+
+# Xcode build output
+build/
+
+# Local developer settings
+Local.xcconfig
+
+# Security-sensitive files
+*.p12
+*.p8
+*.key
+*.pem
+*.cer
+.env
+.env.*
+
+# Devenv
+.devenv*
+devenv.local.nix
+devenv.local.yaml
+
+# direnv
+.direnv

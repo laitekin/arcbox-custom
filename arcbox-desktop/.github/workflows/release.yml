@@ -1,0 +1,1101 @@
+name: Release DMG
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag (e.g. v1.0.0-alpha.1). Defaults to Version.xcconfig if empty.'
+        required: false
+        type: string
+      arcbox_ref:
+        description: 'arcbox repo ref to build Rust from (branch, tag, or SHA)'
+        required: false
+        default: 'master'
+        type: string
+
+concurrency:
+  group: release-dmg-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  SPARKLE_VERSION: '2.9.0'
+
+jobs:
+  build-dmg:
+    name: Build DMG (macOS ARM64)
+    runs-on: macos-26
+    timeout-minutes: 120
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+      channel: ${{ steps.resolve.outputs.channel }}
+      dmg: ${{ steps.dmg.outputs.dmg }}
+      ed_signature: ${{ steps.sparkle_sign.outputs.ed_signature }}
+      dmg_length: ${{ steps.sparkle_sign.outputs.dmg_length }}
+      build_number: ${{ steps.dmg.outputs.build_number }}
+
+    steps:
+      - name: Checkout arcbox-desktop
+        uses: actions/checkout@v6
+        with:
+          # Full history only needed for git rev-list --count (build number).
+          # Shallow+unshallow is slower than a single full fetch on this repo.
+          fetch-depth: 0
+
+      # The musl target is only needed to build arcbox's guest agents from
+      # source; a version tag downloads them prebuilt. Installing it here
+      # anyway costs seconds and matches pr.yml, rather than making the
+      # toolchain depend on which arcbox ref the build resolved.
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: aarch64-unknown-linux-musl
+
+      - name: Restore desktop Rust tooling cache
+        id: desktop_rust_cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            xtask/target/
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-xtask-${{ hashFiles('xtask/Cargo.lock') }}-${{ hashFiles('xtask/Cargo.toml', 'xtask/src/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-xtask-${{ hashFiles('xtask/Cargo.lock') }}-
+            ${{ runner.os }}-${{ runner.arch }}-cargo-xtask-
+
+      - name: Resolve build metadata
+        id: resolve
+        run: |
+          cargo xtask release resolve \
+            --arcbox-ref "${{ inputs.arcbox_ref }}" \
+            --tag "${{ inputs.tag }}"
+
+      - name: Extract curated release notes
+        run: |
+          cargo xtask release notes \
+            --version "${{ steps.resolve.outputs.version }}" \
+            --output release-notes.md
+
+      - name: Checkout arcbox
+        id: checkout_arcbox
+        uses: actions/checkout@v6
+        with:
+          repository: arcboxlabs/arcbox
+          path: arcbox-core
+          ref: ${{ steps.resolve.outputs.ref }}
+          # Only need sources for assets.lock / entitlements / Makefile fallback.
+          fetch-depth: 1
+
+      - name: Install dependencies
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          # macos runners sometimes ship untrusted third-party taps (e.g. aws/tap)
+          # which brew now warns about on every invocation. Drop them before install.
+          if brew tap | grep -qx 'aws/tap'; then
+            brew untap aws/tap || true
+          fi
+
+          # create-dmg: UDZO packaging (homebrew-core).
+          # musl-cross: aarch64-linux-musl-strip for bundled guest agents.
+          # Apple's /usr/bin/strip is not a reliable ELF stripper. The formula
+          # lives in a third-party tap, not homebrew-core — bare
+          # `brew install musl-cross` fails with "No available formula".
+          brew tap filosottile/musl-cross
+          # Homebrew 5.x requires explicit trust for non-official taps.
+          brew trust --tap filosottile/musl-cross 2>/dev/null \
+            || brew trust filosottile/musl-cross 2>/dev/null \
+            || true
+          brew install create-dmg filosottile/musl-cross/musl-cross
+          command -v create-dmg
+          command -v aarch64-linux-musl-strip
+
+      - name: Import signing certificate
+        uses: apple-actions/import-codesign-certs@v6
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - name: Store notarization credentials
+        env:
+          NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+        run: |
+          # printf, not echo: echo appends a newline, which invalidates the key.
+          mkdir -p -m 700 "$RUNNER_TEMP/private_keys"
+          printf '%s' "$NOTARY_KEY" > "$RUNNER_TEMP/private_keys/AuthKey.p8"
+          chmod 600 "$RUNNER_TEMP/private_keys/AuthKey.p8"
+          xcrun notarytool store-credentials "arcbox-notarize" \
+            --key "$RUNNER_TEMP/private_keys/AuthKey.p8" \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER"
+          rm "$RUNNER_TEMP/private_keys/AuthKey.p8"
+
+      - name: Decode provisioning profile
+        env:
+          APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+        run: |
+          if [ -z "$APPLE_PROVISIONING_PROFILE" ]; then
+            echo "::error::APPLE_PROVISIONING_PROFILE secret is not set"
+            exit 1
+          fi
+          echo "$APPLE_PROVISIONING_PROFILE" | base64 --decode > "$RUNNER_TEMP/embedded.provisionprofile"
+          echo "Decoded provisioning profile to $RUNNER_TEMP/embedded.provisionprofile"
+          security cms -D -i "$RUNNER_TEMP/embedded.provisionprofile" | head -5
+
+      # A version tag must resolve to arcbox binaries that already exist: this
+      # step fails the build rather than falling through to the source build,
+      # which is reachable only for branch and SHA refs. v1.34.5 spent its
+      # first run discovering that the hard way — arcbox v0.6.4 shipped with no
+      # assets, and the fallback died three minutes later on missing protoc.
+      - name: Download pre-built arcbox binaries
+        id: prebuilt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          REF="${{ steps.resolve.outputs.ref }}"
+
+          # Prebuilt binaries are only compatible with their exact release tag.
+          # Branches and SHAs must be built from the checked-out source below.
+          if [[ ! "$REF" =~ ^v[0-9] ]]; then
+            echo "Ref '$REF' is not a version tag; building arcbox from source"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          RELEASE_TAG="$REF"
+
+          echo "Downloading arcbox binaries from release $RELEASE_TAG..."
+
+          DOWNLOAD_DIR="$(mktemp -d)"
+          if ! gh release download "$RELEASE_TAG" \
+            --repo arcboxlabs/arcbox \
+            --dir "$DOWNLOAD_DIR" \
+            --skip-existing; then
+            echo "::error::arcboxlabs/arcbox $RELEASE_TAG has no downloadable assets." \
+              "Its own release build did not finish — repair that release, then re-run this one."
+            exit 1
+          fi
+
+          echo "Downloaded assets:"
+          ls -la "$DOWNLOAD_DIR"
+
+          # Extract tarballs to find binaries
+          for tarball in "$DOWNLOAD_DIR"/*.tar.gz; do
+            [ -f "$tarball" ] && tar xzf "$tarball" -C "$DOWNLOAD_DIR"
+          done
+
+          echo "Extracted contents:"
+          find "$DOWNLOAD_DIR" -type f | head -40
+
+          # Find host + guest binaries
+          mkdir -p arcbox-core/target/release
+          mkdir -p arcbox-core/target/aarch64-unknown-linux-musl/release
+          CLI_BIN=$(find "$DOWNLOAD_DIR" -type f -name "abctl" | head -1)
+          DAEMON_BIN=$(find "$DOWNLOAD_DIR" -type f -name "arcbox-daemon" | head -1)
+          HELPER_BIN=$(find "$DOWNLOAD_DIR" -type f -name "arcbox-helper" | head -1)
+          AGENT_BIN=$(find "$DOWNLOAD_DIR" -type f -name "arcbox-agent" | head -1)
+          VM_AGENT_BIN=$(find "$DOWNLOAD_DIR" -type f -name "vm-agent" | head -1)
+
+          if [ -z "$CLI_BIN" ] || [ -z "$DAEMON_BIN" ] || [ -z "$HELPER_BIN" ]; then
+            echo "::error::arcboxlabs/arcbox $RELEASE_TAG is missing host binaries" \
+              "(abctl, arcbox-daemon, arcbox-helper) among its release assets."
+            exit 1
+          fi
+
+          cp "$CLI_BIN" arcbox-core/target/release/abctl
+          cp "$DAEMON_BIN" arcbox-core/target/release/arcbox-daemon
+          cp "$HELPER_BIN" arcbox-core/target/release/arcbox-helper
+          chmod +x \
+            arcbox-core/target/release/abctl \
+            arcbox-core/target/release/arcbox-daemon \
+            arcbox-core/target/release/arcbox-helper
+
+          if [ -n "$AGENT_BIN" ]; then
+            cp "$AGENT_BIN" arcbox-core/target/aarch64-unknown-linux-musl/release/arcbox-agent
+            chmod +x arcbox-core/target/aarch64-unknown-linux-musl/release/arcbox-agent
+            echo "Found arcbox-agent in release assets"
+          else
+            echo "::warning::arcbox-agent not found in release assets"
+          fi
+
+          # Sandbox microVM init; absent from pre-vm-agent arcbox releases,
+          # in which case the DMG packager warns and ships without it.
+          if [ -n "$VM_AGENT_BIN" ]; then
+            cp "$VM_AGENT_BIN" arcbox-core/target/aarch64-unknown-linux-musl/release/vm-agent
+            chmod +x arcbox-core/target/aarch64-unknown-linux-musl/release/vm-agent
+            echo "Found vm-agent in release assets"
+          else
+            echo "::warning::vm-agent not found in release assets"
+          fi
+
+          # Prefer the bundle/ tree from the release tarball (source of truth for
+          # daemon entitlements). Fall back to loose entitlements.plist.
+          BUNDLE_DIR=$(find "$DOWNLOAD_DIR" -type d -name "bundle" | head -1)
+          if [ -n "$BUNDLE_DIR" ]; then
+            mkdir -p arcbox-core/bundle
+            cp -R "$BUNDLE_DIR"/. arcbox-core/bundle/
+            echo "Installed bundle/ from release assets"
+          fi
+
+          ENTITLEMENTS=$(find "$DOWNLOAD_DIR" -type f \( -name "arcbox.entitlements" -o -name "entitlements.plist" \) | head -1)
+          if [ -n "$ENTITLEMENTS" ]; then
+            mkdir -p arcbox-core/bundle arcbox-core/tests/resources
+            # Canonical path used by xtask packaging.
+            if [ ! -f arcbox-core/bundle/arcbox.entitlements ]; then
+              cp "$ENTITLEMENTS" arcbox-core/bundle/arcbox.entitlements
+            fi
+            cp "$ENTITLEMENTS" arcbox-core/tests/resources/entitlements.plist
+          fi
+
+          file arcbox-core/target/release/abctl arcbox-core/target/release/arcbox-daemon
+          echo "found=true" >> "$GITHUB_OUTPUT"
+
+      - name: Restore arcbox Rust build cache
+        id: arcbox_rust_cache
+        if: steps.prebuilt.outputs.found != 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            arcbox-core/target/
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-arcbox-release-${{ hashFiles('arcbox-core/**/Cargo.lock') }}-${{ steps.checkout_arcbox.outputs.commit }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-arcbox-release-${{ hashFiles('arcbox-core/**/Cargo.lock') }}-
+            ${{ runner.os }}-${{ runner.arch }}-cargo-arcbox-release-
+
+      # arcbox's rpc crates run protoc from build.rs, so the source build needs
+      # it — the same `brew install protobuf` arcbox's own release job runs.
+      # Conditional because the prebuilt path never invokes a build script.
+      - name: Install protobuf compiler
+        if: steps.prebuilt.outputs.found != 'true'
+        timeout-minutes: 5
+        run: |
+          brew install protobuf
+          command -v protoc
+
+      # arcbox splits this across two parallel jobs at 15 and 10 minutes, and
+      # the 15 is what timed out on v0.6.4's cold cache. Here the host
+      # binaries, the daemon signature, and the musl guest agents all come out
+      # of one serial step, so it gets both budgets and room to miss the cache.
+      - name: Build Rust binaries (release)
+        if: steps.prebuilt.outputs.found != 'true'
+        timeout-minutes: 45
+        run: |
+          make build-rust \
+            ARCBOX_DIR="${{ github.workspace }}/arcbox-core" \
+            REQUIRE_GUEST_AGENTS=1
+
+      - name: Save arcbox Rust build cache
+        if: steps.prebuilt.outputs.found != 'true' && steps.arcbox_rust_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            arcbox-core/target/
+          key: ${{ steps.arcbox_rust_cache.outputs.cache-primary-key }}
+
+      - name: Prefetch boot assets + Docker tools
+        run: make prefetch ARCBOX_DIR="${{ github.workspace }}/arcbox-core" SKIP_BUILD=1
+
+      - name: Download pstramp
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Read pinned version and checksum from assets.lock
+          PSTRAMP_VERSION=$(awk '/name = "pstramp"/,/^$/' "${{ github.workspace }}/arcbox-core/assets.lock" \
+            | grep '^version' | sed 's/.*= *"\(.*\)"/\1/')
+          PSTRAMP_SHA256=$(awk '/name = "pstramp"/,/^$/' "${{ github.workspace }}/arcbox-core/assets.lock" \
+            | grep 'arm64.sha256' | sed 's/.*= *"\(.*\)"/\1/')
+          echo "Downloading pstramp v${PSTRAMP_VERSION}"
+          mkdir -p pstramp/target/release
+          gh release download "v${PSTRAMP_VERSION}" \
+            --repo arcboxlabs/pstramp \
+            --pattern "pstramp-*-aarch64-apple-darwin" \
+            --output pstramp/target/release/pstramp
+          # Verify checksum
+          echo "${PSTRAMP_SHA256}  pstramp/target/release/pstramp" | shasum -a 256 -c -
+          chmod +x pstramp/target/release/pstramp
+          file pstramp/target/release/pstramp
+
+      - name: Symlink arcbox repo for Xcode build phase
+        run: ln -sfn "$GITHUB_WORKSPACE/arcbox-core" ../arcbox
+
+      - name: Create Local.xcconfig
+        run: |
+          # Telemetry/Sparkle keys are injected into Info.plist at package time
+          # by `cargo xtask macos dmg` (plutil), not via INFOPLIST_KEY_ build
+          # settings — those silently drop custom keys. This file only supplies
+          # the project base configuration.
+          cat > Local.xcconfig <<'XCEOF'
+          #include "Version.xcconfig"
+          XCEOF
+
+      - name: Trust SwiftPM plugins
+        run: defaults write com.apple.dt.Xcode IDESkipPackagePluginFingerprintValidatation -bool YES
+
+      - name: Record build environment
+        id: build_environment
+        run: |
+          XCODE_CACHE_KEY=$(xcodebuild -version | awk 'NR == 1 { version = $2 } NR == 2 { build = $3 } END { print version "-" build }')
+          echo "xcode_cache_key=$XCODE_CACHE_KEY" >> "$GITHUB_OUTPUT"
+          echo "=== Build environment ==="
+          echo "Runner architecture: $(uname -m)"
+          echo "CPU: $(sysctl -n machdep.cpu.brand_string)"
+          echo "Logical CPUs: $(sysctl -n hw.logicalcpu)"
+          echo "Memory: $(sysctl -n hw.memsize) bytes"
+          xcodebuild -version
+          swiftc --version
+          df -h "$GITHUB_WORKSPACE"
+
+      - name: Restore Swift package cache
+        id: swift_packages_cache
+        uses: actions/cache/restore@v6
+        with:
+          path: .build/SourcePackages/
+          key: ${{ runner.os }}-${{ runner.arch }}-swiftpm-${{ hashFiles('ArcBox.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/**/Package.resolved', 'Packages/**/Package.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-swiftpm-
+
+      - name: Restore Xcode build cache
+        id: xcode_build_cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            .build/DerivedData/Build/
+            .build/DerivedData/ModuleCache.noindex/
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.build_environment.outputs.xcode_cache_key }}-swift-${{ hashFiles('ArcBox.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/**/Package.resolved', 'Packages/**/Package.swift') }}-${{ hashFiles('ArcBox.xcodeproj/project.pbxproj') }}-${{ hashFiles('ArcBox/**', 'ArcBoxTests/**', 'Packages/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.build_environment.outputs.xcode_cache_key }}-swift-${{ hashFiles('ArcBox.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/**/Package.resolved', 'Packages/**/Package.swift') }}-${{ hashFiles('ArcBox.xcodeproj/project.pbxproj') }}-
+            ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.build_environment.outputs.xcode_cache_key }}-swift-${{ hashFiles('ArcBox.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/**/Package.resolved', 'Packages/**/Package.swift') }}-
+
+      - name: Build DMG
+        id: dmg
+        env:
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          /usr/bin/time -lp make dmg-release \
+            ARCBOX_DIR="${{ github.workspace }}/arcbox-core" \
+            SKIP_BUILD=1 \
+            SKIP_RESOURCES=1 \
+            SKIP_XCODE_EMBED=1 \
+            SIGN_IDENTITY="${{ secrets.APPLE_SIGNING_IDENTITY }}" \
+            VERSION="${{ steps.resolve.outputs.version }}" \
+            SPARKLE_FEED_URL="https://release.arcboxcdn.com/desktop/appcast/${{ steps.resolve.outputs.channel }}.xml" \
+            NOTARIZE=1 \
+            PROVISIONING_PROFILE="$RUNNER_TEMP/embedded.provisionprofile"
+
+          # Prefer outputs written by xtask (dmg / dmg_path / build_number).
+          # Fall back to a filesystem scan if GITHUB_OUTPUT was not available.
+          if ! grep -q '^dmg_path=' "$GITHUB_OUTPUT" 2>/dev/null; then
+            DMG_PATH=$(find "${{ github.workspace }}/arcbox-core/target" \
+              -maxdepth 1 -type f -name 'ArcBox-*.dmg' -print -quit)
+            if [ -z "$DMG_PATH" ]; then
+              echo "::error::DMG not found under arcbox-core/target"
+              exit 1
+            fi
+            {
+              echo "dmg=$(basename "$DMG_PATH")"
+              echo "dmg_path=$DMG_PATH"
+            } >> "$GITHUB_OUTPUT"
+          fi
+          if ! grep -q '^build_number=' "$GITHUB_OUTPUT" 2>/dev/null; then
+            echo "build_number=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify release artifact contracts
+        run: |
+          DMG_PATH="${{ steps.dmg.outputs.dmg_path }}"
+          MOUNT_POINT="$RUNNER_TEMP/arcbox-release-verify"
+          mkdir -p "$MOUNT_POINT"
+          hdiutil attach -nobrowse -readonly -mountpoint "$MOUNT_POINT" "$DMG_PATH"
+          cleanup() {
+            hdiutil detach "$MOUNT_POINT" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          APP="$MOUNT_POINT/ArcBox.app"
+          APP_BINARY="$APP/Contents/MacOS/ArcBox"
+          ARCHITECTURES=$(lipo -archs "$APP_BINARY")
+          file "$APP_BINARY"
+          echo "Architectures: $ARCHITECTURES"
+          if [ "$ARCHITECTURES" != "arm64" ]; then
+            echo "::error::Expected ARM64-only app binary, found: $ARCHITECTURES"
+            exit 1
+          fi
+          # Confirm packaging embedded the required prebuilt host binaries.
+          for bin in abctl arcbox-helper; do
+            path="$APP/Contents/MacOS/bin/$bin"
+            test -f "$path"
+            file "$path"
+          done
+
+          verify_code_identity() {
+            local path="$1"
+            local expected_identifier="$2"
+            local details identifier team
+            details=$(codesign -dvv "$path" 2>&1)
+            identifier=$(printf '%s\n' "$details" | sed -n 's/^Identifier=//p')
+            team=$(printf '%s\n' "$details" | sed -n 's/^TeamIdentifier=//p')
+            if [ "$identifier" != "$expected_identifier" ]; then
+              echo "::error::$path identifier is '$identifier', expected '$expected_identifier'"
+              exit 1
+            fi
+            if [ "$team" != "422ACSY6Y5" ]; then
+              echo "::error::$path TeamIdentifier is '$team', expected '422ACSY6Y5'"
+              exit 1
+            fi
+          }
+
+          HELPER_VERSION=$("$APP/Contents/MacOS/bin/arcbox-helper" --version)
+          if [[ ! "$HELPER_VERSION" =~ ^arcbox-helper[[:space:]][0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::arcbox-helper --version did not return semver on stdout: '$HELPER_VERSION'"
+            exit 1
+          fi
+
+          MANIFEST=$(find "$APP/Contents/Resources/assets" -name manifest.json -print -quit)
+          test -n "$MANIFEST"
+          RUNTIME_EROFS=$(find "$APP/Contents/Resources/assets" -name runtime.erofs -print -quit)
+          if [ -n "$RUNTIME_EROFS" ]; then
+            echo "::error::Release app must not contain runtime.erofs: $RUNTIME_EROFS"
+            exit 1
+          fi
+          python3 - "$MANIFEST" "$APP/Contents/Resources/runtime" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          manifest_path = pathlib.Path(sys.argv[1])
+          runtime_root = pathlib.Path(sys.argv[2])
+          manifest = json.loads(manifest_path.read_text())
+          runtime_root /= manifest["asset_version"]
+          for binary in manifest["binaries"]:
+              target = binary["targets"]["arm64"]
+              install_dir = binary.get("install_dir") or "bin"
+              path = runtime_root / install_dir / binary["name"]
+              if not path.is_file():
+                  raise SystemExit(f"missing manifest runtime binary: {path}")
+              actual = hashlib.sha256(path.read_bytes()).hexdigest()
+              if actual != target["sha256"]:
+                  raise SystemExit(
+                      f"runtime hash mismatch for {path}: expected {target['sha256']}, got {actual}"
+                  )
+          PY
+
+          verify_code_identity "$APP/Contents/MacOS/bin/abctl" "com.arcboxlabs.desktop.cli"
+          verify_code_identity "$APP/Contents/MacOS/bin/arcbox-helper" "com.arcboxlabs.desktop.helper"
+          verify_code_identity \
+            "$APP/Contents/Frameworks/com.arcboxlabs.desktop.daemon.app/Contents/MacOS/com.arcboxlabs.desktop.daemon" \
+            "com.arcboxlabs.desktop.daemon"
+
+      - name: Report build cache sizes
+        if: always()
+        run: |
+          echo "Desktop Rust exact cache hit: ${{ steps.desktop_rust_cache.outputs.cache-hit }}"
+          echo "Swift packages exact cache hit: ${{ steps.swift_packages_cache.outputs.cache-hit }}"
+          echo "Xcode build exact cache hit: ${{ steps.xcode_build_cache.outputs.cache-hit }}"
+          echo "=== Build cache footprint ==="
+          for path in \
+            xtask/target \
+            .build/SourcePackages \
+            .build/DerivedData/Build \
+            .build/DerivedData/ModuleCache.noindex; do
+            if [ -e "$path" ]; then
+              du -sh "$path"
+            fi
+          done
+
+      - name: Save desktop Rust tooling cache
+        if: success() && steps.desktop_rust_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            xtask/target/
+          key: ${{ steps.desktop_rust_cache.outputs.cache-primary-key }}
+
+      - name: Save Swift package cache
+        if: success() && steps.swift_packages_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: .build/SourcePackages/
+          key: ${{ steps.swift_packages_cache.outputs.cache-primary-key }}
+
+      - name: Save Xcode build cache
+        if: success() && steps.xcode_build_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            .build/DerivedData/Build/
+            .build/DerivedData/ModuleCache.noindex/
+          key: ${{ steps.xcode_build_cache.outputs.cache-primary-key }}
+
+      # Hash by basename so `shasum -c` works wherever the user downloads to.
+      - name: Generate checksum
+        run: |
+          DMG_PATH="${{ steps.dmg.outputs.dmg_path }}"
+          (cd "$(dirname "$DMG_PATH")" && shasum -a 256 "$(basename "$DMG_PATH")" > "$(basename "$DMG_PATH").sha256")
+          cat "${DMG_PATH}.sha256"
+
+      - name: Cache Sparkle sign_update
+        id: sparkle_cache
+        uses: actions/cache@v6
+        with:
+          path: /tmp/sparkle-bin
+          key: sparkle-sign-update-${{ env.SPARKLE_VERSION }}
+
+      - name: Download Sparkle sign_update
+        if: steps.sparkle_cache.outputs.cache-hit != 'true'
+        run: |
+          SPARKLE_VER="${{ env.SPARKLE_VERSION }}"
+          curl -fSL "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VER}/Sparkle-${SPARKLE_VER}.tar.xz" \
+            -o "$RUNNER_TEMP/Sparkle.tar.xz"
+          tar xJf "$RUNNER_TEMP/Sparkle.tar.xz" -C "$RUNNER_TEMP"
+          mkdir -p /tmp/sparkle-bin
+          cp "$RUNNER_TEMP/bin/sign_update" /tmp/sparkle-bin/sign_update
+          chmod +x /tmp/sparkle-bin/sign_update
+
+      - name: Sign DMG with Sparkle EdDSA
+        id: sparkle_sign
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SPARKLE_PRIVATE_KEY:-}" ]; then
+            echo "::error::SPARKLE_PRIVATE_KEY secret is not set"
+            exit 1
+          fi
+
+          SIGN_UPDATE="/tmp/sparkle-bin/sign_update"
+          DMG_PATH="${{ steps.dmg.outputs.dmg_path }}"
+
+          KEY_FILE="$(mktemp)"
+          chmod 600 "$KEY_FILE"
+          trap 'rm -f "$KEY_FILE"' EXIT
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$KEY_FILE"
+          SIGN_OUTPUT=$("$SIGN_UPDATE" "$DMG_PATH" -f "$KEY_FILE" 2>&1) || {
+            echo "::error::sign_update failed"
+            echo "$SIGN_OUTPUT"
+            exit 1
+          }
+          rm -f "$KEY_FILE"
+
+          ED_SIGNATURE=$(echo "$SIGN_OUTPUT" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p')
+          if [ -z "$ED_SIGNATURE" ]; then
+            echo "::error::Failed to extract EdDSA signature from sign_update output"
+            exit 1
+          fi
+
+          DMG_LENGTH=$(echo "$SIGN_OUTPUT" | sed -n 's/.*length="\([^"]*\)".*/\1/p')
+          if [ -z "$DMG_LENGTH" ]; then
+            DMG_LENGTH=$(stat -f%z "$DMG_PATH")
+          fi
+
+          echo "ed_signature=$ED_SIGNATURE" >> "$GITHUB_OUTPUT"
+          echo "dmg_length=$DMG_LENGTH" >> "$GITHUB_OUTPUT"
+          echo "EdDSA signature: ${ED_SIGNATURE:0:20}..."
+          echo "DMG length: $DMG_LENGTH"
+
+      - name: Cache sentry-cli
+        id: sentry_cli_cache
+        if: ${{ vars.SENTRY_ORG != '' }}
+        uses: actions/cache@v6
+        with:
+          path: /tmp/sentry-cli
+          # Bump the suffix when pinning a new sentry-cli release.
+          key: sentry-cli-macos-arm64-2.46.0
+
+      - name: Install sentry-cli
+        if: ${{ vars.SENTRY_ORG != '' && steps.sentry_cli_cache.outputs.cache-hit != 'true' }}
+        run: |
+          set -euo pipefail
+          SENTRY_CLI_VER=2.46.0
+          mkdir -p /tmp/sentry-cli
+          curl -fSL \
+            "https://github.com/getsentry/sentry-cli/releases/download/${SENTRY_CLI_VER}/sentry-cli-Darwin-arm64" \
+            -o /tmp/sentry-cli/sentry-cli
+          chmod +x /tmp/sentry-cli/sentry-cli
+          /tmp/sentry-cli/sentry-cli --version
+
+      - name: Upload dSYMs to Sentry
+        if: ${{ vars.SENTRY_ORG != '' }}
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          SENTRY_CLI=/tmp/sentry-cli/sentry-cli
+          if [ ! -x "$SENTRY_CLI" ]; then
+            echo "::error::sentry-cli missing at $SENTRY_CLI"
+            exit 1
+          fi
+
+          # Prefer the deterministic DerivedData path used by xtask packaging.
+          DSYM_ROOTS=(
+            "${{ github.workspace }}/.build/DerivedData/Build/Products/Release"
+            "${{ github.workspace }}/arcbox-core/target/dmg-build"
+          )
+          uploaded=0
+          for root in "${DSYM_ROOTS[@]}"; do
+            [ -d "$root" ] || continue
+            while IFS= read -r -d '' dsym; do
+              echo "Uploading dSYM: $dsym"
+              "$SENTRY_CLI" debug-files upload --include-sources "$dsym"
+              uploaded=$((uploaded + 1))
+            done < <(find "$root" -name '*.dSYM' -type d -print0 2>/dev/null)
+          done
+          if [ "$uploaded" -eq 0 ]; then
+            echo "::warning::No dSYMs found under packaging output paths"
+          else
+            echo "Uploaded $uploaded dSYM bundle(s)"
+          fi
+
+          "$SENTRY_CLI" releases new "$VERSION" || true
+          "$SENTRY_CLI" releases set-commits "$VERSION" --auto || true
+          "$SENTRY_CLI" releases finalize "$VERSION" || true
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: arcbox-desktop-dmg
+          path: |
+            ${{ steps.dmg.outputs.dmg_path }}
+            ${{ steps.dmg.outputs.dmg_path }}.sha256
+            release-notes.md
+          retention-days: 30
+
+      # Keychain cleanup is handled automatically by apple-actions/import-codesign-certs
+
+  create-release:
+    name: Create Release
+    needs: [build-dmg]
+    runs-on: ubuntu-latest
+    # No GITHUB_TOKEN scopes: this job speaks to the releases API as the app
+    # below, and downloading this run's own artifacts needs no permissions.
+    permissions: {}
+
+    steps:
+      # release-please creates the draft release as this app, and GITHUB_TOKEN
+      # cannot modify another integration's draft — v1.34.5's first attempt got
+      # 403 "Resource not accessible by integration" on the update, after
+      # finding the draft just fine. Publishing as the same app avoids that.
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts/
+
+      - name: Collect release assets
+        run: |
+          mkdir -p release-assets
+          find artifacts/ -type f \( -name '*.dmg' -o -name '*.sha256' \) \
+            -exec cp {} release-assets/ \;
+          echo "=== Release assets ==="
+          ls -lh release-assets/
+
+      # release-please leaves a draft release behind on the tag (see
+      # release-please-config.json). This job uploads the DMG into that draft
+      # and then flips it to published, so the releases page never shows a
+      # version whose download is missing. `draft: false` is what drives the
+      # flip; the action keeps the release in draft while it uploads assets.
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          tag_name: ${{ needs.build-dmg.outputs.version || github.ref_name }}
+          name: ArcBox ${{ needs.build-dmg.outputs.version || github.ref_name }}
+          draft: false
+          prerelease: ${{ needs.build-dmg.outputs.prerelease == 'true' }}
+          generate_release_notes: true
+          files: |
+            release-assets/*.dmg
+            release-assets/*.sha256
+          body: |
+            ## Installation
+
+            Download `${{ needs.build-dmg.outputs.dmg }}`, open the DMG, and drag ArcBox to Applications.
+
+            Boot-assets and daemon are bundled — no additional setup required.
+
+            ### Verify checksum
+
+            ```bash
+            shasum -a 256 -c ${{ needs.build-dmg.outputs.dmg }}.sha256
+            ```
+
+  upload-cdn:
+    name: Upload to CDN
+    needs: [build-dmg]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download DMG artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: arcbox-desktop-dmg
+          path: artifacts/
+
+      - name: Determine channel
+        id: channel
+        run: |
+          VERSION="${{ needs.build-dmg.outputs.version }}"
+          CHANNEL="${{ needs.build-dmg.outputs.channel }}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "Channel: $CHANNEL, Version: $VERSION"
+
+      # Sparkle renders these inline in the update dialog. Linking the GitHub
+      # release page instead would load the whole GitHub website in the dialog.
+      - name: Render curated release notes HTML
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api markdown -f mode=gfm -f context="$GITHUB_REPOSITORY" \
+            -F text=@artifacts/release-notes.md > notes.html
+          [ -s notes.html ]
+
+      - name: Generate appcast + latest.json
+        id: feeds
+        uses: actions/github-script@v8
+        env:
+          VERSION: ${{ steps.channel.outputs.version }}
+          CHANNEL: ${{ steps.channel.outputs.channel }}
+          BUILD_NUMBER: ${{ needs.build-dmg.outputs.build_number }}
+          DMG_NAME: ${{ needs.build-dmg.outputs.dmg }}
+          DMG_LENGTH: ${{ needs.build-dmg.outputs.dmg_length }}
+          ED_SIGNATURE: ${{ needs.build-dmg.outputs.ed_signature }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const {
+              VERSION, CHANNEL, BUILD_NUMBER, DMG_NAME, DMG_LENGTH, ED_SIGNATURE,
+            } = process.env;
+            const displayVersion = VERSION.replace(/^v/, '');
+            const dmgUrl = `https://release.arcboxcdn.com/desktop/${VERSION}/${DMG_NAME}`;
+            const minMacos = '15.0';
+
+            async function fetchOptional(url) {
+              try {
+                const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+                if (!res.ok) return null;
+                return Buffer.from(await res.arrayBuffer()).toString('utf8');
+              } catch {
+                return null;
+              }
+            }
+
+            function cdata(text) {
+              return `<![CDATA[${text.replaceAll(']]>', ']]]]><![CDATA[>')}]]>`;
+            }
+
+            function rfc2822Now() {
+              // Match Python email.utils.formatdate(usegmt=True) / xtask output.
+              return new Date().toUTCString().replace(/GMT$/, 'GMT').replace(/UTC$/, 'GMT');
+            }
+
+            function buildItem({ releaseNotesHtml }) {
+              const channelElement = CHANNEL !== 'stable'
+                ? `\n        <sparkle:channel>${CHANNEL}</sparkle:channel>`
+                : '';
+              const notesElement = `        <description>${cdata(releaseNotesHtml)}</description>`;
+              return [
+                '      <item>',
+                `        <title>ArcBox ${displayVersion}</title>`,
+                notesElement,
+                `        <pubDate>${rfc2822Now()}</pubDate>`,
+                `        <sparkle:version>${BUILD_NUMBER}</sparkle:version>`,
+                `        <sparkle:shortVersionString>${displayVersion}</sparkle:shortVersionString>${channelElement}`,
+                `        <sparkle:minimumSystemVersion>${minMacos}</sparkle:minimumSystemVersion>`,
+                '        <enclosure',
+                `          url="${dmgUrl}"`,
+                `          length="${DMG_LENGTH}"`,
+                '          type="application/octet-stream"',
+                `          sparkle:edSignature="${ED_SIGNATURE}"`,
+                '        />',
+                '      </item>',
+              ].join('\n');
+            }
+
+            function newAppcast(item) {
+              return [
+                '<?xml version="1.0" encoding="utf-8"?>',
+                '<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">',
+                '  <channel>',
+                '    <title>ArcBox</title>',
+                '    <link>https://arcbox.dev</link>',
+                '    <description>ArcBox release feed</description>',
+                '    <language>en</language>',
+                item,
+                '    </channel>',
+                '  </rss>',
+                '',
+              ].join('\n');
+            }
+
+            function mergeAppcast(existing, item) {
+              // Drop any existing <item> matching this version by shortVersionString or sparkle:version.
+              let merged = existing.replace(/\s*<item>[\s\S]*?<\/item>/g, (itemXml) => {
+                for (const tag of ['sparkle:shortVersionString', 'sparkle:version']) {
+                  if (itemXml.includes(`<${tag}>${displayVersion}</${tag}>`)) {
+                    return '';
+                  }
+                }
+                return itemXml;
+              });
+              // Strip legacy <sparkle:channel>stable</sparkle:channel> tags.
+              merged = merged.replace(/\n\s*<sparkle:channel>stable<\/sparkle:channel>/g, '');
+              if (!merged.includes('    </channel>')) {
+                throw new Error('existing appcast missing </channel> marker');
+              }
+              return merged.replace('    </channel>', `${item}\n    </channel>`);
+            }
+
+            const releaseNotesHtml = fs.readFileSync('notes.html', 'utf8').trim();
+            const item = buildItem({ releaseNotesHtml });
+            const existingAppcast = await fetchOptional(
+              `https://release.arcboxcdn.com/desktop/appcast/${CHANNEL}.xml`,
+            );
+            const appcast = existingAppcast
+              ? mergeAppcast(existingAppcast, item)
+              : newAppcast(item);
+
+            const existingLatestRaw = await fetchOptional(
+              'https://release.arcboxcdn.com/desktop/latest.json',
+            );
+            let latest = {};
+            if (existingLatestRaw) {
+              try {
+                latest = JSON.parse(existingLatestRaw);
+              } catch {
+                latest = {};
+              }
+            }
+            latest[CHANNEL] = {
+              date: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+              version: displayVersion,
+            };
+            // Pretty-print with sorted top-level keys (matches prior xtask output).
+            const sortedLatest = Object.fromEntries(
+              Object.keys(latest).sort().map((k) => [k, latest[k]]),
+            );
+
+            fs.mkdirSync(path.join('cdn-staging', 'desktop', 'appcast'), { recursive: true });
+            fs.mkdirSync(path.join('cdn-staging', 'desktop', VERSION), { recursive: true });
+            fs.writeFileSync(
+              path.join('cdn-staging', 'desktop', 'appcast', `${CHANNEL}.xml`),
+              appcast,
+            );
+            fs.writeFileSync(
+              path.join('cdn-staging', 'desktop', 'latest.json'),
+              `${JSON.stringify(sortedLatest, null, 2)}\n`,
+            );
+            core.info(existingAppcast ? `Merged appcast for ${displayVersion}` : `Created appcast for ${displayVersion}`);
+            core.info(`latest.json channels: ${Object.keys(sortedLatest).join(', ')}`);
+
+      - name: Prepare staging directory
+        run: |
+          VERSION="${{ steps.channel.outputs.version }}"
+          DMG_NAME="${{ needs.build-dmg.outputs.dmg }}"
+
+          # Copy DMG and checksum to versioned path
+          mkdir -p "cdn-staging/desktop/${VERSION}"
+          find artifacts/ -name '*.dmg' -exec cp {} "cdn-staging/desktop/${VERSION}/${DMG_NAME}" \;
+          find artifacts/ -name '*.sha256' -exec cp {} "cdn-staging/desktop/${VERSION}/${DMG_NAME}.sha256" \;
+
+          echo "=== CDN staging ==="
+          find cdn-staging/ -type f | sort
+
+      # DMG first, appcast + latest.json last, so Sparkle never sees an item
+      # whose enclosure is not live yet.
+      - name: Publish to R2
+        uses: arcboxlabs/actions/r2-publish@v2
+        with:
+          account-id: ${{ vars.R2_ACCOUNT_ID }}
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          bucket: arcboxcdn-release
+          source-dir: cdn-staging
+          index-files: |
+            desktop/appcast/${{ steps.channel.outputs.channel }}.xml
+            desktop/latest.json
+
+      - name: Verify CDN URLs
+        id: cdn_verify
+        uses: actions/github-script@v8
+        env:
+          VERSION: ${{ steps.channel.outputs.version }}
+          CHANNEL: ${{ steps.channel.outputs.channel }}
+          DMG_NAME: ${{ needs.build-dmg.outputs.dmg }}
+        with:
+          script: |
+            const { VERSION, CHANNEL, DMG_NAME } = process.env;
+            await new Promise((r) => setTimeout(r, 5000));
+            const urls = [
+              `https://release.arcboxcdn.com/desktop/${VERSION}/${DMG_NAME}`,
+              `https://release.arcboxcdn.com/desktop/appcast/${CHANNEL}.xml`,
+              'https://release.arcboxcdn.com/desktop/latest.json',
+            ];
+            let failed = false;
+            for (const url of urls) {
+              let status = 0;
+              try {
+                status = (await fetch(url, { signal: AbortSignal.timeout(15000) })).status;
+              } catch {
+                status = 0;
+              }
+              core.info(`CDN check: ${url} -> HTTP ${status}`);
+              if (status !== 200) {
+                core.warning(`CDN returned HTTP ${status} for ${url}`);
+                failed = true;
+              }
+            }
+            if (failed) core.warning('Some CDN URLs did not return HTTP 200');
+            core.setOutput('ok', failed ? 'false' : 'true');
+
+      - name: Update Dub download short link
+        if: needs.build-dmg.outputs.channel == 'stable' && steps.cdn_verify.outputs.ok == 'true'
+        uses: actions/github-script@v8
+        env:
+          DUB_API_KEY: ${{ secrets.DUB_API_KEY }}
+          DUB_LINK_ID: ${{ secrets.DUB_LINKID_DOWNLOAD_DESKTOP_ARM64 }}
+          VERSION: ${{ steps.channel.outputs.version }}
+          DMG_NAME: ${{ needs.build-dmg.outputs.dmg }}
+        with:
+          script: |
+            const { DUB_API_KEY, DUB_LINK_ID, VERSION, DMG_NAME } = process.env;
+            if (!DUB_API_KEY) {
+              core.warning('DUB_API_KEY is not set, skipping Dub link update');
+              return;
+            }
+            if (!DUB_LINK_ID) {
+              core.warning('DUB_LINKID_DOWNLOAD_DESKTOP_ARM64 is not set, skipping');
+              return;
+            }
+            const cdnUrl = `https://release.arcboxcdn.com/desktop/${VERSION}/${DMG_NAME}`;
+            const res = await fetch(`https://api.dub.co/links/${DUB_LINK_ID}`, {
+              method: 'PATCH',
+              headers: {
+                Authorization: `Bearer ${DUB_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ url: cdnUrl }),
+            });
+            if (!res.ok) {
+              core.setFailed(`Dub API returned HTTP ${res.status}: ${await res.text()}`);
+              return;
+            }
+            const data = await res.json();
+            core.info(JSON.stringify({ shortLink: data.shortLink, url: data.url }));
+            core.info(`Updated ARM64 download link -> ${cdnUrl}`);
+
+  # ==========================================================================
+  # Update Homebrew tap Cask with new version and SHA256.
+  # The tap edit lives in arcboxlabs/homebrew-tap/.github/actions/bump-cask.
+  # ==========================================================================
+  update-homebrew-tap:
+    name: Update Homebrew tap
+    needs: [build-dmg, upload-cdn]
+    if: needs.build-dmg.outputs.channel == 'stable'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+          repositories: homebrew-tap
+
+      - name: Download DMG artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: arcbox-desktop-dmg
+          path: artifacts/
+
+      - name: Hash ArcBox DMG
+        id: cask-shas
+        env:
+          VERSION: ${{ needs.build-dmg.outputs.version }}
+        run: |
+          set -euo pipefail
+          version="${VERSION#v}"
+          dmg_path="$(find artifacts/ -type f -name '*.dmg' -print -quit)"
+          if [ -z "$dmg_path" ]; then
+            echo "Error: No DMG file found under artifacts/" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "arm=$(sha256sum "$dmg_path" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Bump Homebrew cask
+        # checkout@v6 inside the composite (homebrew-tap#3).
+        uses: arcboxlabs/homebrew-tap/.github/actions/bump-cask@85036c763056a09bfe3e7935815b12ea8eb3404c
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          cask: arcbox@latest
+          version: ${{ steps.cask-shas.outputs.version }}
+          arm_sha256: ${{ steps.cask-shas.outputs.arm }}
+
+  # ==========================================================================
+  # Sync shipped issues to Linear Releases (continuous, stable channel only)
+  #
+  # Runs after the DMG is live on the CDN/appcast, so each Linear release records
+  # what actually reached stable users via Sparkle auto-update — the real
+  # "delivered" signal, distinct from a merged PR. Only the stable channel is
+  # tracked; alpha/beta/rc builds are skipped. Issues are associated by scanning
+  # commits since the previous release for PR references (#NNN, which Linear
+  # resolves to their linked issues) and ABXD-123 identifiers. Requires the
+  # LINEAR_ACCESS_KEY secret (the pipeline's access key from Linear → Settings →
+  # Releases; not a personal API key).
+  # ==========================================================================
+  linear-release:
+    name: Sync Linear Release
+    needs: [build-dmg, upload-cdn]
+    if: needs.build-dmg.outputs.channel == 'stable'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # full history required for commit-range scanning
+
+      - uses: linear/linear-release-action@v0
+        with:
+          access_key: ${{ secrets.LINEAR_ACCESS_KEY }}
+          version: ${{ needs.build-dmg.outputs.version }}
+          links: https://github.com/${{ github.repository }}/releases/tag/${{ needs.build-dmg.outputs.version }}

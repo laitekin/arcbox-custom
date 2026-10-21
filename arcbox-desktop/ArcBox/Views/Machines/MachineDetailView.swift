@@ -1,0 +1,37 @@
+import SwiftUI
+
+/// Column 3: machine detail with tab-based toolbar (matches ContainerDetailView pattern)
+struct MachineDetailView: View {
+    @Environment(MachinesViewModel.self) private var vm
+    @Environment(\.arcboxClient) private var client
+
+    var body: some View {
+        @Bindable var vm = vm
+        let machine = vm.selectedMachine
+
+        VStack(spacing: 0) {
+            if let machine {
+                switch vm.activeTab {
+                case .info:
+                    MachineInfoTab(machine: machine)
+                case .terminal:
+                    MachineTerminalTab(machine: machine)
+                }
+            } else {
+                Spacer()
+                Text("No Selection")
+                    .foregroundStyle(AppColors.textSecondary)
+                    .font(.system(size: 15))
+                Spacer()
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: vm.selectedID) {
+            guard let id = vm.selectedID else { return }
+            await vm.loadMachineDetails(id, client: client)
+        }
+        .toolbar {
+            DetailTabPicker(selection: $vm.activeTab)
+        }
+    }
+}

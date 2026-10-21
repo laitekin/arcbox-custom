@@ -1,0 +1,20 @@
+# Hooks resolve their tool through scripts/tool.sh so a commit is checked with
+# the versions CI uses — devenv's nixpkgs builds lag far enough behind that
+# swift-format disagrees with CI about whole files.
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "swift-format"
+name = "swift-format"
+language = "system"
+entry = "scripts/tool.sh swift-format format -i"
+types = ["swift"]
+
+[[repos.hooks]]
+id = "swiftlint"
+name = "swiftlint"
+language = "system"
+entry = "scripts/tool.sh swiftlint lint --strict --config .swiftlint.yml"
+types = ["swift"]

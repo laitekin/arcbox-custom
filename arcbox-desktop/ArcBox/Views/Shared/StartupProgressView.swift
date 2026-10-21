@@ -1,0 +1,164 @@
+import AppKit
+import ArcBoxClient
+import SwiftUI
+
+/// Progress view shown during the startup sequence.
+/// Replaces DaemonLoadingView for the initial startup phase.
+/// After startup completes, DaemonLoadingView handles daemon disconnect/stop.
+struct StartupProgressView: View {
+    let orchestrator: StartupOrchestrator
+    var allowingAdministratorPrompt = false
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Spacer()
+
+            if case .fatalError(let message) = orchestrator.phase {
+                fatalErrorView(message: message)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(StartupStep.allCases) { step in
+                        stepRow(step)
+                    }
+
+                    if orchestrator.isReady, !orchestrator.isRuntimeReady,
+                        orchestrator.runtimeFailureMessage == nil
+                    {
+                        ProgressView(orchestrator.setupMessage)
+                            .controlSize(.small)
+                            .font(.system(size: 11))
+                            .foregroundStyle(AppColors.textSecondary)
+                            .padding(.top, 4)
+                    }
+                }
+                .padding(.horizontal, 40)
+
+                if let message = retryableErrorMessage {
+                    VStack(spacing: 8) {
+                        Text(message)
+                            .font(.system(size: 12))
+                            .foregroundStyle(AppColors.error)
+                            .multilineTextAlignment(.center)
+
+                        Button("Retry") {
+                            Task {
+                                await orchestrator.retry(
+                                    allowingAdministratorPrompt: allowingAdministratorPrompt
+                                )
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(!orchestrator.canRetry)
+                    }
+                    .padding(.top, 4)
+                }
+            }
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private func fatalErrorView(message: String) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 36))
+                .foregroundStyle(AppColors.error)
+                .accessibilityHidden(true)
+
+            Text("Daemon Cannot Start")
+                .font(.system(size: 14, weight: .semibold))
+
+            Text(message)
+                .font(.system(size: 12))
+                .foregroundStyle(AppColors.textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+
+            Button("Quit") {
+                NSApplication.shared.terminate(nil)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.red)
+            .controlSize(.regular)
+        }
+    }
+
+    @ViewBuilder
+    private func stepRow(_ step: StartupStep) -> some View {
+        let status = orchestrator.stepStatuses[step] ?? .pending
+
+        HStack(alignment: .top, spacing: 8) {
+            statusIcon(status)
+                .frame(width: 14, height: 14)
+                .padding(.top, 1)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(step.label)
+                    .font(.system(size: 12))
+                    .foregroundStyle(textColor(for: status))
+                if let detail = step.detail, case .failed = status {
+                    Text(detail)
+                        .font(.system(size: 11))
+                        .foregroundStyle(AppColors.textMuted)
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(statusDescription(status))
+    }
+
+    @ViewBuilder
+    private func statusIcon(_ status: StepStatus) -> some View {
+        switch status {
+        case .pending:
+            Image(systemName: "circle")
+                .font(.system(size: 10))
+                .foregroundStyle(AppColors.textMuted)
+        case .running:
+            ProgressView()
+                .controlSize(.mini)
+        case .completed:
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(AppColors.running)
+        case .failed:
+            Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(AppColors.error)
+        case .skipped:
+            Image(systemName: "minus.circle")
+                .font(.system(size: 12))
+                .foregroundStyle(AppColors.textMuted)
+        }
+    }
+
+    private func statusDescription(_ status: StepStatus) -> String {
+        switch status {
+        case .pending: "Pending"
+        case .running: "In progress"
+        case .completed: "Completed"
+        case .failed: "Failed"
+        case .skipped: "Skipped"
+        }
+    }
+
+    private func textColor(for status: StepStatus) -> Color {
+        switch status {
+        case .pending, .skipped: return AppColors.textMuted
+        case .running: return AppColors.textSecondary
+        case .completed: return AppColors.textSecondary
+        case .failed: return AppColors.error
+        }
+    }
+
+    private var retryableErrorMessage: String? {
+        if case .failed(_, let message) = orchestrator.phase {
+            return message
+        }
+        return orchestrator.runtimeFailureMessage
+    }
+}

@@ -1,0 +1,169 @@
+import Foundation
+
+/// HTTP client for communicating with the Kubernetes API server.
+///
+/// Usage:
+/// ```swift
+/// let config = try await KubeConfig.load(yaml: kubeconfigYAML)
+/// let client = try K8sClient(config: config)
+/// let pods = try await client.listPods(namespace: "default")
+/// ```
+@available(macOS 15.0, *)
+public final class K8sClient: Sendable {
+    private let session: URLSession
+    /// Separate session for watches: a long-lived stream needs timeouts the request session
+    /// deliberately keeps short, and `timeoutIntervalForResource` cannot be set per request.
+    let streamingSession: URLSession
+    let baseURL: String
+    let bearerToken: String?
+
+    /// Creates a new client from a parsed kubeconfig whose credentials are ready to use.
+    ///
+    /// - Throws: `KubeConfigError.unresolvedExecPlugin` when `config.authMode` is `.execPlugin`:
+    ///   run `KubeConfig.load(yaml:)` or `resolvingCredentials()` first.
+    public init(config: KubeConfig) throws {
+        switch config.authMode {
+        case .certificate:
+            self.bearerToken = nil
+        case .bearerToken(let token):
+            self.bearerToken = token
+        case .execPlugin:
+            throw KubeConfigError.unresolvedExecPlugin
+        }
+        self.session = try config.makeURLSession()
+        self.streamingSession = try config.makeURLSession(streaming: true)
+        self.baseURL = config.server
+    }
+
+    /// `makeURLSession()` always builds a delegate-backed session, and URLSession keeps a
+    /// strong reference to its delegate until the session is explicitly invalidated —
+    /// releasing the client is not enough to reclaim the connection pool or the delegate.
+    deinit {
+        session.invalidateAndCancel()
+        streamingSession.invalidateAndCancel()
+    }
+
+    // MARK: - Pods
+
+    public func listPods(namespace: String = "default") async throws -> PodList {
+        try await get("/api/v1/namespaces/\(namespace)/pods")
+    }
+
+    public func listAllPods() async throws -> PodList {
+        try await get("/api/v1/pods")
+    }
+
+    // MARK: - Services
+
+    public func listServices(namespace: String = "default") async throws -> ServiceList {
+        try await get("/api/v1/namespaces/\(namespace)/services")
+    }
+
+    public func listAllServices() async throws -> ServiceList {
+        try await get("/api/v1/services")
+    }
+
+    // MARK: - Internal
+
+    /// Build an authenticated GET for `path`, optionally with query items.
+    func makeRequest(path: String, query: [URLQueryItem] = []) throws -> URLRequest {
+        guard var components = URLComponents(string: baseURL + path) else {
+            throw K8sError.invalidURL(baseURL + path)
+        }
+        if !query.isEmpty {
+            components.queryItems = query
+        }
+        guard let url = components.url else {
+            throw K8sError.invalidURL(baseURL + path)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let bearerToken {
+            request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+        }
+        return request
+    }
+
+    func validateResponse(_ response: URLResponse) throws {
+        guard let http = response as? HTTPURLResponse else {
+            throw K8sError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw K8sError.httpError(http.statusCode)
+        }
+    }
+
+    func get<T: Decodable & Sendable>(_ path: String) async throws -> T {
+        let (data, response) = try await session.data(for: try makeRequest(path: path))
+        try validateResponse(response)
+        return try JSONDecoder.kubernetes.decode(T.self, from: data)
+    }
+}
+
+// MARK: - Errors
+
+public enum K8sError: Error, Sendable {
+    case invalidURL(String)
+    case invalidResponse
+    case httpError(Int)
+    /// The server no longer holds history for the requested `resourceVersion` (410 Gone).
+    /// Recovered from by re-listing; callers of the resource streams never see this.
+    case watchExpired
+    /// The watch stream carried an `ERROR` event.
+    case watchFailed(reason: String)
+}
+
+/// Error reports are grouped, and deduplicated, by bridged domain and code. A plain enum
+/// bridges to its case index, which would file a 401 and a 503 as the same failure.
+extension K8sError: CustomNSError {
+    public var errorCode: Int {
+        switch self {
+        case .invalidURL: 1
+        case .invalidResponse: 2
+        case .watchExpired: 3
+        case .watchFailed: 4
+        case .httpError(let status): status
+        }
+    }
+}
+
+// MARK: - JSON Decoder
+
+extension JSONDecoder {
+    /// Decoder configured for Kubernetes API JSON (ISO 8601 dates).
+    /// Uses `Date.ISO8601FormatStyle` (Sendable) instead of `ISO8601DateFormatter`.
+    static let kubernetes: JSONDecoder = {
+        let decoder = JSONDecoder()
+        let isoStrategy = Date.ISO8601FormatStyle()
+        let isoFracStrategy = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let string = try container.decode(String.self)
+            if let date = try? isoStrategy.parse(string) {
+                return date
+            }
+            // ISO8601FormatStyle only handles up to 3 fractional digits;
+            // truncate longer precision (e.g. nanoseconds) before parsing.
+            let normalized = truncateFractionalSeconds(string)
+            if let date = try? isoFracStrategy.parse(normalized) {
+                return date
+            }
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid date: \(string)")
+        }
+        return decoder
+    }()
+
+    /// Truncate fractional seconds to 3 digits for ISO 8601 parsing.
+    /// e.g. "2026-01-01T00:00:00.123456789Z" → "2026-01-01T00:00:00.123Z"
+    private static func truncateFractionalSeconds(_ s: String) -> String {
+        guard let dotIndex = s.firstIndex(of: ".") else { return s }
+        let afterDot = s.index(after: dotIndex)
+        guard afterDot < s.endIndex else { return s }
+        let fracEnd = s[afterDot...].firstIndex(where: { !$0.isNumber }) ?? s.endIndex
+        let fracCount = s.distance(from: afterDot, to: fracEnd)
+        guard fracCount > 3 else { return s }
+        let keepEnd = s.index(afterDot, offsetBy: 3)
+        return String(s[..<keepEnd]) + String(s[fracEnd...])
+    }
+}

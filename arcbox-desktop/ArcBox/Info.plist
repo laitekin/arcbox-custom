@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Merged with the Xcode-generated Info.plist (GENERATE_INFOPLIST_FILE);
+	     $(...) are expanded at build time. Only keys that cannot be expressed
+	     as INFOPLIST_KEY_* settings live here — custom telemetry keys
+	     are silently dropped when set via INFOPLIST_KEY_*. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>arcbox</string>
+			</array>
+		</dict>
+	</array>
+	<key>ArcBoxProfile</key>
+	<string>$(ARCBOX_PROFILE)</string>
+	<key>PostHogAPIKey</key>
+	<string>$(POSTHOG_API_KEY)</string>
+	<key>SentryDSN</key>
+	<string>$(SENTRY_DSN)</string>
+	<!-- Sparkle initial defaults: automatically check for and download+install
+	     updates out of the box. User changes persist to UserDefaults and take
+	     precedence over these Info.plist seeds. -->
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
+</dict>
+</plist>
