@@ -181,13 +181,21 @@ impl pb::MachineImageService for MachineImageServiceImpl {
                 }
                 Source::File(path)
             }
-            (true, false) => Source::Docker(req.docker_image.clone()),
+            (true, false) => Source::Docker {
+                image: req.docker_image.clone(),
+                add_init: req.add_init,
+            },
             _ => {
                 return Err(ConnectError::invalid_argument(
                     "set exactly one of path and docker_image",
                 ));
             }
         };
+        if req.add_init && !matches!(source, Source::Docker { .. }) {
+            return Err(ConnectError::invalid_argument(
+                "add_init needs a docker_image; install an init into the archive itself",
+            ));
+        }
         let optional = |s: String| (!s.is_empty()).then_some(s);
         let (distro, release) = (optional(req.distro), optional(req.release));
         let max_bytes = if req.max_size == 0 {
@@ -201,9 +209,25 @@ impl pb::MachineImageService for MachineImageServiceImpl {
         let progress = tx.clone();
         let socket = runtime.config().docker.socket_path.clone();
         let task = tokio::task::spawn_blocking(move || {
-            let source = match source {
-                Source::File(path) => ImportSource::File(path),
-                Source::Docker(image) => {
+            // The derived image (add_init) is bound first so it is dropped
+            // last: it must outlive the export of the container made from it.
+            let (_derived, source) = match source {
+                Source::File(path) => (None, ImportSource::File(path)),
+                Source::Docker { image, add_init } => {
+                    let (derived, image) = if add_init {
+                        let _ = progress.send(Ok(event(
+                            pb::ImportMachineImagePhase::IMPORT_MACHINE_IMAGE_PHASE_BUILDING,
+                            0,
+                        )));
+                        let tag = format!("arcbox-machine-import/{name}:latest");
+                        let built =
+                            docker_export::DerivedImage::build_with_init(&socket, &image, &tag)
+                                .map_err(|e| ConnectError::failed_precondition(e.to_string()))?;
+                        let tag = built.tag().to_owned();
+                        (Some(built), tag)
+                    } else {
+                        (None, image)
+                    };
                     let _ = progress.send(Ok(event(
                         pb::ImportMachineImagePhase::IMPORT_MACHINE_IMAGE_PHASE_EXPORTING,
                         0,
@@ -215,10 +239,11 @@ impl pb::MachineImageService for MachineImageServiceImpl {
                         image,
                         "exporting a Docker image as a machine rootfs"
                     );
-                    ImportSource::TarStream {
+                    let source = ImportSource::TarStream {
                         reader: Box::new(export),
                         description: format!("docker:{image}"),
-                    }
+                    };
+                    (derived, source)
                 }
             };
             let mut last = None;
@@ -317,7 +342,7 @@ impl pb::MachineImageService for MachineImageServiceImpl {
 
 enum Source {
     File(PathBuf),
-    Docker(String),
+    Docker { image: String, add_init: bool },
 }
 
 fn event(phase: pb::ImportMachineImagePhase, bytes: u64) -> pb::ImportMachineImageEvent {

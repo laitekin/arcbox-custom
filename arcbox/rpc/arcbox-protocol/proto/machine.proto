@@ -664,6 +664,10 @@ message ImportMachineImageRequest {
     string release = 5;
     // Refuses larger root filesystems; 0 means 20 GiB.
     uint64 max_size = 6;
+    // With `docker_image`: first build a derived image with an init system
+    // installed (systemd, or openrc on Alpine), import that, then remove it.
+    // qcow2 and raw disk images are not importable yet.
+    bool add_init = 7;
 }
 
 // Import stages.
@@ -681,6 +685,8 @@ enum ImportMachineImagePhase {
     IMPORT_MACHINE_IMAGE_PHASE_REGISTERING = 5;
     // Finished; `image` and `warnings` are set.
     IMPORT_MACHINE_IMAGE_PHASE_DONE = 6;
+    // Building the derived image with an init system (`add_init`).
+    IMPORT_MACHINE_IMAGE_PHASE_BUILDING = 7;
 }
 
 // Import progress.

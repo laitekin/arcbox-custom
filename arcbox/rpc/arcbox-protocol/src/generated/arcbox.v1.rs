@@ -2660,6 +2660,11 @@ pub struct ImportMachineImageRequest {
     /// Refuses larger root filesystems; 0 means 20 GiB.
     #[prost(uint64, tag = "6")]
     pub max_size: u64,
+    /// With `docker_image`: first build a derived image with an init system
+    /// installed (systemd, or openrc on Alpine), import that, then remove it.
+    /// qcow2 and raw disk images are not importable yet.
+    #[prost(bool, tag = "7")]
+    pub add_init: bool,
 }
 /// Import progress.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -2702,6 +2707,8 @@ pub enum ImportMachineImagePhase {
     Registering = 5,
     /// Finished; `image` and `warnings` are set.
     Done = 6,
+    /// Building the derived image with an init system (`add_init`).
+    Building = 7,
 }
 impl ImportMachineImagePhase {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -2717,6 +2724,7 @@ impl ImportMachineImagePhase {
             Self::Writing => "IMPORT_MACHINE_IMAGE_PHASE_WRITING",
             Self::Registering => "IMPORT_MACHINE_IMAGE_PHASE_REGISTERING",
             Self::Done => "IMPORT_MACHINE_IMAGE_PHASE_DONE",
+            Self::Building => "IMPORT_MACHINE_IMAGE_PHASE_BUILDING",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -2729,6 +2737,7 @@ impl ImportMachineImagePhase {
             "IMPORT_MACHINE_IMAGE_PHASE_WRITING" => Some(Self::Writing),
             "IMPORT_MACHINE_IMAGE_PHASE_REGISTERING" => Some(Self::Registering),
             "IMPORT_MACHINE_IMAGE_PHASE_DONE" => Some(Self::Done),
+            "IMPORT_MACHINE_IMAGE_PHASE_BUILDING" => Some(Self::Building),
             _ => None,
         }
     }

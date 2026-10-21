@@ -414,3 +414,12 @@ fn local_versions_are_utc_timestamps() {
         "local-19700101_000000"
     );
 }
+
+#[test]
+fn the_init_dockerfile_derives_from_the_source_and_requires_an_init() {
+    let dockerfile = init_dockerfile("ubuntu:24.04");
+    assert!(dockerfile.starts_with("FROM ubuntu:24.04\n"));
+    assert!(dockerfile.contains("systemd-sysv"));
+    assert!(dockerfile.contains("openrc"));
+    assert!(dockerfile.trim_end().ends_with("test -e /sbin/init"));
+}

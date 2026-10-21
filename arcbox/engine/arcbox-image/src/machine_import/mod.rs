@@ -114,6 +114,36 @@ fn validate_image_name(name: &str) -> Result<()> {
     }
 }
 
+/// The Dockerfile that installs an init system into `image`, choosing the
+/// package manager the image has. Stock Docker images ship no init, and a
+/// machine boots by exec'ing `/sbin/init`.
+#[must_use]
+pub fn init_dockerfile(image: &str) -> String {
+    format!(
+        r#"FROM {image}
+RUN set -e; \
+    if command -v apt-get >/dev/null; then \
+        export DEBIAN_FRONTEND=noninteractive; \
+        apt-get update; \
+        apt-get install -y --no-install-recommends systemd systemd-sysv dbus iproute2 ifupdown isc-dhcp-client ca-certificates; \
+        rm -rf /var/lib/apt/lists/*; \
+    elif command -v apk >/dev/null; then \
+        apk add --no-cache openrc busybox-openrc ifupdown-ng; \
+        rc-update add networking boot; \
+    elif command -v dnf >/dev/null; then \
+        dnf install -y systemd iproute NetworkManager; dnf clean all; \
+    elif command -v zypper >/dev/null; then \
+        zypper --non-interactive install systemd iproute2 wicked; \
+    elif command -v pacman >/dev/null; then \
+        pacman -Sy --noconfirm systemd iproute2; \
+    else \
+        echo "no supported package manager to install an init system" >&2; exit 1; \
+    fi; \
+    test -e /sbin/init
+"#
+    )
+}
+
 /// Squashfs superblock magic (`hsqs`).
 const SQUASHFS_MAGIC: &[u8] = b"hsqs";
 

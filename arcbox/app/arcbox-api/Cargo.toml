@@ -22,6 +22,7 @@ arcbox-fakeip = { workspace = true }
 arcbox-proxy = { workspace = true }
 zeroize = "1.8"
 serde_json = { workspace = true }
+tar = "0.4.46"
 async-stream = { workspace = true }
 libc = { workspace = true }
 uuid = { workspace = true }

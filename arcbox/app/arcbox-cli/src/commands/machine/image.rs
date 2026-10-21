@@ -44,7 +44,7 @@ pub struct ImportArgs {
     #[arg(long)]
     pub release: Option<String>,
     /// For docker: sources, first install an init system (systemd, or
-    /// openrc on Alpine) into a derived image
+    /// openrc on Alpine) into a derived image the daemon builds and removes
     #[arg(long)]
     pub add_init: bool,
 }
@@ -153,6 +153,7 @@ async fn remote(format: OutputFormat) -> Result<()> {
 fn phase_label(phase: pb::ImportMachineImagePhase) -> &'static str {
     use pb::ImportMachineImagePhase as P;
     match phase {
+        P::IMPORT_MACHINE_IMAGE_PHASE_BUILDING => "Installing an init system into the Docker image",
         P::IMPORT_MACHINE_IMAGE_PHASE_EXPORTING => "Exporting the Docker image",
         P::IMPORT_MACHINE_IMAGE_PHASE_READING => "Reading the root filesystem",
         P::IMPORT_MACHINE_IMAGE_PHASE_CHECKING => "Checking init and architecture",
@@ -170,16 +171,10 @@ async fn import(args: ImportArgs) -> Result<()> {
         release: args.release.clone().unwrap_or_default(),
         ..Default::default()
     };
-    let mut derived = None;
     if let Some(image) = args.source.strip_prefix("docker:") {
-        request.docker_image = if args.add_init {
-            let tag = format!("arcbox-machine-import/{}:latest", args.name);
-            build_with_init(image, &tag)?;
-            derived = Some(tag.clone());
-            tag
-        } else {
-            image.to_owned()
-        };
+        request.docker_image = image.to_owned();
+        // The daemon builds the derived image in ArcBox's engine.
+        request.add_init = args.add_init;
     } else {
         if args.add_init {
             bail!(
@@ -192,11 +187,7 @@ async fn import(args: ImportArgs) -> Result<()> {
         request.path = path.to_string_lossy().into_owned();
     }
 
-    let result = stream_import(request).await;
-    if let Some(tag) = derived {
-        let _ = docker().args(["image", "rm", &tag]).output();
-    }
-    result
+    stream_import(request).await
 }
 
 async fn stream_import(request: pb::ImportMachineImageRequest) -> Result<()> {
@@ -250,79 +241,4 @@ async fn remove(image: &str) -> Result<()> {
         .with_context(|| format!("failed to remove {image}"))?;
     println!("Removed {image}");
     Ok(())
-}
-
-fn docker() -> std::process::Command {
-    let mut command = std::process::Command::new("docker");
-    command.env(
-        "DOCKER_HOST",
-        format!(
-            "unix://{}",
-            crate::commands::resolve_docker_socket_path().display()
-        ),
-    );
-    command
-}
-
-/// The Dockerfile that installs an init system into `image`, choosing the
-/// package manager the image has.
-fn init_dockerfile(image: &str) -> String {
-    format!(
-        r#"FROM {image}
-RUN set -e; \
-    if command -v apt-get >/dev/null; then \
-        export DEBIAN_FRONTEND=noninteractive; \
-        apt-get update; \
-        apt-get install -y --no-install-recommends systemd systemd-sysv dbus iproute2 ifupdown isc-dhcp-client ca-certificates; \
-        rm -rf /var/lib/apt/lists/*; \
-    elif command -v apk >/dev/null; then \
-        apk add --no-cache openrc busybox-openrc ifupdown-ng; \
-        rc-update add networking boot; \
-    elif command -v dnf >/dev/null; then \
-        dnf install -y systemd iproute NetworkManager; dnf clean all; \
-    elif command -v zypper >/dev/null; then \
-        zypper --non-interactive install systemd iproute2 wicked; \
-    elif command -v pacman >/dev/null; then \
-        pacman -Sy --noconfirm systemd iproute2; \
-    else \
-        echo "no supported package manager to install an init system" >&2; exit 1; \
-    fi; \
-    test -e /sbin/init
-"#
-    )
-}
-
-/// Builds `tag` from `image` with an init system installed.
-fn build_with_init(image: &str, tag: &str) -> Result<()> {
-    use std::io::Write as _;
-    println!("Building {tag} with an init system...");
-    let mut child = docker()
-        .args(["build", "--pull=false", "-t", tag, "-"])
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-        .context("failed to run `docker build` (is the docker CLI installed?)")?;
-    child
-        .stdin
-        .take()
-        .context("docker build has no stdin")?
-        .write_all(init_dockerfile(image).as_bytes())?;
-    let status = child.wait()?;
-    if !status.success() {
-        bail!("docker build of {tag} failed");
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_init_dockerfile_derives_from_the_source_and_requires_an_init() {
-        let dockerfile = init_dockerfile("ubuntu:24.04");
-        assert!(dockerfile.starts_with("FROM ubuntu:24.04\n"));
-        assert!(dockerfile.contains("systemd-sysv"));
-        assert!(dockerfile.contains("openrc"));
-        assert!(dockerfile.trim_end().ends_with("test -e /sbin/init"));
-    }
 }
