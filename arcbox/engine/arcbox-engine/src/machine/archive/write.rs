@@ -9,14 +9,16 @@ use std::path::Path;
 
 use chrono::Utc;
 
-use super::{ArchiveManifest, DATA_DISK_ENTRY, MANIFEST_ENTRY, TAR_BLOCK};
+use super::{ArchiveManifest, DATA_DISK_ENTRY, IMAGE_DIR_ENTRY, MANIFEST_ENTRY, TAR_BLOCK};
 use crate::error::{EngineError, Result};
 
 /// zstd's default level: a data disk is mostly filesystem data that
 /// compresses two- to three-fold, and the level that does it at disk speed.
 const COMPRESSION_LEVEL: i32 = 3;
 
-/// Writes the archive for `manifest` and `data_disk` at `path`.
+/// Writes the archive for `manifest` and `data_disk` at `path`, carrying the
+/// image registry directory `image_dir` when given (its `manifest.json` and
+/// the rootfs the manifest names).
 ///
 /// The archive is assembled next to `path` and renamed into place, so an
 /// interrupted export leaves nothing at `path`. Returns the archive's size.
@@ -24,8 +26,13 @@ const COMPRESSION_LEVEL: i32 = 3;
 /// # Errors
 ///
 /// Returns an error if `path` exists, cannot be written, or the data disk
-/// cannot be read.
-pub fn write(path: &Path, manifest: &ArchiveManifest, data_disk: &Path) -> Result<u64> {
+/// or the image cannot be read.
+pub fn write(
+    path: &Path,
+    manifest: &ArchiveManifest,
+    data_disk: &Path,
+    image_dir: Option<&Path>,
+) -> Result<u64> {
     if path.exists() {
         return Err(EngineError::already_exists(path.display().to_string()));
     }
@@ -43,7 +50,7 @@ pub fn write(path: &Path, manifest: &ArchiveManifest, data_disk: &Path) -> Resul
         file_name.to_string_lossy(),
         std::process::id()
     ));
-    let written = write_to(&temp, manifest, data_disk).and_then(|size| {
+    let written = write_to(&temp, manifest, data_disk, image_dir).and_then(|size| {
         std::fs::rename(&temp, path)?;
         Ok(size)
     });
@@ -56,7 +63,12 @@ pub fn write(path: &Path, manifest: &ArchiveManifest, data_disk: &Path) -> Resul
     written
 }
 
-fn write_to(temp: &Path, manifest: &ArchiveManifest, data_disk: &Path) -> Result<u64> {
+fn write_to(
+    temp: &Path,
+    manifest: &ArchiveManifest,
+    data_disk: &Path,
+    image_dir: Option<&Path>,
+) -> Result<u64> {
     let file = File::create_new(temp)?;
     let encoder = zstd::stream::write::Encoder::new(io::BufWriter::new(file), COMPRESSION_LEVEL)?;
     let mut tar = tar::Builder::new(encoder);
@@ -69,6 +81,14 @@ fn write_to(temp: &Path, manifest: &ArchiveManifest, data_disk: &Path) -> Result
 
     let disk = File::open(data_disk)?;
     append_sparse(&mut tar, DATA_DISK_ENTRY, &disk, now)?;
+
+    if let Some(dir) = image_dir {
+        for file in [MANIFEST_ENTRY, manifest.image.rootfs.path.as_str()] {
+            let source = File::open(dir.join(file))?;
+            let mut header = regular_file_header(0o644, now, source.metadata()?.len());
+            tar.append_data(&mut header, format!("{IMAGE_DIR_ENTRY}/{file}"), source)?;
+        }
+    }
 
     let encoder = tar.into_inner()?;
     let mut file = encoder

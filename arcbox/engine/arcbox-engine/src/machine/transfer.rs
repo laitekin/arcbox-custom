@@ -29,7 +29,8 @@ pub(super) enum DataDisk {
 
 impl MachineManager {
     /// Writes machine `name` to the archive at `path`: its settings, the
-    /// manifest of the published `image` it boots, and its data disk.
+    /// manifest of the `image` it boots, its data disk, and — when
+    /// `image_dir` is given — the image's registry directory itself.
     /// Returns the archive's size in bytes.
     ///
     /// The data disk is snapshotted (a copy-on-write clone) under the
@@ -41,7 +42,13 @@ impl MachineManager {
     ///
     /// Returns an error if the machine is unknown, is not a stopped distro
     /// machine, or the archive cannot be written.
-    pub fn export(&self, name: &str, path: &Path, image: MachineImageManifest) -> Result<u64> {
+    pub fn export(
+        &self,
+        name: &str,
+        path: &Path,
+        image: MachineImageManifest,
+        image_dir: Option<&Path>,
+    ) -> Result<u64> {
         let (snapshot, machine) = {
             let machines = self
                 .machines
@@ -64,8 +71,9 @@ impl MachineManager {
             exported_at: Utc::now(),
             machine,
             image,
+            image_included: image_dir.is_some(),
         };
-        let size = archive::write(path, &manifest, &snapshot.path().join(DATA_DISK))?;
+        let size = archive::write(path, &manifest, &snapshot.path().join(DATA_DISK), image_dir)?;
         tracing::info!(machine = name, path = %path.display(), size, "exported machine");
         Ok(size)
     }

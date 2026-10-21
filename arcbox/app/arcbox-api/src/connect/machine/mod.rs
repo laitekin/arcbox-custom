@@ -66,8 +66,18 @@ impl pb::MachineService for MachineServiceImpl {
         _ctx: RequestContext,
         request: ServiceRequest<'_, pb::CreateMachineRequest>,
     ) -> ServiceResult<pb::CreateMachineResponse> {
-        let req = request.to_owned_message();
+        let mut req = request.to_owned_message();
         let runtime = self.runtime.ready_for_write(&req.name)?;
+
+        // A local image names its distro itself; nothing is pulled.
+        let local = if req.image.is_empty() {
+            None
+        } else {
+            let image = rootfs::local_image(runtime, &req.image)?;
+            req.distro.clone_from(&image.manifest.distro);
+            req.version.clone_from(&image.manifest.release);
+            Some(image)
+        };
 
         // Convert bytes to MB for internal config.
         let memory_mb = req.memory / (1024 * 1024);
@@ -75,7 +85,9 @@ impl pb::MachineService for MachineServiceImpl {
 
         // Distro machines boot a published rootfs image: resolve and pull it
         // (a cached image is a no-op) before registering the machine.
-        let rootfs = if req.distro.is_empty() {
+        let rootfs = if let Some(image) = &local {
+            Some(rootfs::rootfs_for(runtime, image).await?)
+        } else if req.distro.is_empty() {
             None
         } else {
             let image =
@@ -243,7 +255,7 @@ impl pb::MachineService for MachineServiceImpl {
     ) -> ServiceResult<pb::ExportMachineResponse> {
         let req = request.to_owned_message();
         let runtime = self.runtime.ready()?;
-        Response::ok(transfer::export(runtime, req.id, req.path).await?)
+        Response::ok(transfer::export(runtime, req.id, req.path, req.include_image).await?)
     }
 
     async fn import(

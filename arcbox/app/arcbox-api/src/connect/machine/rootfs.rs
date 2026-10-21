@@ -45,6 +45,34 @@ pub(super) async fn pull_image(
     Ok(image)
 }
 
+/// The local image `reference` names (`name` or `name@version`; the newest
+/// version when none is given). Never downloads.
+pub(super) fn local_image(
+    runtime: &Runtime,
+    reference: &str,
+) -> Result<MachineImage, ConnectError> {
+    let (name, version) = match reference.split_once('@') {
+        Some((name, version)) => (name, Some(version)),
+        None => (reference, None),
+    };
+    let registry = runtime.machine_image_manager();
+    if let Some(version) = version {
+        return registry.get(name, version).map_err(|_| {
+            ConnectError::not_found(format!("no local machine image {name}@{version}"))
+        });
+    }
+    registry
+        .list()
+        .into_iter()
+        .filter(|image| image.manifest.name == name)
+        .max_by(|a, b| a.manifest.version.cmp(&b.manifest.version))
+        .ok_or_else(|| {
+            ConnectError::not_found(format!(
+                "no local machine image {name}; see `abctl machine image ls`"
+            ))
+        })
+}
+
 /// `image` behind the boot shim (kernel + EROFS with
 /// `/sbin/arcbox-machine-init`) from the same boot-assets cache the daemon
 /// populates for the System VM; a warm cache is a no-op.

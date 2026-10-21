@@ -41,6 +41,7 @@ fn manifest() -> ArchiveManifest {
             mounts: Vec::new(),
         },
         image,
+        image_included: false,
     }
 }
 
@@ -76,7 +77,7 @@ fn a_sparse_disk_round_trips_without_its_holes() {
     let extents = sparse_disk(&disk);
     let archive = dir.path().join("dev.tar.zst");
 
-    let size = write(&archive, &manifest(), &disk).unwrap();
+    let size = write(&archive, &manifest(), &disk, None).unwrap();
     assert_eq!(size, archive.metadata().unwrap().len());
     // Only the extents are stored: far below the 64 MiB logical size.
     assert!(size < 1 << 20, "{size} bytes");
@@ -121,7 +122,7 @@ fn write_refuses_to_replace_an_existing_file() {
     sparse_disk(&disk);
     let archive = dir.path().join("dev.tar.zst");
     std::fs::write(&archive, b"mine").unwrap();
-    let err = write(&archive, &manifest(), &disk).unwrap_err();
+    let err = write(&archive, &manifest(), &disk, None).unwrap_err();
     assert!(matches!(err, EngineError::Common(ref c) if c.is_already_exists()));
     assert_eq!(std::fs::read(&archive).unwrap(), b"mine");
 }
@@ -178,4 +179,40 @@ fn other_files_are_named_as_not_an_archive() {
         "{err}"
     );
     assert!(extract_data_disk(&other, &dir.path().join("x.img")).is_err());
+}
+
+#[test]
+fn a_carried_image_round_trips_after_the_data_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let disk = dir.path().join("data.img");
+    sparse_disk(&disk);
+    let image_dir = dir.path().join("image");
+    std::fs::create_dir(&image_dir).unwrap();
+    std::fs::write(image_dir.join("manifest.json"), b"{\"m\":1}").unwrap();
+    std::fs::write(image_dir.join("rootfs.squashfs"), b"squashfs-bytes").unwrap();
+    let archive = dir.path().join("dev.tar.zst");
+    let mut carried = manifest();
+    carried.image_included = true;
+
+    write(&archive, &carried, &disk, Some(&image_dir)).unwrap();
+    assert!(read_manifest(&archive).unwrap().image_included);
+    // The data disk still restores from an archive that carries more.
+    extract_data_disk(&archive, &dir.path().join("restored.img")).unwrap();
+
+    let out = dir.path().join("out");
+    assert!(extract_image(&archive, &out).unwrap());
+    assert_eq!(
+        std::fs::read(out.join("rootfs.squashfs")).unwrap(),
+        b"squashfs-bytes"
+    );
+    assert_eq!(
+        std::fs::read(out.join("manifest.json")).unwrap(),
+        b"{\"m\":1}"
+    );
+
+    // Without the image there is nothing to extract.
+    let plain = dir.path().join("plain.tar.zst");
+    write(&plain, &manifest(), &disk, None).unwrap();
+    assert!(!read_manifest(&plain).unwrap().image_included);
+    assert!(!extract_image(&plain, &dir.path().join("none")).unwrap());
 }

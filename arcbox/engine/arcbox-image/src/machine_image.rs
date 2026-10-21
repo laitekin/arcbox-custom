@@ -36,8 +36,36 @@ const MANIFEST_FILE: &str = "manifest.json";
 /// Returns the effective image base location (env override or default).
 #[must_use]
 pub fn image_base() -> RemoteLocation {
-    let base = std::env::var(IMAGE_BASE_ENV).unwrap_or_else(|_| DEFAULT_IMAGE_BASE.to_string());
+    image_base_with(None)
+}
+
+/// The effective image base: the environment override, then `configured`
+/// (`[machine] image_base`), then [`DEFAULT_IMAGE_BASE`].
+#[must_use]
+pub fn image_base_with(configured: Option<&str>) -> RemoteLocation {
+    let base = std::env::var(IMAGE_BASE_ENV)
+        .ok()
+        .or_else(|| configured.map(str::to_owned))
+        .unwrap_or_else(|| DEFAULT_IMAGE_BASE.to_string());
     RemoteLocation::parse(&base)
+}
+
+/// One stream of the published index, as [`MachineImageManager::list_remote`]
+/// reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteStream {
+    /// Stream name.
+    pub name: String,
+    /// Distro id.
+    pub distro: String,
+    /// Distro release.
+    pub release: String,
+    /// Human-readable release title, when the index has one.
+    pub release_title: Option<String>,
+    /// Image architecture.
+    pub arch: String,
+    /// The version a pull resolves to.
+    pub latest: String,
 }
 
 /// Maps a host/CLI architecture name onto the published image arch naming
@@ -211,6 +239,42 @@ impl MachineImageManager {
             base,
             pull_locks: std::sync::Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The image source this manager resolves against.
+    #[must_use]
+    pub const fn base(&self) -> &RemoteLocation {
+        &self.base
+    }
+
+    /// Lists the streams the image source publishes for `arch`, sorted by
+    /// distro and release.
+    ///
+    /// # Errors
+    /// Returns an error if the index cannot be fetched or parsed.
+    pub async fn list_remote(&self, arch: &str) -> Result<Vec<RemoteStream>> {
+        let index: MachineImageIndex = self.base.as_dir().join("index.json")?.fetch_json().await?;
+        if index.schema_version != INDEX_SCHEMA_VERSION {
+            return Err(ImageError::image(format!(
+                "unsupported image index schema_version {}",
+                index.schema_version
+            )));
+        }
+        let mut streams: Vec<RemoteStream> = index
+            .images
+            .into_iter()
+            .filter(|(_, stream)| stream.arch == arch)
+            .map(|(name, stream)| RemoteStream {
+                name,
+                distro: stream.distro,
+                release: stream.release,
+                release_title: stream.release_title,
+                arch: stream.arch,
+                latest: stream.latest,
+            })
+            .collect();
+        streams.sort_by(|a, b| (&a.distro, &a.release).cmp(&(&b.distro, &b.release)));
+        Ok(streams)
     }
 
     /// The registry directory (`<data_dir>/machine-images`).
@@ -619,6 +683,54 @@ mod tests {
         assert_eq!(again.rootfs_path(), image.rootfs_path());
         assert_eq!(seen, vec![(body.len() as u64, body.len() as u64)]);
         assert_eq!(manager.list().len(), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn remote_listing_filters_by_arch_and_sorts() {
+        let publish_dir = tempdir().unwrap();
+        let data_dir = tempdir().unwrap();
+        publish(
+            publish_dir.path(),
+            "ubuntu-noble-arm64",
+            "20260716_0947",
+            b"u",
+        );
+        publish(
+            publish_dir.path(),
+            "alpine-3.24-arm64",
+            "20260716_0947",
+            b"a",
+        );
+        publish(
+            publish_dir.path(),
+            "alpine-3.24-amd64",
+            "20260716_0947",
+            b"x",
+        );
+        let manager = MachineImageManager::with_base(
+            data_dir.path(),
+            RemoteLocation::File(publish_dir.path().to_path_buf()),
+        );
+        let streams = manager.list_remote("arm64").await.unwrap();
+        let names: Vec<_> = streams.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["alpine-3.24-arm64", "ubuntu-noble-arm64"]);
+        assert_eq!(streams[1].release_title.as_deref(), Some("title-noble"));
+        assert_eq!(streams[1].latest, "20260716_0947");
+    }
+
+    #[test]
+    fn a_configured_base_applies_without_the_environment_override() {
+        if std::env::var_os(IMAGE_BASE_ENV).is_some() {
+            return;
+        }
+        assert_eq!(
+            image_base_with(Some("/srv/images")).to_string(),
+            RemoteLocation::parse("/srv/images").to_string()
+        );
+        assert_eq!(
+            image_base_with(None).to_string(),
+            RemoteLocation::parse(DEFAULT_IMAGE_BASE).to_string()
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

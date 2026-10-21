@@ -149,6 +149,10 @@ message CreateMachineRequest {
     reserved 11;
     // Kernel command line.
     string cmdline = 12;
+    // A local machine image to boot, `name` or `name@version` (the newest
+    // version when omitted). When set, distro/version/arch are ignored and
+    // nothing is downloaded.
+    string image = 13;
 }
 
 // Request that targets a machine's guest agent.
@@ -268,6 +272,10 @@ message ExportMachineRequest {
     string id = 1;
     // Where to write the archive, on the daemon's host. Must not exist.
     string path = 2;
+    // Carry the machine's image in the archive so a host without it can
+    // import the machine. Absent: carry it when the image was imported on
+    // this host (no CDN publishes it).
+    optional bool include_image = 3;
 }
 
 // Response to export machine.
@@ -556,4 +564,139 @@ message MachineEvent {
     int64 timestamp = 3;
     // Additional context (reserved; e.g. error detail on future actions).
     map<string, string> attributes = 4;
+}
+
+// MachineImageService manages the local Linux machine image registry:
+// published images pulled by machine creation, and root filesystems the
+// user imports.
+service MachineImageService {
+    // Lists local images, with the machines that boot each.
+    rpc List(ListMachineImagesRequest) returns (ListMachineImagesResponse);
+
+    // Lists the images the configured image source publishes, fetched by
+    // the daemon through the egress proxy.
+    rpc ListRemote(ListRemoteMachineImagesRequest) returns (ListRemoteMachineImagesResponse);
+
+    // Imports a root filesystem as a local image, streaming progress. The
+    // last event carries the image.
+    rpc Import(ImportMachineImageRequest) returns (stream ImportMachineImageEvent);
+
+    // Removes a local image; refused while a machine boots from it.
+    rpc Remove(RemoveMachineImageRequest) returns (Empty);
+}
+
+// A local machine image.
+message MachineImageInfo {
+    // Image name (the stream, e.g. `ubuntu-noble-arm64` or `my-ubuntu`).
+    string name = 1;
+    // Version label.
+    string version = 2;
+    // Distro id.
+    string distro = 3;
+    // Distro release.
+    string release = 4;
+    // Human-readable release title.
+    string release_title = 5;
+    // Image architecture (`arm64`).
+    string arch = 6;
+    // Imported on this host rather than pulled from the image source.
+    bool imported = 7;
+    // Provenance: the upstream product, or what the import read.
+    string source = 8;
+    // Rootfs size in bytes.
+    uint64 size = 9;
+    // Rootfs SHA-256.
+    string sha256 = 10;
+    // Machines booting this image.
+    repeated string machines = 11;
+}
+
+// Request to list local images.
+message ListMachineImagesRequest {}
+
+// Local images.
+message ListMachineImagesResponse {
+    repeated MachineImageInfo images = 1;
+}
+
+// Request to list published images.
+message ListRemoteMachineImagesRequest {
+    // Architecture (`arm64`, `aarch64`); empty means this host's.
+    string arch = 1;
+}
+
+// One published image stream.
+message RemoteMachineImage {
+    // Stream name.
+    string name = 1;
+    // Distro id.
+    string distro = 2;
+    // Distro release.
+    string release = 3;
+    // Human-readable release title.
+    string release_title = 4;
+    // Image architecture.
+    string arch = 5;
+    // The version a pull resolves to.
+    string latest = 6;
+}
+
+// Published images.
+message ListRemoteMachineImagesResponse {
+    repeated RemoteMachineImage images = 1;
+    // The image source the list came from.
+    string base = 2;
+}
+
+// Request to import a root filesystem. Exactly one of `path` and
+// `docker_image` is set.
+message ImportMachineImageRequest {
+    // Name for the image: 1-63 lowercase letters, digits, `.`, `-`, `_`.
+    string name = 1;
+    // A rootfs archive (tar, tar.gz, tar.xz, tar.zst) or squashfs image, by
+    // absolute path on the daemon's host.
+    string path = 2;
+    // A Docker image in the System VM's engine, exported as the rootfs.
+    string docker_image = 3;
+    // Overrides the distro id read from os-release.
+    string distro = 4;
+    // Overrides the release read from os-release.
+    string release = 5;
+    // Refuses larger root filesystems; 0 means 20 GiB.
+    uint64 max_size = 6;
+}
+
+// Import stages.
+enum ImportMachineImagePhase {
+    IMPORT_MACHINE_IMAGE_PHASE_UNSPECIFIED = 0;
+    // Exporting the Docker image's filesystem.
+    IMPORT_MACHINE_IMAGE_PHASE_EXPORTING = 1;
+    // Reading the root filesystem; `bytes` read so far.
+    IMPORT_MACHINE_IMAGE_PHASE_READING = 2;
+    // Checking init, architecture and os-release.
+    IMPORT_MACHINE_IMAGE_PHASE_CHECKING = 3;
+    // Writing the squashfs.
+    IMPORT_MACHINE_IMAGE_PHASE_WRITING = 4;
+    // Hashing and registering; `bytes` is the image size.
+    IMPORT_MACHINE_IMAGE_PHASE_REGISTERING = 5;
+    // Finished; `image` and `warnings` are set.
+    IMPORT_MACHINE_IMAGE_PHASE_DONE = 6;
+}
+
+// Import progress.
+message ImportMachineImageEvent {
+    ImportMachineImagePhase phase = 1;
+    uint64 bytes = 2;
+    // The registered image (DONE only).
+    MachineImageInfo image = 3;
+    // Non-fatal findings (DONE only).
+    repeated string warnings = 4;
+}
+
+// Request to remove a local image.
+message RemoveMachineImageRequest {
+    // Image name.
+    string name = 1;
+    // Version; empty when the name has a single version.
+    string version = 2;
 }

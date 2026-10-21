@@ -5,7 +5,9 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-use super::{ArchiveManifest, DATA_DISK_ENTRY, FORMAT_VERSION, MANIFEST_ENTRY, TAR_BLOCK};
+use super::{
+    ArchiveManifest, DATA_DISK_ENTRY, FORMAT_VERSION, IMAGE_DIR_ENTRY, MANIFEST_ENTRY, TAR_BLOCK,
+};
 use crate::error::{EngineError, Result};
 
 /// Granularity of the zero scan that keeps a data disk arriving as a plain
@@ -57,6 +59,42 @@ pub fn read_manifest(path: &Path) -> Result<ArchiveManifest> {
         )));
     }
     Ok(manifest)
+}
+
+/// Writes the image the archive carries into the directory `dest`, one file
+/// per `image/<name>` entry. Returns whether the archive carried one.
+///
+/// # Errors
+///
+/// Returns an error if an image entry names anything but a plain file name,
+/// or the archive cannot be read.
+pub fn extract_image(path: &Path, dest: &Path) -> Result<bool> {
+    let mut archive = open(path)?;
+    let mut found = false;
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let entry_path = entry.path()?.into_owned();
+        let Ok(name) = entry_path.strip_prefix(IMAGE_DIR_ENTRY) else {
+            continue;
+        };
+        let mut components = name.components();
+        let file = match (components.next(), components.next()) {
+            (Some(std::path::Component::Normal(file)), None) => file.to_owned(),
+            _ => {
+                return Err(EngineError::config(format!(
+                    "{} carries an image entry with an unsafe name: {}",
+                    path.display(),
+                    entry_path.display()
+                )));
+            }
+        };
+        std::fs::create_dir_all(dest)?;
+        let mut out = File::create(dest.join(file))?;
+        io::copy(&mut entry, &mut out)?;
+        out.flush()?;
+        found = true;
+    }
+    Ok(found)
 }
 
 /// Restores the archive's data disk to `dest`, holes included.

@@ -968,7 +968,7 @@ async fn export_then_import_restores_the_machine_and_its_data() {
     let archive_path = temp_dir.path().join("dev.tar.zst");
 
     let size = manager
-        .export("dev", &archive_path, test_image_manifest())
+        .export("dev", &archive_path, test_image_manifest(), None)
         .unwrap();
     assert_eq!(size, archive_path.metadata().unwrap().len());
     // The snapshot the archive was written from is gone with the export.
@@ -1059,6 +1059,7 @@ async fn export_refuses_a_running_machine_and_stale_staging_is_swept() {
             "dev",
             &temp_dir.path().join("dev.tar.zst"),
             test_image_manifest(),
+            None,
         )
         .unwrap_err();
     assert!(err.to_string().contains("stop it first"), "{err}");

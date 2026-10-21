@@ -6,11 +6,15 @@
 //! sparse entry (GNU sparse format 1.0). A data disk is almost all holes;
 //! the sparse entry stores only the extents the guest wrote, and every tar
 //! that reads the format (GNU tar, bsdtar) restores the holes. The rootfs is
-//! not in the archive: it is the published image the manifest names, which
-//! import requires to be in the local registry.
+//! normally not in the archive: it is the published image the manifest
+//! names, which import requires to be in the local registry. An archive
+//! written with the image (`image_included`) also carries the registry
+//! directory — `image/manifest.json` and the rootfs — after the data disk,
+//! so a machine booting an image no CDN publishes (one imported on the Mac
+//! that exported it) can be restored on another.
 //!
-//! [`write`](write::write) builds an archive, [`read_manifest`] and
-//! [`extract_data_disk`] read one back.
+//! [`write`](write::write) builds an archive, [`read_manifest`],
+//! [`extract_data_disk`] and [`extract_image`] read one back.
 
 mod read;
 #[cfg(test)]
@@ -23,13 +27,15 @@ use serde::{Deserialize, Serialize};
 
 use super::MachineMount;
 
-pub use read::{extract_data_disk, read_manifest};
+pub use read::{extract_data_disk, extract_image, read_manifest};
 pub use write::write;
 
 /// The archive format this build writes, and the only one it reads.
 pub const FORMAT_VERSION: u32 = 1;
 const MANIFEST_ENTRY: &str = "manifest.json";
 const DATA_DISK_ENTRY: &str = "data.img";
+/// Directory holding a carried image's registry files.
+const IMAGE_DIR_ENTRY: &str = "image";
 const TAR_BLOCK: usize = 512;
 
 /// What the archive says about itself: the first entry.
@@ -43,9 +49,13 @@ pub struct ArchiveManifest {
     pub exported_at: DateTime<Utc>,
     /// The machine's own settings.
     pub machine: ArchivedMachine,
-    /// The published image the machine boots: the rootfs under its data
-    /// disk, which import must find in the local registry.
+    /// The image the machine boots: the rootfs under its data disk, which
+    /// import must find in the local registry unless the archive carries it.
     pub image: MachineImageManifest,
+    /// The archive carries the image under `image/`. Absent in archives
+    /// written before the field existed.
+    #[serde(default)]
+    pub image_included: bool,
 }
 
 /// The settings a machine is recreated with.

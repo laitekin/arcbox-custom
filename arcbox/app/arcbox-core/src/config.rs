@@ -307,6 +307,11 @@ pub struct MachineDefaults {
     /// given no name. `abctl machine default` writes it; `None` means every
     /// command needs a name.
     pub default_machine: Option<String>,
+    /// Where machine images are published: an `https://` URL or a local
+    /// directory holding `index.json` and the manifests beside it. The
+    /// `ARCBOX_MACHINE_IMAGE_BASE` environment variable overrides it; unset
+    /// means ArcBox's own CDN.
+    pub image_base: Option<String>,
 }
 
 impl Default for MachineDefaults {
@@ -317,6 +322,7 @@ impl Default for MachineDefaults {
             default_version: None,
             auto_mount_home: true,
             default_machine: None,
+            image_base: None,
         }
     }
 }

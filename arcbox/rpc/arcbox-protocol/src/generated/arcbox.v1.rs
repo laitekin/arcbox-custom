@@ -2007,6 +2007,11 @@ pub struct CreateMachineRequest {
     /// Kernel command line.
     #[prost(string, tag = "12")]
     pub cmdline: ::prost::alloc::string::String,
+    /// A local machine image to boot, `name` or `name@version` (the newest
+    /// version when omitted). When set, distro/version/arch are ignored and
+    /// nothing is downloaded.
+    #[prost(string, tag = "13")]
+    pub image: ::prost::alloc::string::String,
 }
 /// Request that targets a machine's guest agent.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -2159,6 +2164,11 @@ pub struct ExportMachineRequest {
     /// Where to write the archive, on the daemon's host. Must not exist.
     #[prost(string, tag = "2")]
     pub path: ::prost::alloc::string::String,
+    /// Carry the machine's image in the archive so a host without it can
+    /// import the machine. Absent: carry it when the image was imported on
+    /// this host (no CDN publishes it).
+    #[prost(bool, optional, tag = "3")]
+    pub include_image: ::core::option::Option<bool>,
 }
 /// Response to export machine.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -2542,6 +2552,186 @@ pub struct MachineEvent {
     #[prost(map = "string, string", tag = "4")]
     pub attributes:
         ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+}
+/// A local machine image.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct MachineImageInfo {
+    /// Image name (the stream, e.g. `ubuntu-noble-arm64` or `my-ubuntu`).
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    /// Version label.
+    #[prost(string, tag = "2")]
+    pub version: ::prost::alloc::string::String,
+    /// Distro id.
+    #[prost(string, tag = "3")]
+    pub distro: ::prost::alloc::string::String,
+    /// Distro release.
+    #[prost(string, tag = "4")]
+    pub release: ::prost::alloc::string::String,
+    /// Human-readable release title.
+    #[prost(string, tag = "5")]
+    pub release_title: ::prost::alloc::string::String,
+    /// Image architecture (`arm64`).
+    #[prost(string, tag = "6")]
+    pub arch: ::prost::alloc::string::String,
+    /// Imported on this host rather than pulled from the image source.
+    #[prost(bool, tag = "7")]
+    pub imported: bool,
+    /// Provenance: the upstream product, or what the import read.
+    #[prost(string, tag = "8")]
+    pub source: ::prost::alloc::string::String,
+    /// Rootfs size in bytes.
+    #[prost(uint64, tag = "9")]
+    pub size: u64,
+    /// Rootfs SHA-256.
+    #[prost(string, tag = "10")]
+    pub sha256: ::prost::alloc::string::String,
+    /// Machines booting this image.
+    #[prost(string, repeated, tag = "11")]
+    pub machines: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+/// Request to list local images.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListMachineImagesRequest {}
+/// Local images.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListMachineImagesResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub images: ::prost::alloc::vec::Vec<MachineImageInfo>,
+}
+/// Request to list published images.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListRemoteMachineImagesRequest {
+    /// Architecture (`arm64`, `aarch64`); empty means this host's.
+    #[prost(string, tag = "1")]
+    pub arch: ::prost::alloc::string::String,
+}
+/// One published image stream.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RemoteMachineImage {
+    /// Stream name.
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    /// Distro id.
+    #[prost(string, tag = "2")]
+    pub distro: ::prost::alloc::string::String,
+    /// Distro release.
+    #[prost(string, tag = "3")]
+    pub release: ::prost::alloc::string::String,
+    /// Human-readable release title.
+    #[prost(string, tag = "4")]
+    pub release_title: ::prost::alloc::string::String,
+    /// Image architecture.
+    #[prost(string, tag = "5")]
+    pub arch: ::prost::alloc::string::String,
+    /// The version a pull resolves to.
+    #[prost(string, tag = "6")]
+    pub latest: ::prost::alloc::string::String,
+}
+/// Published images.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListRemoteMachineImagesResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub images: ::prost::alloc::vec::Vec<RemoteMachineImage>,
+    /// The image source the list came from.
+    #[prost(string, tag = "2")]
+    pub base: ::prost::alloc::string::String,
+}
+/// Request to import a root filesystem. Exactly one of `path` and
+/// `docker_image` is set.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ImportMachineImageRequest {
+    /// Name for the image: 1-63 lowercase letters, digits, `.`, `-`, `_`.
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    /// A rootfs archive (tar, tar.gz, tar.xz, tar.zst) or squashfs image, by
+    /// absolute path on the daemon's host.
+    #[prost(string, tag = "2")]
+    pub path: ::prost::alloc::string::String,
+    /// A Docker image in the System VM's engine, exported as the rootfs.
+    #[prost(string, tag = "3")]
+    pub docker_image: ::prost::alloc::string::String,
+    /// Overrides the distro id read from os-release.
+    #[prost(string, tag = "4")]
+    pub distro: ::prost::alloc::string::String,
+    /// Overrides the release read from os-release.
+    #[prost(string, tag = "5")]
+    pub release: ::prost::alloc::string::String,
+    /// Refuses larger root filesystems; 0 means 20 GiB.
+    #[prost(uint64, tag = "6")]
+    pub max_size: u64,
+}
+/// Import progress.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ImportMachineImageEvent {
+    #[prost(enumeration = "ImportMachineImagePhase", tag = "1")]
+    pub phase: i32,
+    #[prost(uint64, tag = "2")]
+    pub bytes: u64,
+    /// The registered image (DONE only).
+    #[prost(message, optional, tag = "3")]
+    pub image: ::core::option::Option<MachineImageInfo>,
+    /// Non-fatal findings (DONE only).
+    #[prost(string, repeated, tag = "4")]
+    pub warnings: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+/// Request to remove a local image.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RemoveMachineImageRequest {
+    /// Image name.
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    /// Version; empty when the name has a single version.
+    #[prost(string, tag = "2")]
+    pub version: ::prost::alloc::string::String,
+}
+/// Import stages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ImportMachineImagePhase {
+    Unspecified = 0,
+    /// Exporting the Docker image's filesystem.
+    Exporting = 1,
+    /// Reading the root filesystem; `bytes` read so far.
+    Reading = 2,
+    /// Checking init, architecture and os-release.
+    Checking = 3,
+    /// Writing the squashfs.
+    Writing = 4,
+    /// Hashing and registering; `bytes` is the image size.
+    Registering = 5,
+    /// Finished; `image` and `warnings` are set.
+    Done = 6,
+}
+impl ImportMachineImagePhase {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "IMPORT_MACHINE_IMAGE_PHASE_UNSPECIFIED",
+            Self::Exporting => "IMPORT_MACHINE_IMAGE_PHASE_EXPORTING",
+            Self::Reading => "IMPORT_MACHINE_IMAGE_PHASE_READING",
+            Self::Checking => "IMPORT_MACHINE_IMAGE_PHASE_CHECKING",
+            Self::Writing => "IMPORT_MACHINE_IMAGE_PHASE_WRITING",
+            Self::Registering => "IMPORT_MACHINE_IMAGE_PHASE_REGISTERING",
+            Self::Done => "IMPORT_MACHINE_IMAGE_PHASE_DONE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "IMPORT_MACHINE_IMAGE_PHASE_UNSPECIFIED" => Some(Self::Unspecified),
+            "IMPORT_MACHINE_IMAGE_PHASE_EXPORTING" => Some(Self::Exporting),
+            "IMPORT_MACHINE_IMAGE_PHASE_READING" => Some(Self::Reading),
+            "IMPORT_MACHINE_IMAGE_PHASE_CHECKING" => Some(Self::Checking),
+            "IMPORT_MACHINE_IMAGE_PHASE_WRITING" => Some(Self::Writing),
+            "IMPORT_MACHINE_IMAGE_PHASE_REGISTERING" => Some(Self::Registering),
+            "IMPORT_MACHINE_IMAGE_PHASE_DONE" => Some(Self::Done),
+            _ => None,
+        }
+    }
 }
 /// Request to create a macOS guest from a base image.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

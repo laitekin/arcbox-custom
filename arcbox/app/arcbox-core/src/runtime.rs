@@ -347,8 +347,9 @@ impl Runtime {
         #[cfg(target_os = "macos")]
         let mac_machine_manager = Arc::new(MacMachineManager::new(&config.data_dir));
 
-        let machine_image_manager = Arc::new(crate::machine_image::MachineImageManager::new(
+        let machine_image_manager = Arc::new(crate::machine_image::MachineImageManager::with_base(
             &config.data_dir,
+            crate::machine_image::image_base_with(config.machine.image_base.as_deref()),
         ));
 
         let stats_hub = crate::stats_hub::StatsHub::new(crate::stats_hub::AgentStatsSource::new(

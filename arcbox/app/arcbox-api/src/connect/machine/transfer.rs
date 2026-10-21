@@ -15,10 +15,14 @@ use super::{refusal, rootfs};
 
 /// Writes machine `id` to the archive at `path`; the image manifest it
 /// carries is the registry entry the machine's rootfs device belongs to.
+/// The image itself rides along when `include_image` says so, or — when it
+/// says nothing — when the image was imported on this host, since no image
+/// source publishes it for the importing host to pull.
 pub(super) async fn export(
     runtime: &Arc<Runtime>,
     id: String,
     path: String,
+    include_image: Option<bool>,
 ) -> Result<pb::ExportMachineResponse, ConnectError> {
     let path = archive_path(&path)?;
     let machine = runtime
@@ -43,12 +47,17 @@ pub(super) async fn export(
             ))
         })?;
 
+    let carry = include_image
+        .unwrap_or_else(|| arcbox_image::machine_import::is_imported(&image.manifest))
+        .then(|| image.dir.clone());
     let manager = Arc::clone(runtime.machine_manager());
     let archive = path.clone();
-    let size = tokio::task::spawn_blocking(move || manager.export(&id, &archive, image.manifest))
-        .await
-        .map_err(|e| ConnectError::internal(format!("export task panicked: {e}")))?
-        .map_err(refusal)?;
+    let size = tokio::task::spawn_blocking(move || {
+        manager.export(&id, &archive, image.manifest, carry.as_deref())
+    })
+    .await
+    .map_err(|e| ConnectError::internal(format!("export task panicked: {e}")))?
+    .map_err(refusal)?;
     Ok(pb::ExportMachineResponse {
         path: path.to_string_lossy().into_owned(),
         size,
@@ -77,6 +86,9 @@ pub(super) async fn import(
         .machine_manager()
         .ensure_name_available(&name)
         .map_err(refusal)?;
+    if manifest.image_included {
+        register_carried_image(runtime, &path, &manifest.image).await?;
+    }
     let image = local_image(runtime, &manifest.image)?;
 
     let cpus = if req.cpus == 0 {
@@ -120,6 +132,42 @@ pub(super) async fn import(
         distro_version: archived.distro_version.unwrap_or_default(),
         ..Default::default()
     })
+}
+
+/// Registers the image an archive carries, unless the registry already
+/// has that version. The image is staged in the registry directory and
+/// verified against its manifest before it lands.
+async fn register_carried_image(
+    runtime: &Runtime,
+    archive: &Path,
+    wanted: &machine_image::MachineImageManifest,
+) -> Result<(), ConnectError> {
+    let registry = Arc::clone(runtime.machine_image_manager());
+    if registry.get(&wanted.name, &wanted.version).is_ok() {
+        return Ok(());
+    }
+    let archive = archive.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let staging = registry
+            .images_dir()
+            .join(format!(".carried-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&staging)?;
+        let _cleanup = arcbox_image::remote_image::StagingGuard::new(staging.clone());
+        let carried = arcbox_core::machine::archive::extract_image(&archive, &staging)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        if !carried {
+            return Err(std::io::Error::other(
+                "the archive says it carries its image but does not",
+            ));
+        }
+        registry
+            .register_carried(&staging)
+            .map(|_| ())
+            .map_err(|e| std::io::Error::other(e.to_string()))
+    })
+    .await
+    .map_err(|e| ConnectError::internal(format!("import task panicked: {e}")))?
+    .map_err(|e| ConnectError::failed_precondition(format!("the archive's image: {e}")))
 }
 
 /// The registry's copy of the image the archive was made with: same stream
