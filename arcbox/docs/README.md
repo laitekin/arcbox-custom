@@ -45,6 +45,8 @@ from memory. Every new file is added to the index below.
 
 ## Index
 
+- [Host-side proxy authentication](logs/2026-10-21-proxy-authentication.md) — credential redaction, TCP/UDP authentication, and rejection tests
+
 ### Reference
 
 - [ArcBox Engine](../engine/arcbox-engine/README.md) — machine lifecycle, force-stop completion, and storage maintenance

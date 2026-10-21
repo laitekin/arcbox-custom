@@ -137,4 +137,3 @@ async fn configured_credentials_never_downgrade_to_no_auth() {
     ));
     server.await.unwrap();
 }
-
