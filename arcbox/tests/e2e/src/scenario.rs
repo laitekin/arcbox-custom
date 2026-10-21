@@ -46,6 +46,17 @@ pub fn run_vz_scenario_with_log(
     rust_log: &str,
     scenario: impl FnOnce(&mut DaemonHandle, &Path, &mut RunMetrics) -> Result<()>,
 ) -> Result<()> {
+    run_vz_scenario_with_env(name, rust_log, &[], scenario)
+}
+
+/// [`run_vz_scenario_with_log`] with extra daemon environment, for a
+/// scenario that configures the daemon itself (e.g. `ARCBOX_NETWORK_PROXY`).
+pub fn run_vz_scenario_with_env(
+    name: &str,
+    rust_log: &str,
+    extra_env: &[(&str, String)],
+    scenario: impl FnOnce(&mut DaemonHandle, &Path, &mut RunMetrics) -> Result<()>,
+) -> Result<()> {
     init_tracing();
     // Diagnostic override for the daemon under test, e.g.
     // ARCBOX_E2E_DAEMON_LOG="info,splicetcp::tcp_bridge=debug".
@@ -80,7 +91,14 @@ pub fn run_vz_scenario_with_log(
             ("ARCBOX_BOOT_ASSET_VERSION".to_owned(), version),
             ("ARCBOX_VM_BACKEND".to_owned(), "vz".to_owned()),
             ("RUST_LOG".to_owned(), rust_log),
-        ],
+        ]
+        .into_iter()
+        .chain(
+            extra_env
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.clone())),
+        )
+        .collect(),
     })?;
 
     let result = scenario(&mut daemon, data_dir.path(), &mut metrics);

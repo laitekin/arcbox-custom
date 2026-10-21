@@ -45,7 +45,7 @@ from memory. Every new file is added to the index below.
 
 ## Index
 
-- [Host-side proxy authentication](logs/2026-10-21-proxy-authentication.md) — credential redaction, TCP/UDP authentication, and rejection tests
+- [Host-side proxy authentication](logs/2026-10-21-proxy-authentication.md) — credentials, live settings, API/CLI, proxy test, daemon downloads, coverage matrix
 
 ### Reference
 
