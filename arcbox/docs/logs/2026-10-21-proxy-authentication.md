@@ -71,7 +71,8 @@ CONNECT; loopback and the bypass list direct).
 | `docker pull` / `docker build` | dockerd / BuildKit in the System VM | Yes (same datapath) | `proxy_coverage` e2e pull row (not yet run) |
 | Linux machine programs | machine VMs | Yes (same `ProxyState`) | `proxy_coverage` e2e machine row (not yet run) |
 | Kubernetes pods | k3s containerd in the System VM | Yes (same datapath) | `proxy_coverage` e2e pod row (not yet run) |
-| Sandbox microVMs | nested in the System VM | Expected yes (their egress leaves through the System VM) | not yet verified |
+| Sandbox microVMs | nested in the System VM | Yes: each sandbox's point-to-point TAP is forwarded (no in-guest NAT) out the System VM's uplink into the same host datapath | code reading: `guest/arcbox-agent/src/init.rs` `setup_sandbox_forwarding`; no e2e row yet |
+| Sandbox DNS | sandbox → public resolvers (`1.1.1.1`, `8.8.8.8` by default) | Yes as UDP flows with SOCKS5; with an HTTP-only proxy they drop unless `udp = "direct"`, so sandboxes cannot resolve | `computer/arcbox-computer-runtime/src/config/runtime.rs` defaults |
 | Built-in DNS (gateway) | daemon (host) | **No**: queries go from the host straight to its resolvers over UDP 53 (see "Host-side DNS" below); the flow that follows reaches the proxy by name | `virt/arcbox-net/src/darwin/datapath_loop/intercept.rs` (code reading) |
 | ICMP echo | any VM | No proxy can carry it: direct, or dropped with `icmp = "block"` | `arcbox-proxy` egress |
 | Machine images, image index, Docker CLI tools, macOS IPSW | daemon (host) | Yes | `arcbox-asset` `http_proxy`; `proxy_coverage` e2e (the machine row's image pull) |
