@@ -17,7 +17,7 @@
 
 - [x] F4 界面「自动安装 init」：在 `ImportMachineImageRequest` 增加 `add_init`，守护进程经 Docker API `/build` 用与 CLI 相同的 Dockerfile 构建派生镜像后导入；CLI `--add-init` 改走该字段；桌面导入表单加复选框；测试用伪 Docker socket 覆盖。
 - [x] F2 菜单栏快速切换：菜单栏增加「代理：开/关」项（关=direct，开=恢复上次的 custom/system 设置，记录在 `UserDefaults`）；view model 单元测试。
-- [ ] 桌面单元测试：`NetworkSettingsModel`（isDirty、needsPassword、validationError）与 `MachineImagesSheet.suggestedName` 放入 `ArcBoxTests`，Linux 上用 scratch 包至少编译通过。
+- [x] 桌面单元测试：`NetworkSettingsModel`（isDirty、needsPassword、validationError）与 `MachineImagesSheet.suggestedName` 放入 `ArcBoxTests`，Linux 上用 scratch 包至少编译通过。
 - [ ] e2e：`tests/e2e/tests/proxy_coverage.rs` 增加 Linux 机器行（创建 alpine 机器，机器内 wget TEST-NET 目标）与 k3s Pod 行；`tests/e2e/tests/machine.rs` 增加镜像导入场景（导入 rootfs → create --image → start → exec → export 含镜像 → 删除镜像后 import）。
 - [ ] R6 宿主机 DNS：阅读 `arcbox-dns`/`splicetcp` 代码，确认代理模式下宿主机侧是否发出真实 DNS 查询；结论写入 `docs/logs/2026-10-21-proxy-authentication.md` 覆盖矩阵；若会泄露，代理模式下改为仅返回 fake IP（带测试）。
 - [ ] sandbox 覆盖：确认 `computer/` sandbox microVM 出站经过 System VM 数据通路，结论写入覆盖矩阵。

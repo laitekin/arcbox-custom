@@ -105,6 +105,18 @@ import Testing
         }
     }
 
+    @Test func suggestedNamesFitTheNameRules() {
+        #expect(suggestedMachineImageName(forFile: "ubuntu-rootfs.tar.gz") == "ubuntu-rootfs")
+        #expect(suggestedMachineImageName(forFile: "Alpine 3.20.SQUASHFS") == "alpine-3.20")
+        #expect(suggestedMachineImageName(forFile: "_my image_.tar") == "my-image")
+        #expect(suggestedMachineImageName(forFile: "rootfs.tar.zst.bak") == "rootfs.tar.zst.bak")
+        let long = suggestedMachineImageName(forFile: String(repeating: "a", count: 80) + ".tgz")
+        #expect(long.count == 63)
+        for name in ["ubuntu-rootfs.tar.gz", "Alpine 3.20.SQUASHFS", long + ".tar"] {
+            #expect(isValidMachineImageName(suggestedMachineImageName(forFile: name)))
+        }
+    }
+
     @Test func importSourcesFillOneField() {
         let file = MachineImageImportSource.file(URL(fileURLWithPath: "/tmp/rootfs.tar.gz")).request(name: "x")
         #expect(file.path == "/tmp/rootfs.tar.gz")

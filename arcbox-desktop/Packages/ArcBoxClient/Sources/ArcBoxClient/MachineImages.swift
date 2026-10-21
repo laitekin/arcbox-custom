@@ -96,6 +96,21 @@ public func isValidMachineImageName(_ name: String) -> Bool {
     return lowerOrDigit.contains(first) && name.unicodeScalars.allSatisfy { allowed.contains($0) }
 }
 
+/// An image name for an imported file: `ubuntu-rootfs.tar.gz` →
+/// `ubuntu-rootfs`, lowercased and limited to the characters a name allows.
+public func suggestedMachineImageName(forFile fileName: String) -> String {
+    var stem = fileName.lowercased()
+    for suffix in [".tar.gz", ".tar.xz", ".tar.zst", ".tgz", ".tar", ".squashfs", ".sqfs"]
+    where stem.hasSuffix(suffix) {
+        stem.removeLast(suffix.count)
+        break
+    }
+    let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789.-_")
+    let cleaned = String(stem.map { allowed.contains($0) ? $0 : "-" })
+        .trimmingCharacters(in: CharacterSet(charactersIn: ".-_"))
+    return String(cleaned.prefix(63))
+}
+
 extension MachineImageImportSource {
     /// The import request for this source under `name`.
     public func request(name: String) -> Arcbox_V1_ImportMachineImageRequest {

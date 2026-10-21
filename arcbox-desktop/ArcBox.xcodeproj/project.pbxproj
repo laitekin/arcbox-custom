@@ -23,6 +23,7 @@
 		0C35F427DABEE19C0C583BE1 /* ContainersViewModel+Docker.swift in Sources */ = {isa = PBXBuildFile; fileRef = D12C2D038DE6CC49702F85F0 /* ContainersViewModel+Docker.swift */; };
 		0C6B829AD5010FDB0E749471 /* PullImageSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8254D67C0D80B99FC18DAD5 /* PullImageSheet.swift */; };
 		0D2989F83BD1C82C4A12B777 /* SandboxNotificationRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = 665F6200AEC097082B2C43CA /* SandboxNotificationRules.swift */; };
+		0DF6B719BA9E6CE086AA7C02 /* NetworkSettingsModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08EEEE09A10D14D21EEEBDB7 /* NetworkSettingsModelTests.swift */; };
 		0E42DD1DDB459E2058A6181B /* ContainerLogsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45D481BC91D8F67BAA688619 /* ContainerLogsModel.swift */; };
 		0E680E7A421A91FFB668D65E /* SandboxEventsTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = E38681FE9A98E55B1608E662 /* SandboxEventsTab.swift */; };
 		0EA623FAB4206D834C87DD75 /* MainWindowControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2110402B2013A53E306B4E43 /* MainWindowControllerTests.swift */; };
@@ -365,6 +366,7 @@
 		06DFFB59D72F27F14A233B81 /* DockerEventMonitorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockerEventMonitorTests.swift; sourceTree = "<group>"; };
 		089AAF447EC30EF108B76EF7 /* NetworksListViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworksListViewController.swift; sourceTree = "<group>"; };
 		08A76C0B459745654F31B3B2 /* PodsListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PodsListView.swift; sourceTree = "<group>"; };
+		08EEEE09A10D14D21EEEBDB7 /* NetworkSettingsModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkSettingsModelTests.swift; sourceTree = "<group>"; };
 		0B8670CF269C853BD2039B34 /* NetworkModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkModel.swift; sourceTree = "<group>"; };
 		0CE7897EE0D976BB19ADC2C5 /* SandboxEmptyState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SandboxEmptyState.swift; sourceTree = "<group>"; };
 		0D14D8CCDFD8775C585050EE /* ContainerNotificationRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContainerNotificationRules.swift; sourceTree = "<group>"; };
@@ -1351,6 +1353,7 @@
 				769B6260DD087F5B16E7407D /* MachinesListViewControllerTests.swift */,
 				2110402B2013A53E306B4E43 /* MainWindowControllerTests.swift */,
 				0FA3C6B6F10198DFC435A33E /* NetworkDetailViewControllerTests.swift */,
+				08EEEE09A10D14D21EEEBDB7 /* NetworkSettingsModelTests.swift */,
 				FA27F4AC273B14038EDB6593 /* NetworksListViewControllerTests.swift */,
 				1CB46AB0A8DB6C47F74A9D3C /* OffscreenHostScrollingSupport.swift */,
 				5ACDFCB6B6EAE03C448FB05E /* OffscreenHostTestSupport.swift */,
@@ -1880,6 +1883,7 @@
 				42D2999F4DD68126333F94ED /* MachinesListViewControllerTests.swift in Sources */,
 				0EA623FAB4206D834C87DD75 /* MainWindowControllerTests.swift in Sources */,
 				7F8FB0C66C04AEF7895A85AD /* NetworkDetailViewControllerTests.swift in Sources */,
+				0DF6B719BA9E6CE086AA7C02 /* NetworkSettingsModelTests.swift in Sources */,
 				2C12FA161C343D99BD2E8AFD /* NetworksListViewControllerTests.swift in Sources */,
 				FA3C75C980F16DF31DC99FAF /* OffscreenHostScrollingSupport.swift in Sources */,
 				F189AA650ACF2CE9C585743F /* OffscreenHostTestSupport.swift in Sources */,

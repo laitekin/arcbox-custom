@@ -84,7 +84,7 @@ struct MachineImagesSheet: View {
             if case .success(let urls) = result, let url = urls.first {
                 importFile = url
                 if importName.isEmpty {
-                    importName = Self.suggestedName(for: url.lastPathComponent)
+                    importName = suggestedMachineImageName(forFile: url.lastPathComponent)
                 }
             }
         }
@@ -180,21 +180,6 @@ struct MachineImagesSheet: View {
             Text("Import")
         }
         .disabled(model.isImporting)
-    }
-
-    /// `ubuntu-rootfs.tar.gz` → `ubuntu-rootfs`, lowercased and limited to
-    /// the characters an image name allows.
-    static func suggestedName(for fileName: String) -> String {
-        var stem = fileName.lowercased()
-        for suffix in [".tar.gz", ".tar.xz", ".tar.zst", ".tgz", ".tar", ".squashfs", ".sqfs"]
-        where stem.hasSuffix(suffix) {
-            stem.removeLast(suffix.count)
-            break
-        }
-        let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789.-_")
-        let cleaned = String(stem.map { allowed.contains($0) ? $0 : "-" })
-            .trimmingCharacters(in: CharacterSet(charactersIn: ".-_"))
-        return String(cleaned.prefix(63))
     }
 }
 
