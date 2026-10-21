@@ -80,6 +80,7 @@ pub mod machine;
 #[cfg(target_os = "macos")]
 pub mod macos;
 pub mod migrate;
+pub mod network;
 pub mod sandbox;
 pub mod setup;
 pub mod ssh;
@@ -170,6 +171,10 @@ pub enum Commands {
     #[command(subcommand)]
     System(system::SystemCommands),
 
+    /// Manage guest networking (egress proxy, test)
+    #[command(subcommand)]
+    Network(network::NetworkCommands),
+
     /// Manage boot assets (kernel/rootfs)
     #[command(subcommand)]
     Boot(boot::BootCommands),
@@ -251,6 +256,7 @@ impl Cli {
                 | Commands::Disk(disk::DiskCommands::Usage)
                 | Commands::Machine(machine::MachineCommands::Inspect(_))
                 | Commands::Sandbox(sandbox::SandboxCommands::Inspect(_))
+                | Commands::Network(_)
                 | Commands::Doctor => true,
                 #[cfg(target_os = "macos")]
                 Commands::Dns(dns::DnsCommands::Status) => true,
@@ -262,7 +268,9 @@ impl Cli {
                     setup::SetupCommands::Install
                         | setup::SetupCommands::Uninstall
                         | setup::SetupCommands::Status
-                )
+                ) | Commands::Network(network::NetworkCommands::Proxy(
+                    network::ProxyCommands::Set(_) | network::ProxyCommands::Unset
+                ))
             ),
         };
 

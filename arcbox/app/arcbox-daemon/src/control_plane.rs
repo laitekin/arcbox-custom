@@ -324,6 +324,63 @@ mod tests {
         shutdown.cancel();
     }
 
+    /// The egress proxy answers from the early runtime handle — before the
+    /// VM is ready — so a proxy the boot depends on can be inspected and
+    /// fixed while `shared_runtime` is still empty. A request it cannot
+    /// apply is refused as the caller's error, not the daemon's.
+    #[tokio::test]
+    async fn egress_proxy_answers_before_the_runtime_is_ready() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let socket = dir.path().join("arcbox.sock");
+        let shared: arcbox_api::SharedRuntime = Arc::new(OnceLock::new());
+        let early: arcbox_api::SharedRuntime = Arc::new(OnceLock::new());
+        let runtime = arcbox_core::Runtime::new(arcbox_core::Config {
+            data_dir: dir.path().join("data"),
+            ..Default::default()
+        })
+        .expect("runtime");
+        early.set(Arc::new(runtime)).ok().expect("empty");
+        let system = arcbox_api::SystemServiceImpl::new(
+            Arc::new(arcbox_api::SetupState::new()),
+            Arc::clone(&shared),
+            early,
+        );
+        let app = into_app(connect_router(shared, system).expect("connect router"));
+        let listener = bind(&socket).expect("bind temp socket");
+        let shutdown = CancellationToken::new();
+        drop(tokio::spawn(serve(listener, app, shutdown.clone())));
+
+        let post = |path: &str, body: &str| {
+            format!(
+                "POST /arcbox.v1.EgressProxyService/{path} HTTP/1.1\r\nHost: localhost\r\n\
+                 Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+        };
+
+        let response = http1_request(&socket, &post("GetProxy", "{}")).await;
+        assert!(response.contains("HTTP/1.1 200"), "{response}");
+        assert!(
+            response.contains("EGRESS_PROXY_MODE_SYSTEM"),
+            "the default policy follows the Mac: {response}"
+        );
+
+        let response = http1_request(
+            &socket,
+            &post(
+                "SetProxy",
+                r#"{"settings":{"mode":"EGRESS_PROXY_MODE_UNSPECIFIED"}}"#,
+            ),
+        )
+        .await;
+        assert!(
+            response.contains("invalid_argument"),
+            "an unusable request is the caller's error: {response}"
+        );
+
+        shutdown.cancel();
+    }
+
     /// Every service must actually be registered, or its path 404s: the
     /// router serves exactly what it was given, and a service dropped
     /// during the tonic migration (CORE-68) would fail nowhere else.
