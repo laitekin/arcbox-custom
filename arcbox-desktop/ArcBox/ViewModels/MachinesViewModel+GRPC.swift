@@ -10,6 +10,8 @@ struct MachineCreateSpec {
     var cpus: UInt32 = 0
     var memoryGiB: UInt64 = 4
     var diskGiB: UInt64 = 50
+    /// A local image (`name@version`) to boot instead of a distro.
+    var image = ""
 }
 
 extension MachinesViewModel {
@@ -103,6 +105,7 @@ extension MachinesViewModel {
         request.cpus = spec.cpus
         request.memory = spec.memoryGiB << 30
         request.diskSize = spec.diskGiB << 30
+        request.image = spec.image
         do {
             // Create pulls the distro image from the CDN on first use.
             let response = try await client.machines.create(

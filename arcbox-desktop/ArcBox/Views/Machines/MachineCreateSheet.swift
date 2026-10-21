@@ -1,3 +1,4 @@
+import ArcBoxClient
 import SwiftUI
 
 /// New machine dialog presented as a sheet.
@@ -13,6 +14,16 @@ struct MachineCreateSheet: View {
     @State private var distros: [MachineDistroOption] = MachineImageCatalog.fallback
     @State private var selectedDistro = "ubuntu"
     @State private var selectedRelease = ""
+    /// Official distribution, or an image in the local registry.
+    @State private var source: ImageSource = .distribution
+    @State private var localImages: [LocalMachineImage] = []
+    @State private var selectedImage = ""
+
+    enum ImageSource: String, CaseIterable, Identifiable {
+        case distribution = "Distribution"
+        case local = "My Images"
+        var id: String { rawValue }
+    }
 
     // Resources (daemon defaults: 4 GiB memory, 50 GB disk)
     @State private var cpus: Int = 4
@@ -24,7 +35,12 @@ struct MachineCreateSheet: View {
     }
 
     private var canCreate: Bool {
-        client != nil && !isCreating && !trimmedName.isEmpty && !selectedRelease.isEmpty
+        let imageChosen =
+            switch source {
+            case .distribution: !selectedRelease.isEmpty
+            case .local: !selectedImage.isEmpty
+            }
+        return client != nil && !isCreating && !trimmedName.isEmpty && imageChosen
     }
 
     private var trimmedName: String {
@@ -61,14 +77,35 @@ struct MachineCreateSheet: View {
                 }
 
                 Section("Image") {
-                    Picker("Distribution", selection: $selectedDistro) {
-                        ForEach(distros) { option in
-                            Text(option.displayName).tag(option.distro)
+                    Picker("Source", selection: $source) {
+                        ForEach(ImageSource.allCases) { source in
+                            Text(source.rawValue).tag(source)
                         }
                     }
-                    Picker("Release", selection: $selectedRelease) {
-                        ForEach(releases, id: \.self) { release in
-                            Text(release).tag(release)
+                    .pickerStyle(.segmented)
+                    switch source {
+                    case .distribution:
+                        Picker("Distribution", selection: $selectedDistro) {
+                            ForEach(distros) { option in
+                                Text(option.displayName).tag(option.distro)
+                            }
+                        }
+                        Picker("Release", selection: $selectedRelease) {
+                            ForEach(releases, id: \.self) { release in
+                                Text(release).tag(release)
+                            }
+                        }
+                    case .local:
+                        if localImages.isEmpty {
+                            Text("No images yet. Import a root filesystem under Machines › Images.")
+                                .font(.system(size: 12))
+                                .foregroundStyle(AppColors.textSecondary)
+                        } else {
+                            Picker("Image", selection: $selectedImage) {
+                                ForEach(localImages) { image in
+                                    Text("\(image.name) — \(image.displayTitle)").tag(image.reference)
+                                }
+                            }
                         }
                     }
                 }
@@ -113,8 +150,16 @@ struct MachineCreateSheet: View {
         .frame(width: 440, height: 460)
         .interactiveDismissDisabled(isCreating)
         .task {
-            distros = await MachineImageCatalog.fetch()
+            distros = await MachineImageCatalog.fetch(client: client)
             normalizeSelection()
+        }
+        .task {
+            guard let client else { return }
+            let images = try? await client.machineImages.list(
+                .init(), options: ArcBoxClient.defaultCallOptions)
+            localImages = (images?.images ?? []).map(LocalMachineImage.init(proto:))
+                .filter(\.imported)
+            selectedImage = localImages.first?.reference ?? ""
         }
         .onChange(of: selectedDistro) {
             normalizeSelection()
@@ -140,6 +185,11 @@ struct MachineCreateSheet: View {
         spec.cpus = UInt32(cpus)
         spec.memoryGiB = UInt64(memoryGiB)
         spec.diskGiB = UInt64(diskGiB)
+        if source == .local {
+            spec.distro = ""
+            spec.version = ""
+            spec.image = selectedImage
+        }
 
         isCreating = true
         errorMessage = nil

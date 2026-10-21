@@ -7,6 +7,7 @@ struct MachinesView: View {
     @Environment(DaemonManager.self) private var daemonManager
     @Environment(\.startupOrchestrator) private var orchestrator
     @Environment(\.arcboxClient) private var client
+    @State private var showImagesSheet = false
 
     var body: some View {
         Group {
@@ -63,6 +64,15 @@ struct MachinesView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button(
+                    action: { showImagesSheet = true },
+                    label: {
+                        Image(systemName: "square.stack.3d.up")
+                    }
+                )
+                .accessibilityLabel("Machine images")
+                .help("Machine images")
+                .disabled(client == nil || !daemonManager.state.isRunning)
+                Button(
                     action: { vm.showCreateSheet = true },
                     label: {
                         Image(systemName: "plus")
@@ -79,6 +89,9 @@ struct MachinesView: View {
         }
         .sheet(isPresented: Bindable(vm).showCreateSheet) {
             MachineCreateSheet()
+        }
+        .sheet(isPresented: $showImagesSheet) {
+            MachineImagesSheet()
         }
         .task(id: daemonManager.setupPhase.isDockerReady && client != nil) {
             guard daemonManager.setupPhase.isDockerReady, client != nil else { return }

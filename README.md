@@ -44,6 +44,21 @@ make test-xtask lint-xtask
 
 本机的 `Local.xcconfig`、证书、钥匙串凭据、构建产物与运行数据不进入版本库。
 
+修改 `arcbox/rpc/arcbox-protocol/proto` 后，需要同步更新两处生成代码：
+
+```sh
+make -C arcbox refresh-connect-descriptor        # Rust Connect 描述符
+make -C arcbox-desktop generate-arcbox-protobuf ARCBOX_DIR=../arcbox   # Swift 客户端
+```
+
+`cargo xtask protocol verify` 会按 `arcbox.version` 拉取上游 tag 的 proto，因此在本二开仓库中不适用；以上述本地生成结果为准。
+
+## 二开功能速览
+
+- 认证代理：`abctl network proxy set socks5://user@host:1080 --password-stdin`，`abctl network proxy test`；桌面版「设置 › 网络」。密码保存在登录钥匙串（或 `ARCBOX_PROXY_CREDENTIALS=file` 时的 0600 文件），`config.toml` 不含密码，修改后对新连接立即生效。
+- 自定义镜像：`abctl machine image import ./rootfs.tar.gz --name my-linux`（或 `docker:ubuntu:24.04 --add-init`），`abctl machine create dev --image my-linux`；桌面版「机器 › 镜像」与新建机器中的「My Images」。
+- 详细说明与验证记录：`arcbox/docs/logs/2026-10-21-proxy-authentication.md`、`arcbox/docs/logs/2026-10-21-machine-image-import.md`。
+
 ## 当前开发环境限制
 
 开发版可以使用 ad-hoc 签名与 `arcbox.dev.entitlements`。官方 release helper 只接受官方团队签名，本机开发需显式启用私有手动 helper；其父目录必须属于当前用户且权限为 0700。helper、DNS 和路由的健康检查分别报告，不能用容器可启动代替这些检查。

@@ -32,6 +32,8 @@ struct SettingsView: View {
             GeneralSettingsView()
         case .system:
             SystemSettingsView()
+        case .network:
+            NetworkSettingsView()
         case .storage:
             StorageSettingsView()
         case nil:

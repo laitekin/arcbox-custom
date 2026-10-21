@@ -1,3 +1,4 @@
+import ArcBoxClient
 import Foundation
 import os
 
@@ -31,7 +32,30 @@ enum MachineImageCatalog {
     /// Preferred picker ordering; unknown distros sort after these.
     private static let distroOrder = ["ubuntu", "debian", "fedora", "alpine", "archlinux"]
 
-    /// Fetch distros published for the host architecture.
+    /// Fetch distros published for the host architecture: from the daemon,
+    /// which reads the configured image source through the egress proxy;
+    /// then directly from the CDN; then the built-in snapshot.
+    static func fetch(client: ArcBoxClient?) async -> [MachineDistroOption] {
+        if let client {
+            do {
+                let listing = try await client.machineImages.listRemote(
+                    .init(), options: ArcBoxClient.defaultCallOptions)
+                var releasesByDistro: [String: Set<String>] = [:]
+                for image in listing.images {
+                    releasesByDistro[image.distro, default: []].insert(image.release)
+                }
+                let options = options(from: releasesByDistro)
+                if !options.isEmpty { return options }
+            } catch {
+                Log.machine.warning(
+                    "Daemon image listing failed, reading the CDN: \(error.localizedDescription, privacy: .private)"
+                )
+            }
+        }
+        return await fetch()
+    }
+
+    /// Fetch distros published for the host architecture from the CDN.
     static func fetch() async -> [MachineDistroOption] {
         var request = URLRequest(url: indexURL)
         request.timeoutInterval = 10
@@ -53,6 +77,10 @@ enum MachineImageCatalog {
         for stream in index.images.values where stream.arch == hostArch {
             releasesByDistro[stream.distro, default: []].insert(stream.release)
         }
+        return options(from: releasesByDistro)
+    }
+
+    private static func options(from releasesByDistro: [String: Set<String>]) -> [MachineDistroOption] {
         let options = releasesByDistro.map { distro, releases in
             MachineDistroOption(
                 distro: distro,

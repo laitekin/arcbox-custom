@@ -38,6 +38,7 @@
 		172FA4919687A4616E0BC135 /* DaemonLoadingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E8FB9C9E3349126EF773522 /* DaemonLoadingView.swift */; };
 		17908606AF5BAB2C1CF57AE0 /* ContainerCrashDigest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7374C3209C972DE43E00DB60 /* ContainerCrashDigest.swift */; };
 		17ED6FFFD9A61998178E38B9 /* VolumesListViewControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4BAE047B96D10B4716BA1A2 /* VolumesListViewControllerTests.swift */; };
+		1922467431B695CAC0E9584E /* EgressProxyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DB86FDBD42895BEB4925409 /* EgressProxyTests.swift */; };
 		1941A5EBBFB259911F7E9ADE /* SandboxesViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A764F03F9EA5C3149B777338 /* SandboxesViewModel.swift */; };
 		1BC0DF2E6DAA6E0A94058B5F /* ContainerListModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9467D1D1EA60DDF80414B20B /* ContainerListModels.swift */; };
 		1C9ADBD51C57E8C3938500CA /* ContainerListCellPerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 671B7887F139FB04342B9EC5 /* ContainerListCellPerformanceTests.swift */; };
@@ -53,6 +54,7 @@
 		25E25D58DAE59E9EB433B6F5 /* K8sWatchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F065A1CBDA891A5647FE6F6 /* K8sWatchTests.swift */; };
 		2754C5F694613CA3A06DBC7E /* ContainerLogsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 269B74A3C7704AB81139FA52 /* ContainerLogsModels.swift */; };
 		27A1480C02167F8BFC6D86B4 /* MainWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C396CA9355FFB5ACB7DD1D32 /* MainWindowController.swift */; };
+		2934CD8460AF709D5E693CDA /* MachineImagesModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AA95AC5D50913E004A15328 /* MachineImagesModel.swift */; };
 		299DA63B52A4A414F246A0D8 /* ServicesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66F91CF47E53375781959EC9 /* ServicesListView.swift */; };
 		299F68933B6F5869B01B0F43 /* NotificationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D649CF8EC65915ED940D02A /* NotificationCoordinator.swift */; };
 		2C12FA161C343D99BD2E8AFD /* NetworksListViewControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA27F4AC273B14038EDB6593 /* NetworksListViewControllerTests.swift */; };
@@ -99,6 +101,7 @@
 		4C3BC465BFE58BF0D59AFE78 /* OnboardingWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 915561BEEE49F5E27F4B0D40 /* OnboardingWindowController.swift */; };
 		4D2029E55A7979B8BD9EE89A /* ContainersViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E610512C9106BB92A47DC044 /* ContainersViewModelTests.swift */; };
 		4D2FB362066EF19A8C5983F1 /* K8sClient in Frameworks */ = {isa = PBXBuildFile; productRef = A8DA5BF5FF6E9CABB1BAAD3A /* K8sClient */; };
+		4D88534FCCE07F2A92609FD1 /* NetworkSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BDFF0AA6C2EA05E000003F1 /* NetworkSettingsView.swift */; };
 		4DF1A85E96002569D24CCF66 /* OnboardingMigrationModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 912DD5CF669A1B8EB0F5734C /* OnboardingMigrationModelTests.swift */; };
 		4F5C17B023A7207A213F298C /* RuntimeStorageRecoverySection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58AA87A07DF7660A4DE3A053 /* RuntimeStorageRecoverySection.swift */; };
 		50CCDEFCA186BCD1E99D291F /* ChangelogParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBEBBF08F0E4AC45D9C0BB83 /* ChangelogParser.swift */; };
@@ -110,6 +113,7 @@
 		55AB33B6859FE22D5FE1DF88 /* SparklineGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B815C17A01F8774E97227499 /* SparklineGeometry.swift */; };
 		57A8D35B23CC870EDEAF7605 /* AppNotification.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98123C19CE4AB275C8D899E2 /* AppNotification.swift */; };
 		57DFBD423CA735B3A7BEB227 /* KubernetesWatchRetryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CB3003C93936B1DAAC22AA7 /* KubernetesWatchRetryTests.swift */; };
+		584976F648CF214A1B2E0D86 /* MachineImagesSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6194659790AA4DDEC6A809E /* MachineImagesSheet.swift */; };
 		592D8D15F0AD149B578AC661 /* VolumesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 209E974D66F4B2D9B5CDA2D9 /* VolumesListView.swift */; };
 		593269294B66A331F9D9F744 /* ContainerLogsFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68E865C1248DD29069506046 /* ContainerLogsFixtures.swift */; };
 		5C24B61DEC9BC6CE303FF52A /* AppMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E0084D4B147FA59C7CCC0F5 /* AppMetrics.swift */; };
@@ -242,6 +246,7 @@
 		BAB560B0FEE9F5C4D53BAAA7 /* DaemonRegistrationFailureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4FC6CD087B9A223CE8E3250 /* DaemonRegistrationFailureTests.swift */; };
 		BB6DA9C1B509BF12CDA5A92E /* ImageDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 185A238D021D6C976574528C /* ImageDetailView.swift */; };
 		BC2DB6597FC8C4219DB1B34F /* DockerContextCLI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 845946FC9C9F5412C9179939 /* DockerContextCLI.swift */; };
+		BCDE96492982D48674C02A2C /* NetworkSettingsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BA3F59E109F9836BD7D35B9 /* NetworkSettingsModel.swift */; };
 		BD0363ABBB77C56F049EE2E4 /* LayerMergeBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E1595F793A3AD5691E191D /* LayerMergeBadge.swift */; };
 		BD99D14EC5ED57BA1FF283CC /* DockerContextManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 064086AEC8C204E8224DF45A /* DockerContextManager.swift */; };
 		BDE44A1851827C2069778F08 /* ImageFilesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3BE02225F61EF92333916B1 /* ImageFilesTab.swift */; };
@@ -374,6 +379,7 @@
 		185A238D021D6C976574528C /* ImageDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageDetailView.swift; sourceTree = "<group>"; };
 		198D2920821E17EB26B0F313 /* SegmentedControlRelayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentedControlRelayoutTests.swift; sourceTree = "<group>"; };
 		1A9181A312D267BBD4687762 /* AppPreferencesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPreferencesTests.swift; sourceTree = "<group>"; };
+		1AA95AC5D50913E004A15328 /* MachineImagesModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MachineImagesModel.swift; sourceTree = "<group>"; };
 		1B18FDEC4B5AE8513C98D7B4 /* SandboxDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SandboxDetailView.swift; sourceTree = "<group>"; };
 		1B80964B0A136E03F5FDA0FE /* SandboxesViewModel+PortsFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SandboxesViewModel+PortsFiles.swift"; sourceTree = "<group>"; };
 		1C649765AA76CFCBFC3302DA /* DeepLinkRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLinkRouter.swift; sourceTree = "<group>"; };
@@ -413,6 +419,7 @@
 		3D649CF8EC65915ED940D02A /* NotificationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationCoordinator.swift; sourceTree = "<group>"; };
 		3D8508B6E5EA4094BABF24BB /* TimeMachineExclusion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimeMachineExclusion.swift; sourceTree = "<group>"; };
 		3DAC9EE4F067CB69F022C1E0 /* ActivityViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityViewModel.swift; sourceTree = "<group>"; };
+		3DB86FDBD42895BEB4925409 /* EgressProxyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EgressProxyTests.swift; sourceTree = "<group>"; };
 		3E30F5FC430804013B58C6F1 /* com.arcboxlabs.desktop.daemon.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = com.arcboxlabs.desktop.daemon.plist; sourceTree = "<group>"; };
 		3ED1683EF0A3490B8B7B5CF6 /* InfoTableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InfoTableView.swift; sourceTree = "<group>"; };
 		4009DCC81EA64B23A77FB0C4 /* ServicesViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServicesViewModel.swift; sourceTree = "<group>"; };
@@ -473,6 +480,7 @@
 		699A57392F1D9366CFA78BAF /* VolumesViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VolumesViewModel.swift; sourceTree = "<group>"; };
 		6AC42E91F0BCACABF173B87F /* DockerTerminalSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockerTerminalSession.swift; sourceTree = "<group>"; };
 		6ADF9F8FFB694C45042664E8 /* DeepLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLink.swift; sourceTree = "<group>"; };
+		6BA3F59E109F9836BD7D35B9 /* NetworkSettingsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkSettingsModel.swift; sourceTree = "<group>"; };
 		6BAA25DBCDC3E69B079695A9 /* Local.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Local.xcconfig; sourceTree = "<group>"; };
 		6DFE1C88F20E40C1A36A384C /* CreateOperationErrorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateOperationErrorTests.swift; sourceTree = "<group>"; };
 		7058C8975F3F2684714E24E2 /* SleepWakeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepWakeManager.swift; sourceTree = "<group>"; };
@@ -535,6 +543,7 @@
 		98C5CFE4B4D21711F8580690 /* SandboxTerminalTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SandboxTerminalTab.swift; sourceTree = "<group>"; };
 		9A04AFE137230F2CE0DD9DBB /* DiagnosticBundleExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticBundleExporter.swift; sourceTree = "<group>"; };
 		9BC18756B780D1B7FB6B0F4F /* OnboardingMigrationLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingMigrationLifecycleTests.swift; sourceTree = "<group>"; };
+		9BDFF0AA6C2EA05E000003F1 /* NetworkSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkSettingsView.swift; sourceTree = "<group>"; };
 		9E73318FC9D8EBCB39E5C0AE /* IconButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconButton.swift; sourceTree = "<group>"; };
 		9F60CF8B8E81089BA2E8DC20 /* GeneralSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSettingsView.swift; sourceTree = "<group>"; };
 		9FC774DEDF3F018FC6A69ED8 /* RuntimeStorageRecoveryIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeStorageRecoveryIntegrationTests.swift; sourceTree = "<group>"; };
@@ -544,6 +553,7 @@
 		A40D34F775F57891973F6945 /* DockerContextManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockerContextManagerTests.swift; sourceTree = "<group>"; };
 		A45A5AAA9B74A59E7543D8D0 /* LocalRootFSOutlineCoordinator+Actions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LocalRootFSOutlineCoordinator+Actions.swift"; sourceTree = "<group>"; };
 		A517313E1085B62A40075622 /* OnboardingWindowControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingWindowControllerTests.swift; sourceTree = "<group>"; };
+		A6194659790AA4DDEC6A809E /* MachineImagesSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MachineImagesSheet.swift; sourceTree = "<group>"; };
 		A70BE1C3890C5F6A96C6BCBD /* ContainersViewModel+GRPC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ContainersViewModel+GRPC.swift"; sourceTree = "<group>"; };
 		A764F03F9EA5C3149B777338 /* SandboxesViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SandboxesViewModel.swift; sourceTree = "<group>"; };
 		A80B0A0F4FC2E7ECA0B844DD /* ContainerFilesTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContainerFilesTab.swift; sourceTree = "<group>"; };
@@ -888,6 +898,7 @@
 			isa = PBXGroup;
 			children = (
 				9F60CF8B8E81089BA2E8DC20 /* GeneralSettingsView.swift */,
+				9BDFF0AA6C2EA05E000003F1 /* NetworkSettingsView.swift */,
 				EACE022209B8EE8590998F04 /* RuntimeStorageDetails.swift */,
 				58AA87A07DF7660A4DE3A053 /* RuntimeStorageRecoverySection.swift */,
 				DAE5A29026FA64A7C0A47122 /* SettingsView.swift */,
@@ -1054,8 +1065,10 @@
 				F707491EC9A47AE534822664 /* AppViewModel.swift */,
 				E37F8C85EB27987F81FFB5F4 /* KubernetesState.swift */,
 				061EDA25B1CD4A83411C65B9 /* KubernetesWatchRetry.swift */,
+				1AA95AC5D50913E004A15328 /* MachineImagesModel.swift */,
 				61EE316315F864BA1BF0FFED /* MachinesViewModel.swift */,
 				7AB1B1CD1D5E0E961CD17118 /* MachinesViewModel+GRPC.swift */,
+				6BA3F59E109F9836BD7D35B9 /* NetworkSettingsModel.swift */,
 				D4ED3EC883A488801DE03195 /* NetworksViewModel.swift */,
 				CDF5B0B3EC77FB12D8B4EA6A /* PodsViewModel.swift */,
 				94E61C4FDE50F5A6B45F06B5 /* RuntimeStorageRecoveryModel.swift */,
@@ -1128,6 +1141,7 @@
 				5144C9321F8A17DA72A862DA /* MachineCreateSheet.swift */,
 				B9C7ADBBD83C5F92EEBAAD88 /* MachineDetailView.swift */,
 				81FCCED6F39D73E946107243 /* MachineEmptyStateView.swift */,
+				A6194659790AA4DDEC6A809E /* MachineImagesSheet.swift */,
 				8357344FFAC2AB6F56EE95EC /* MachinesListViewController.swift */,
 				8ECCF18CC36CC3579EE2B5B9 /* MachinesView.swift */,
 				B422F342095BFADBE2F147B8 /* Tabs */,
@@ -1160,6 +1174,7 @@
 				5B20797EBE3F932D8DDAD42C /* ArcBoxClientTests.swift */,
 				8B61204F020CDD2B21D6D55D /* BinaryVersionTests.swift */,
 				26FECB4CA53A425E613E71A2 /* DaemonLockTests.swift */,
+				3DB86FDBD42895BEB4925409 /* EgressProxyTests.swift */,
 				1E85F8768E0964D377A6278C /* ErrorCancellationTests.swift */,
 				EF45523D23D3F96612423943 /* HelperInstallErrorTests.swift */,
 				B52400B734764C05E50D6FFC /* ResourceStatsTests.swift */,
@@ -1678,6 +1693,8 @@
 				A7E66915A83CDD9FF95EF09F /* MachineEmptyStateView.swift in Sources */,
 				D0A2395C0C2BC0A77B175840 /* MachineEventMonitor.swift in Sources */,
 				B5E8D265254E1C224247214A /* MachineImageCatalog.swift in Sources */,
+				2934CD8460AF709D5E693CDA /* MachineImagesModel.swift in Sources */,
+				584976F648CF214A1B2E0D86 /* MachineImagesSheet.swift in Sources */,
 				BFA2E94DC17244A06D187331 /* MachineInfoTab.swift in Sources */,
 				415470083B7CD53FB22C4E88 /* MachineModel.swift in Sources */,
 				C8181916F2EBD889B0C8046B /* MachineTerminalSession.swift in Sources */,
@@ -1697,6 +1714,8 @@
 				67924F4E35FF28F7412EEBBA /* NetworkDetailView.swift in Sources */,
 				B5181BB7367CF1DCA823F7D3 /* NetworkDetailViewController.swift in Sources */,
 				8E8040CCBBE6F7F3F28B00A0 /* NetworkModel.swift in Sources */,
+				BCDE96492982D48674C02A2C /* NetworkSettingsModel.swift in Sources */,
+				4D88534FCCE07F2A92609FD1 /* NetworkSettingsView.swift in Sources */,
 				31A9DB06B08CC74D635ECB8A /* NetworksListView.swift in Sources */,
 				1FB4D8B5B61B82155960542D /* NetworksListViewController.swift in Sources */,
 				41459C0A45497BA629B8C34D /* NetworksViewModel.swift in Sources */,
@@ -1832,6 +1851,7 @@
 				6C008EEBEEC7101D289DD9D0 /* DockerContextManagerTests.swift in Sources */,
 				8466B000B68A87CEECA6756F /* DockerEventMonitorTests.swift in Sources */,
 				D16762EE419CC9055CDD90FF /* DockerTerminalSessionIntegrationTests.swift in Sources */,
+				1922467431B695CAC0E9584E /* EgressProxyTests.swift in Sources */,
 				10BF9836AD03078EA2AD53D8 /* ErrorCancellationTests.swift in Sources */,
 				4AB472D135BD14054A2F10FC /* ErrorReportingCancellationTests.swift in Sources */,
 				8AADBD7B0F4EA3F0068957BF /* ErrorReportingScrubTests.swift in Sources */,
