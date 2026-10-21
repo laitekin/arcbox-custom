@@ -1,0 +1,53 @@
+[package]
+name = "arcbox-docker"
+description = "Docker REST API compatibility layer for ArcBox"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+arcbox-core = { workspace = true }
+arcbox-transport = { workspace = true }
+arcbox-error = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+bytes = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+tower-http = { workspace = true }
+hyper = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hyper-util = { version = "0.1.20", features = ["client-legacy", "http1", "server", "server-auto", "server-graceful", "service", "tokio"] }
+uuid = { workspace = true }
+chrono = { workspace = true }
+sha2 = "0.10"
+hex = "0.4"
+dirs = { workspace = true }
+tokio-stream = "0.1"
+futures = { workspace = true }
+libc = { workspace = true }
+http-body-util = "0.1"
+tokio-util = "0.7"
+httparse = "1.10.1"
+http-body = "1.1.0"
+arcbox-connect.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
+tempfile = "3"
+tower = { workspace = true, features = ["util"] }
+http-body-util = "0.1"
+hyper = { workspace = true }
+
+[features]
+default = []
+api-native = []
+api-proxy = []
+
+[lints]
+workspace = true

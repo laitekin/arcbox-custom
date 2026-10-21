@@ -1,0 +1,55 @@
+[package]
+name = "arcbox-net"
+description = "High-performance network stack for ArcBox"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+arcbox-conntrack = { workspace = true }
+arcbox-datapath = { workspace = true }
+arcbox-dhcp = { workspace = true }
+arcbox-error = { workspace = true }
+arcbox-packet = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+bytes = { workspace = true }
+nix = { workspace = true }
+libc = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+ipnetwork = "0.20"
+crossbeam-utils = "0.8"
+socket2 = { version = "0.5", features = ["all"] }
+tokio-util = "0.7"
+arcbox-dns = { workspace = true }
+serde_json.workspace = true
+serde = { workspace = true, features = ["derive"] }
+crossbeam-channel = "0.5"
+arcbox-fakeip.workspace = true
+arcbox-proxy.workspace = true
+splicetcp.workspace = true
+hickory-proto = { version = "0.26.1", default-features = false, features = ["std"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+arcbox-xnu-net.workspace = true
+arcbox-vmnet = { workspace = true }
+
+[dev-dependencies]
+anyhow.workspace = true
+arcbox-route.workspace = true
+clap.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+tracing-subscriber.workspace = true
+
+[features]
+default = []
+vmnet = ["arcbox-vmnet/vmnet"]
+
+[lints]
+workspace = true

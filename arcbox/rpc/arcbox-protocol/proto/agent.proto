@@ -1,0 +1,795 @@
+// Agent service protocol definitions.
+//
+// This service runs inside the guest VM and handles requests from the host.
+
+syntax = "proto3";
+
+package arcbox.v1;
+
+import "common.proto";
+
+// AgentService runs inside the guest VM.
+service AgentService {
+    // Health check.
+    rpc Ping(AgentPingRequest) returns (AgentPingResponse);
+
+    // Gets system information.
+    rpc GetSystemInfo(Empty) returns (SystemInfo);
+
+    // Ensures guest runtime stack (containerd/dockerd) is ready.
+    rpc EnsureRuntime(RuntimeEnsureRequest) returns (RuntimeEnsureResponse);
+
+    // Gets guest runtime stack status.
+    rpc GetRuntimeStatus(RuntimeStatusRequest) returns (RuntimeStatusResponse);
+
+    // Starts the native Kubernetes cluster inside the guest.
+    rpc StartKubernetes(KubernetesStartRequest) returns (KubernetesStartResponse);
+
+    // Stops the native Kubernetes cluster inside the guest.
+    rpc StopKubernetes(KubernetesStopRequest) returns (KubernetesStopResponse);
+
+    // Deletes the native Kubernetes cluster state inside the guest.
+    rpc DeleteKubernetes(KubernetesDeleteRequest) returns (KubernetesDeleteResponse);
+
+    // Returns native Kubernetes cluster status from the guest.
+    rpc GetKubernetesStatus(KubernetesStatusRequest) returns (KubernetesStatusResponse);
+
+    // Returns kubeconfig content exported from the guest cluster.
+    rpc GetKubeconfig(KubernetesKubeconfigRequest) returns (KubernetesKubeconfigResponse);
+
+    // Lists the guest cluster's Services of type LoadBalancer.
+    rpc ListKubernetesLoadBalancers(KubernetesLoadBalancersRequest) returns (KubernetesLoadBalancersResponse);
+
+    // Requests graceful guest shutdown. The agent responds immediately,
+    // then performs orderly process teardown and powers off the VM.
+    rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+
+    // Triggers an immediate fstrim on data mount points to reclaim sparse
+    // file space on the host.
+    rpc DiskTrim(DiskTrimRequest) returns (DiskTrimResponse);
+
+    // Streams guest readiness events until the requested runtime is ready or failed.
+    rpc WatchReadiness(WatchReadinessRequest) returns (stream ReadinessEvent);
+
+    // Streams guest memory pressure events while the balloon is shrunk.
+    rpc WatchMemoryPressure(WatchMemoryPressureRequest) returns (stream MemoryPressureEvent);
+
+    // Streams machine-level resource samples (CPU/memory/disk/network).
+    rpc WatchStats(WatchStatsRequest) returns (stream MachineStats);
+
+    // Observes persistent storage without starting services or writing files.
+    rpc WatchStorageHealth(WatchStorageHealthRequest) returns (stream StorageHealth);
+}
+
+// Ping request.
+message AgentPingRequest {
+    // Optional payload.
+    string message = 1;
+    // Host wall-clock time in Unix seconds. Agent sets clock when > 0.
+    int64 timestamp_secs = 2;
+}
+
+// Ping response.
+message AgentPingResponse {
+    // Response payload.
+    string message = 1;
+    // Agent version.
+    string version = 2;
+    // Host↔agent protocol version the agent speaks
+    // (`arcbox_constants::wire::AGENT_PROTOCOL_VERSION`). Absent (0) on
+    // agents that predate the handshake; the host rejects agents below
+    // its minimum supported version at boot.
+    uint32 protocol_version = 3;
+}
+
+// System information from the guest.
+message SystemInfo {
+    // Kernel version.
+    string kernel_version = 1;
+    // OS name.
+    string os_name = 2;
+    // OS version.
+    string os_version = 3;
+    // Architecture.
+    string arch = 4;
+    // Total memory in bytes.
+    uint64 total_memory = 5;
+    // Available memory in bytes.
+    uint64 available_memory = 6;
+    // Number of CPUs.
+    uint32 cpu_count = 7;
+    // Load average (1, 5, 15 minutes).
+    repeated double load_average = 8;
+    // Hostname.
+    string hostname = 9;
+    // Uptime in seconds.
+    uint64 uptime = 10;
+    // Guest IP addresses (excluding loopback).
+    repeated string ip_addresses = 11;
+    // Whether the guest distro's own init is still running its boot sequence.
+    //
+    // A Machine runs an upstream distro image whose init starts *after* the
+    // agent, and typically reconfigures the network from scratch — flushing
+    // the interface the boot shim already configured. Readiness must wait for
+    // that to settle, so the host gates on this rather than on the agent
+    // merely answering (CORE-66).
+    //
+    // Phrased as "pending" so the proto3 default is the safe one: an agent
+    // predating this field decodes it as false and the host proceeds exactly
+    // as it did before, instead of waiting out the readiness timeout on a
+    // signal the agent never sends. Only a recognized init that is known to
+    // still be starting sets it true.
+    bool distro_init_pending = 12;
+    // IPv4 address of the guest's bridge NIC (the vmnet interface the Mac
+    // reaches directly), or empty when the guest has none or it has no
+    // address yet. The host registers `<machine>.arcbox.local` at this
+    // address; `ip_addresses` keeps listing every interface, so an older
+    // host that ignores this field sees exactly what it saw before.
+    string bridge_ip_address = 13;
+}
+
+// Request to ensure runtime services are available.
+message RuntimeEnsureRequest {
+    // Whether to attempt starting services when not ready.
+    bool start_if_needed = 1;
+}
+
+// Response from runtime ensure operation.
+message RuntimeEnsureResponse {
+    // Whether runtime is ready for Docker API requests.
+    bool ready = 1;
+    // Runtime endpoint exposed to host proxy.
+    string endpoint = 2;
+    // Additional status detail.
+    string message = 3;
+    // Outcome of this ensure call: "started", "reused", or "failed".
+    string status = 4;
+}
+
+// Request for runtime status.
+message RuntimeStatusRequest {}
+
+// Request for guest-driven readiness events.
+message WatchReadinessRequest {
+    // Whether the agent should start the runtime if it is not ready.
+    bool start_runtime_if_needed = 1;
+    // Maximum time to wait for runtime readiness before reporting failure.
+    uint32 timeout_ms = 2;
+}
+
+// Guest readiness event.
+message ReadinessEvent {
+    enum Kind {
+        KIND_UNSPECIFIED = 0;
+        AGENT_READY = 1;
+        RUNTIME_STARTING = 2;
+        RUNTIME_READY = 3;
+        RUNTIME_FAILED = 4;
+    }
+
+    // Event kind.
+    Kind kind = 1;
+    // Runtime endpoint exposed to host proxy when known.
+    string endpoint = 2;
+    // Human-readable detail for diagnostics.
+    string detail = 3;
+    // Per-service status entries for fine-grained observability.
+    repeated ServiceStatus services = 4;
+}
+
+// Request for a guest-driven memory pressure event stream.
+//
+// The agent samples in-guest memory signals (`MemAvailable`, workingset
+// refault rate) and emits an event when a threshold trips, plus periodic
+// keepalives so the host can distinguish "no pressure" from "guest too
+// starved to answer". The watch returns after `timeout_ms`; the host
+// re-issues the request to keep watching.
+message WatchMemoryPressureRequest {
+    // Watch window in milliseconds; the agent ends the stream with a
+    // WINDOW_ELAPSED frame when it passes.
+    uint32 timeout_ms = 1;
+    // Trip when MemAvailable falls below this many bytes. 0 disables.
+    uint64 min_available_bytes = 2;
+    // Trip when the page refault rate (pages/second) stays at or above this
+    // for consecutive samples. 0 disables.
+    uint64 max_refault_rate = 3;
+    // Keepalive cadence in milliseconds (0 = agent default).
+    uint32 keepalive_ms = 4;
+    // PSI trigger threshold: microseconds of full (all non-idle tasks)
+    // memory stall within the agent's 1s window before pressure fires.
+    // 0 = agent default. Used only on kernels with CONFIG_PSI; older
+    // kernels fall back to MemAvailable/refault sampling.
+    uint64 psi_full_stall_us = 5;
+}
+
+// One frame on the memory pressure stream.
+message MemoryPressureEvent {
+    enum Reason {
+        // Watch established (first frame) or periodic keepalive.
+        KEEPALIVE = 0;
+        // MemAvailable fell below the requested floor. PSI stall trips
+        // are also reported under this reason: a new enum value would be
+        // decoded as KEEPALIVE by older hosts (proto3 open enums), which
+        // must never happen to a pressure frame. The agent log records
+        // the true trigger.
+        LOW_AVAILABLE = 1;
+        // Page refault rate exceeded the requested threshold.
+        REFAULT_SPIKE = 2;
+        // The watch window elapsed without pressure.
+        WINDOW_ELAPSED = 3;
+        // The detector armed: the guest settled at the current balloon
+        // target. The host uses this to continue a staged shrink.
+        SETTLED = 4;
+    }
+
+    // Why this frame was emitted.
+    Reason reason = 1;
+    // MemAvailable at sample time, in bytes.
+    uint64 available_bytes = 2;
+    // Observed refault rate, pages/second.
+    uint64 refault_rate = 3;
+}
+
+// Request for a guest-driven machine resource stats stream.
+//
+// The agent reads /proc once per interval and emits one MachineStats frame
+// per tick; every frame doubles as a keepalive. The stream ends after
+// `timeout_ms`; the host re-issues the request to keep watching.
+message WatchStatsRequest {
+    // Watch window in milliseconds (0 = agent default).
+    uint32 timeout_ms = 1;
+    // Sample interval in milliseconds (0 = agent default, 1000).
+    uint32 interval_ms = 2;
+}
+
+// One machine-level resource sample.
+//
+// Counter fields are cumulative since guest boot; consumers derive rates
+// from deltas between samples, which stays correct across missed samples
+// and stream restarts.
+message MachineStats {
+    // Guest monotonic clock at sample time (from /proc/uptime), in
+    // milliseconds. Rate denominators come from deltas of this field, not
+    // from host receive times (delivery jitter would distort rates).
+    uint64 monotonic_ms = 1;
+    // Aggregate CPU ticks since boot across all CPUs (/proc/stat "cpu"):
+    // busy = everything except idle + iowait.
+    uint64 cpu_busy_ticks = 2;
+    uint64 cpu_total_ticks = 3;
+    // Online CPU count.
+    uint32 online_cpus = 4;
+    // 1-minute load average.
+    double loadavg1 = 5;
+    // Bytes, from /proc/meminfo.
+    uint64 memory_total_bytes = 6;
+    uint64 memory_available_bytes = 7;
+    // PSI memory "full avg10" percentage (0-100), from
+    // /proc/pressure/memory. Negative when the kernel lacks CONFIG_PSI.
+    double memory_psi_full_avg10 = 8;
+    // Cumulative bytes across whole physical disks (/proc/diskstats,
+    // partitions excluded so traffic is not double-counted).
+    uint64 disk_read_bytes = 9;
+    uint64 disk_written_bytes = 10;
+    // Cumulative bytes across the VM's physical/uplink interfaces
+    // (/proc/net/dev; container bridges and veths are excluded so their
+    // traffic is not counted once per internal hop).
+    uint64 net_rx_bytes = 11;
+    uint64 net_tx_bytes = 12;
+    // Per-container samples, one per running Docker container (cgroup v2
+    // tree under /sys/fs/cgroup/docker). Empty when no containers run or
+    // the subscriber did not request them.
+    repeated ContainerStats containers = 13;
+}
+
+// One container's cgroup v2 resource sample.
+//
+// CPU, disk, and network fields are cumulative; memory and pids are
+// gauges. CPU/memory/disk/pids come from the container's cgroup
+// (cpu.stat, memory.current, memory.max, io.stat, pids.current). Network
+// is not a cgroup counter — it lives in the container's network
+// namespace, read via /proc/<pid>/net/dev for a process in the container.
+message ContainerStats {
+    // Full container ID (the cgroup directory name).
+    string id = 1;
+    // Human-readable name, filled by the daemon from its container
+    // registry. Empty on the guest→host hop and when the daemon has no
+    // name for the ID (the consumer falls back to the short ID).
+    string name = 2;
+    // Cumulative CPU time in microseconds (cpu.stat usage_usec).
+    uint64 cpu_usage_usec = 3;
+    // Current memory charge in bytes (memory.current).
+    uint64 memory_current_bytes = 4;
+    // Memory limit in bytes (memory.max); 0 means unlimited ("max").
+    uint64 memory_limit_bytes = 5;
+    // Cumulative block I/O bytes summed across devices (io.stat
+    // rbytes/wbytes).
+    uint64 disk_read_bytes = 6;
+    uint64 disk_written_bytes = 7;
+    // Current process/thread count (pids.current).
+    uint32 pids = 8;
+    // Cumulative bytes across the container's non-loopback interfaces,
+    // from /proc/<pid>/net/dev in its network namespace. Zero for a
+    // host-networked container (its traffic is the machine's, already
+    // counted in MachineStats) or when no process is readable.
+    uint64 net_rx_bytes = 9;
+    uint64 net_tx_bytes = 10;
+}
+
+// Runtime status report.
+message RuntimeStatusResponse {
+    // Whether containerd socket is reachable.
+    bool containerd_ready = 1;
+    // Whether Docker socket is reachable.
+    bool docker_ready = 2;
+    // Runtime endpoint exposed to host proxy.
+    string endpoint = 3;
+    // Human-readable detail for diagnostics.
+    string detail = 4;
+    // Per-service status entries for fine-grained observability.
+    repeated ServiceStatus services = 5;
+    // Present when this agent supports WatchStorageHealth. Missing on older
+    // agents; missing must not be interpreted as healthy storage.
+    StorageHealth storage_health = 6;
+}
+
+// The agent sends an immediate snapshot, then changes and a 30-second
+// heartbeat. Mount flags are sampled every 5 seconds until the peer closes.
+// The watcher performs no writes and holds no host VM activity lease.
+message WatchStorageHealthRequest {}
+
+// Request to trim the guest's data filesystems now: the guest issues a
+// discard for every free block so the host punches it out of the sparse
+// image. The System VM trims its Btrfs data and ext4 metadata volumes; a
+// distro machine trims the Btrfs data disk under its overlay root.
+message DiskTrimRequest {}
+
+// Response from a disk trim operation.
+message DiskTrimResponse {
+    // Human-readable result summary (bytes trimmed per filesystem).
+    string result = 1;
+    // Bytes the guest reported trimmed, summed over the filesystems. This is
+    // what the filesystem discarded, not what the host reclaimed: a range
+    // that was already a hole counts here and frees nothing.
+    uint64 bytes_trimmed = 2;
+}
+
+// Notification that a container's published port bindings changed.
+message PortBindingsChanged {
+    // Container ID.
+    string container_id = 1;
+    // Current published bindings from dockerd inspect output.
+    repeated PortBinding bindings = 2;
+}
+
+// Notification that a container no longer has active published ports.
+message PortBindingsRemoved {
+    // Container ID.
+    string container_id = 1;
+}
+
+// Individual service status within the guest runtime stack.
+message ServiceStatus {
+    // Service name (e.g. "containerd", "dockerd", "runc").
+    string name = 1;
+    // Service status: "ready", "not_ready", or "error".
+    string status = 2;
+    // Human-readable detail for diagnostics (error message, socket path, etc.).
+    string detail = 3;
+}
+
+// Request to start the native Kubernetes cluster.
+message KubernetesStartRequest {}
+
+// Response from starting the native Kubernetes cluster.
+message KubernetesStartResponse {
+    // Whether the cluster process is running.
+    bool running = 1;
+    // Whether the Kubernetes API endpoint is reachable.
+    bool api_ready = 2;
+    // API endpoint exposed to the host.
+    string endpoint = 3;
+    // Human-readable detail for diagnostics.
+    string detail = 4;
+}
+
+// Request to stop the native Kubernetes cluster.
+message KubernetesStopRequest {}
+
+// Response from stopping the native Kubernetes cluster.
+message KubernetesStopResponse {
+    // Whether the cluster is fully stopped.
+    bool stopped = 1;
+    // Human-readable detail for diagnostics.
+    string detail = 2;
+}
+
+// Request to delete the native Kubernetes cluster state.
+message KubernetesDeleteRequest {}
+
+// Response from deleting the native Kubernetes cluster state.
+message KubernetesDeleteResponse {
+    // Human-readable detail for diagnostics.
+    string detail = 1;
+}
+
+// Request for Kubernetes cluster status.
+message KubernetesStatusRequest {}
+
+// Runtime status report for the native Kubernetes cluster.
+message KubernetesStatusResponse {
+    // Whether the cluster process is running.
+    bool running = 1;
+    // Whether the Kubernetes API endpoint is reachable.
+    bool api_ready = 2;
+    // API endpoint exposed to the host.
+    string endpoint = 3;
+    // Human-readable detail for diagnostics.
+    string detail = 4;
+    // Per-service status entries for fine-grained observability.
+    repeated ServiceStatus services = 5;
+    // How each port of each LoadBalancer Service reaches the host, one entry
+    // per port. Reported by the daemon, which owns the host listeners; the
+    // guest agent leaves it empty.
+    repeated KubernetesHostPort host_ports = 6;
+}
+
+// How one port of a Service of type LoadBalancer reaches the host.
+message KubernetesHostPort {
+    enum State {
+        STATE_UNSPECIFIED = 0;
+        // A host listener is bound and relays to the port on the node.
+        FORWARDED = 1;
+        // servicelb has not published the port on the node yet.
+        PENDING = 2;
+        // Deliberately not bound; `detail` says why.
+        SKIPPED = 3;
+        // The host listener failed to bind; retried periodically.
+        FAILED = 4;
+    }
+
+    // Namespace of the Service.
+    string namespace = 1;
+    // Name of the Service.
+    string name = 2;
+    // Protocol as the Service spells it: "TCP", "UDP" or "SCTP".
+    string protocol = 3;
+    // Service port, which is also the host port.
+    uint32 port = 4;
+    // Host address the listener binds, per `[docker] expose_ports_to_lan`.
+    string host_ip = 5;
+    // Forwarding state.
+    State state = 6;
+    // Why the port is not forwarded; empty when it is.
+    string detail = 7;
+}
+
+// Request for the cluster's Services of type LoadBalancer.
+message KubernetesLoadBalancersRequest {}
+
+// The cluster's Services of type LoadBalancer.
+message KubernetesLoadBalancersResponse {
+    // Whether k3s is running. False means the list is empty because there
+    // is no cluster, not because the cluster has no load balancers.
+    bool running = 1;
+    // Every Service of type LoadBalancer, in any namespace.
+    repeated KubernetesLoadBalancer load_balancers = 2;
+}
+
+// A Service of type LoadBalancer.
+message KubernetesLoadBalancer {
+    // Namespace of the Service.
+    string namespace = 1;
+    // Name of the Service.
+    string name = 2;
+    // The Service's ports.
+    repeated KubernetesServicePort ports = 3;
+    // Addresses in the Service's `status.loadBalancer.ingress`. k3s
+    // servicelb lists a node once its svclb pod is ready, i.e. once the
+    // ports are published on the node; until then the list is empty.
+    repeated string ingress = 4;
+}
+
+// One port of a Service.
+message KubernetesServicePort {
+    // Protocol as the Service spells it: "TCP", "UDP" or "SCTP".
+    string protocol = 1;
+    // Service port.
+    uint32 port = 2;
+}
+
+// Request for managed kubeconfig content.
+message KubernetesKubeconfigRequest {}
+
+// Managed kubeconfig payload exported from the guest cluster.
+message KubernetesKubeconfigResponse {
+    // Raw kubeconfig YAML.
+    string kubeconfig = 1;
+    // ArcBox-managed context name.
+    string context_name = 2;
+    // API endpoint embedded in the exported kubeconfig.
+    string endpoint = 3;
+}
+
+// Graceful shutdown request from host.
+message ShutdownRequest {
+    // Grace period in seconds for processes to exit after SIGTERM.
+    // 0 means use the agent's default (currently 25 seconds).
+    uint32 timeout_seconds = 1;
+}
+
+// Shutdown acknowledgement. Sent before the agent begins teardown.
+message ShutdownResponse {
+    // Always true when the agent accepts the request.
+    bool accepted = 1;
+}
+
+// Test-only: read a file through `mmap(MAP_SHARED)` to force the guest
+// kernel to issue `FUSE_SETUPMAPPING` and exercise the VirtioFS DAX path.
+// Used by the ABX-362 E2E harness. Not intended for production callers.
+message MmapReadFileRequest {
+    // Absolute guest path (typically a file inside a VirtioFS mount).
+    string path = 1;
+    // Byte offset within the file.
+    uint64 offset = 2;
+    // Number of bytes to read. Rounded up to a page boundary internally;
+    // the response trims back to the requested length.
+    uint64 length = 3;
+}
+
+// Response to `MmapReadFileRequest`.
+message MmapReadFileResponse {
+    // Bytes read, trimmed to the originally requested length.
+    bytes data = 1;
+    // Number of bytes actually read (<= length). Short if file smaller
+    // than offset+length.
+    uint64 bytes_read = 2;
+}
+
+// Resolve a container's filesystem layer directories from containerd's
+// snapshot metadata. With dockerd's containerd image store the layer
+// paths are absent from `docker inspect`, so filesystem browsers obtain
+// them here and read the directories through the read-only NFS export.
+message ContainerFsPathsRequest {
+    // Full container ID (also the containerd snapshot key in the moby
+    // namespace).
+    string container_id = 1;
+}
+
+// Response to `ContainerFsPathsRequest`. All paths are guest paths under
+// the containerd data mount.
+message ContainerFsPathsResponse {
+    // Writable layer directory. Empty for read-only snapshots.
+    string upper_dir = 1;
+    // Read-only layer directories, top-most first.
+    repeated string lower_dirs = 2;
+}
+
+// Resolve an image's layer directories from containerd's snapshot
+// metadata (committed snapshots keyed by layer chain ID).
+message ImageFsPathsRequest {
+    // Chain ID of the image's top layer (`sha256:<64 hex>`), computed
+    // from the image config's diff_ids.
+    string top_chain_id = 1;
+}
+
+// Response to `ImageFsPathsRequest`. All paths are guest paths under the
+// containerd data mount.
+message ImageFsPathsResponse {
+    // Read-only layer directories, top-most first.
+    repeated string lower_dirs = 1;
+}
+
+// Ask the guest agent to bring up the read-only NFS export of the docker
+// data mount (browsable on the host at `~/ArcBox`). The host daemon sends
+// this only when the mount is enabled, so a daemon started with
+// `--no-mount-nfs` never sends it and the guest runs no nfsd at all. The
+// agent ensures the docker data mount exists first, so the request is safe
+// to send at any point after the agent is up.
+message EnsureNfsExportRequest {}
+
+// Response to `EnsureNfsExportRequest`.
+message EnsureNfsExportResponse {
+    // Human-readable setup notes (mounts bound, exportfs refreshed, nfsd
+    // threads started).
+    repeated string notes = 1;
+}
+
+// Ask a distro machine's agent to serve the machine's root filesystem to the
+// host, read-write, over NFSv3 on the machine's bridge NIC. The host mounts
+// it at `~/ArcBox/machines/<name>`, under its host mount root (ADR 0003). The
+// System VM answers with an error: its data lives behind `EnsureNfsExportRequest`.
+// Idempotent: a second request returns the endpoint the first one started.
+message EnsureMachineExportRequest {
+    // Addresses the export accepts connections from — the host's own
+    // addresses on the bridge network. Every other peer is refused, because
+    // every VM and container on that network can otherwise reach the port
+    // and the export performs no authentication of its own.
+    repeated string client_addresses = 1;
+    // The uid and gid the host mounts as. Files the guest owns as
+    // `guest_uid`/`guest_gid` are shown with these ids, and files created
+    // or chowned to these ids from the host land as `guest_uid`/`guest_gid`;
+    // every other id passes through unchanged.
+    uint32 host_uid = 2;
+    uint32 host_gid = 3;
+    // The guest account the host user stands in for: root unless the
+    // machine has a default user.
+    uint32 guest_uid = 4;
+    uint32 guest_gid = 5;
+}
+
+// Response to `EnsureMachineExportRequest`.
+message EnsureMachineExportResponse {
+    // IPv4 address of the bridge NIC the export listens on.
+    string address = 1;
+    // TCP port serving both the MOUNT and the NFS protocol.
+    uint32 port = 2;
+}
+
+// --- Sandbox port forwarding (host↔guest vsock only) ---
+//
+// These are host↔guest wire messages, not part of the sandbox product API:
+// the daemon asks the guest agent to install or remove a DNAT rule while
+// serving `arcbox.sandbox.v1.SandboxService.ExposePort`. They live here,
+// with the other agent wire payloads, so nothing vsock-only ships in the
+// published sandbox contract (CORE-57).
+
+// Transport protocol of a forwarded sandbox port.
+//
+// Deliberately separate from `arcbox.sandbox.v1.PortProtocol`: the public
+// contract must not be imported by the internal wire, or the two evolve
+// together by accident.
+enum SandboxPortProtocol {
+    SANDBOX_PORT_PROTOCOL_UNSPECIFIED = 0;
+    SANDBOX_PORT_PROTOCOL_TCP = 1;
+    SANDBOX_PORT_PROTOCOL_UDP = 2;
+}
+
+// Ask the guest agent to DNAT a reserved guest port to a sandbox port.
+message SandboxPortForwardRequest {
+    // Sandbox ID.
+    string id = 1;
+    // Destination port inside the sandbox.
+    uint32 sandbox_port = 2;
+    // Transport protocol (UNSPECIFIED = TCP).
+    SandboxPortProtocol protocol = 3;
+}
+
+// Guest agent's answer: the allocated reserved-range guest port.
+message SandboxPortForwardResponse {
+    // Guest port now DNATed to the sandbox.
+    uint32 guest_port = 1;
+}
+
+// Ask the guest agent to remove a DNAT mapping.
+message SandboxPortForwardRemoveRequest {
+    // Sandbox ID.
+    string id = 1;
+    // The sandbox port previously forwarded.
+    uint32 sandbox_port = 2;
+    // Transport protocol (UNSPECIFIED = TCP).
+    SandboxPortProtocol protocol = 3;
+}
+
+// Durable ticket identifying one sandbox generation whose host and guest
+// forwarding state must be removed before its IP/relay ports can be reused.
+message SandboxCleanupTicket {
+    string id = 1;
+    string token = 2;
+    // True for the process-generation startup barrier. The host must clear
+    // all stale sandbox listeners before acknowledging this ticket.
+    bool startup = 3;
+}
+
+// Stop/Remove response. Network-disabled sandboxes have no cleanup ticket;
+// a present ticket always names a durable quarantine marker.
+message SandboxCleanupResponse {
+    SandboxCleanupTicket ticket = 1;
+}
+
+// Opens the internal stream of pending sandbox cleanup tickets. The guest
+// first replays its durable snapshot, then streams new terminal generations.
+message WatchSandboxCleanupRequest {}
+
+// Flow-control window on a sandbox streaming RPC's connection (host↔guest
+// vsock only): the host lets the agent stream `bytes` more, counted in
+// encoded payload bytes of the frames it sends back. Every such stream opens
+// with a fixed window (`SANDBOX_STREAM_WINDOW` in arcbox-constants) and the
+// host returns it as its consumer takes frames, so the agent never sends
+// what the host has no room for and the host never leaves the vsock unread.
+message SandboxStreamWindow {
+    uint32 bytes = 1;
+}
+
+// Ask the guest agent to resume a paused sandbox in place (CORE-21).
+//
+// Internal wire message rather than the public ResumeSandboxRequest: the
+// daemon decides *why* a resume runs (an explicit Resume call vs its own
+// transparent auto-resume on a data-plane RPC), and the guest surfaces that
+// verbatim as the RESUMED event's "reason" attribute — the visibility the
+// contract promises for automation.
+message SandboxResumeCommand {
+    // Sandbox ID.
+    string id = 1;
+    // "resume" (explicit) or "auto_resume" (daemon-side transparent resume).
+    // Empty is treated as "resume".
+    string reason = 2;
+}
+
+// Guest agent's answer to a resume: the fresh network identity.
+message SandboxResumeResponse {
+    // IP address of the resumed sandbox's new allocation (empty when the
+    // sandbox has no network). The daemon re-registers host DNS from it.
+    string ip_address = 1;
+}
+
+// --- Machine exec session control (host↔guest vsock only) ---
+
+// Deliver a signal to a running machine exec process, sent on the session's
+// connection after its MachineExecRequest (SSH `signal` requests). No reply.
+message MachineExecSignal {
+    // Signal name without the SIG prefix, as SSH names it ("INT", "TERM").
+    // Named rather than numbered because host and guest number signals
+    // differently (SIGUSR1 is 30 on macOS, 10 on Linux).
+    string name = 1;
+}
+
+// Flow-control window on a machine exec session's connection: the receiver
+// of a stream lets its sender send `bytes` more of it. The host returns
+// output window (counted in encoded MachineExecOutput payload bytes) as its
+// consumer takes output; the agent grants its stdin window (in stdin bytes)
+// in its first frame, then returns it as the process reads stdin. Neither
+// side may send beyond the window it holds, so both can always keep
+// reading the connection.
+message MachineExecWindow {
+    uint32 bytes = 1;
+}
+
+// Open a TCP connection from inside the machine (SSH `direct-tcpip`). On
+// success the connection runs like a flow-controlled machine exec session:
+// the agent's first frame grants its window, MachineExecInput carries bytes
+// to the peer (empty: shut down the sending side), MachineExecOutput bytes
+// from it, an `eof` frame when the peer stops sending, and a `done` frame
+// once both directions are closed. A connect failure is an Error frame.
+message MachineTcpConnectRequest {
+    // Host name or address, resolved inside the machine ("localhost" is the
+    // machine itself).
+    string host = 1;
+    uint32 port = 2;
+    // As MachineExecRequest.output_window; required.
+    uint32 output_window = 3;
+}
+
+// Controlled storage checks on the host-to-guest control channel.
+message StorageCheckRequest {
+    enum Action {
+        UNSPECIFIED = 0;
+        OFFLINE_CHECK = 1;
+        VERIFY_WRITES = 2;
+        // Recovery guest only. Rebuilds the Btrfs free space tree on the data
+        // device after the guest re-verifies that stale free space entries are
+        // the only finding, then requires a clean read-only check. The host
+        // attaches a writable copy, never the original image.
+        REPAIR_FREE_SPACE_TREE = 3;
+    }
+    Action action = 1;
+}
+
+message StorageCheckResult {
+    // A classified, repairable failure. Absent means the failure, if any, is
+    // not repairable by any controlled action.
+    enum Finding {
+        FINDING_UNSPECIFIED = 0;
+        // Btrfs check reported only free space tree entries without a
+        // matching block group.
+        STALE_FREE_SPACE_TREE = 1;
+    }
+    StorageVolumeHealth.Role role = 1;
+    bool passed = 2;
+    string detail = 3;
+    Finding finding = 4;
+}
+
+message StorageCheckResponse {
+    bool passed = 1;
+    repeated StorageCheckResult checks = 2;
+}

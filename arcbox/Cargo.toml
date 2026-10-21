@@ -1,0 +1,367 @@
+[workspace]
+resolver = "3"
+members = [
+    # ============================================
+    # L0: Common (MIT OR Apache-2.0)
+    # ============================================
+    "common/arcbox-constants",
+    "common/arcbox-pty",
+    "common/arcbox-error",
+    "common/arcbox-dns",
+    "common/arcbox-asset",
+    "common/arcbox-atomic-file",
+    "common/arcbox-storage",
+    "common/arcbox-local-ca",
+    "common/arcbox-logging",
+    "common/arcbox-route",
+    "common/arcbox-xnu-net",
+    "common/arcbox-packet",
+    "common/arcbox-datapath",
+    "common/arcbox-conntrack",
+    "common/arcbox-fakeip",
+    "common/arcbox-proxy",
+    "common/splicetcp",
+
+    # ============================================
+    # L1-3: Virtualization (MIT OR Apache-2.0)
+    # ============================================
+    "virt/arcbox-hv",
+    "virt/arcbox-vz",
+    "virt/arcbox-hypervisor",
+    "virt/arcbox-vmm",
+    "virt/arcbox-virtio",
+    "virt/arcbox-virtio-core",
+    "virt/arcbox-virtio-blk",
+    "virt/arcbox-virtio-console",
+    "virt/arcbox-virtio-fs",
+    "virt/arcbox-virtio-net",
+    "virt/arcbox-virtio-rng",
+    "virt/arcbox-virtio-vsock",
+    "virt/arcbox-virtio-balloon",
+    "virt/arcbox-vm-proto",
+    "virt/arcbox-vm-driver",
+    "virt/arcbox-fc-driver",
+    "virt/arcbox-tap-net",
+    "virt/arcbox-vm-agent",
+    "virt/arcbox-fs",
+    "virt/arcbox-net",
+    "virt/arcbox-net-virtio",
+    "virt/arcbox-vmnet",
+    "virt/arcbox-dhcp",
+
+    # ============================================
+    # L4: RPC (MIT OR Apache-2.0)
+    # ============================================
+    "rpc/arcbox-protocol",
+    "rpc/arcbox-grpc",
+    "rpc/arcbox-connect",
+    "rpc/arcbox-transport",
+
+    # ============================================
+    # L5: Runtime (MIT OR Apache-2.0)
+    # ============================================
+    "runtime/arcbox-container",
+    "runtime/arcbox-oci",
+
+    # ============================================
+    # L6: Engine (MIT OR Apache-2.0)
+    # ============================================
+    "engine/arcbox-image",
+    "engine/arcbox-snapshot",
+    "engine/arcbox-engine",
+
+    # ============================================
+    # L7: Computer (MIT OR Apache-2.0)
+    # ============================================
+    "computer/arcbox-computer",
+    "computer/arcbox-computer-runtime",
+
+    # ============================================
+    # L8: Application (MIT OR Apache-2.0)
+    # ============================================
+    "app/arcbox-core",
+    "app/arcbox-api",
+    "app/arcbox-docker",
+    "app/arcbox-docker-tools",
+    "app/arcbox-cli",
+    "app/arcbox-daemon",
+    "app/arcbox-helper",
+    "app/arcbox-migration",
+    "app/arcbox-ssh",
+
+    # ============================================
+    # SDK (client library, MIT OR Apache-2.0)
+    # ============================================
+    "sdk/rust",
+
+    # ============================================
+    # Guest Components (MIT OR Apache-2.0)
+    # ============================================
+    "guest/arcbox-agent",
+    "tests/e2e",
+    "virt/arcbox-net-inject",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.10.4" # x-release-please-version
+edition = "2024"
+rust-version = "1.96"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/arcboxlabs/arcbox"
+authors = ["ArcBox Labs <team@arcbox.dev>", "AprilNEA <dev@aprilnea.me> (https://aprilnea.me)"]
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full", "tracing"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "tracing-log"] }
+tracing-appender = "0.2"
+
+# Error reporting
+sentry = { version = "0.46", default-features = false, features = [
+    "backtrace",
+    "contexts",
+    "panic",
+    "tracing",
+    "anyhow",
+    "reqwest",
+    "rustls",
+    "tokio",
+] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+
+# gRPC — tonic 0.14 split prost integration into tonic-prost / tonic-prost-build.
+# Service-stub crates use tonic-prost for the runtime codec and
+# tonic-prost-build instead of `tonic_build::configure()` for code generation.
+tonic = "0.14"
+tonic-prost = "0.14"
+prost = "0.14"
+# default-features = false drops cleanup-markdown: it must stay off so proto
+# codegen output does not depend on which crates build together (feature
+# unification would otherwise mangle checked-in generated doc comments).
+tonic-prost-build = { version = "0.14", default-features = false, features = ["transport"] }
+prost-build = "0.14"
+
+# HTTP server (Docker REST API)
+axum = { version = "0.8", features = ["macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+hyper = { version = "1", features = ["full"] }
+
+# RPC (privileged helper)
+tarpc = { version = "0.37", features = ["serde-transport", "unix", "serde-transport-bincode"] }
+
+# Async utilities
+futures = "0.3"
+async-trait = "0.1"
+async-stream = "0.3"
+tokio-stream = "0.1"
+pin-project-lite = "0.2"
+
+# Terminal
+crossterm = "0.27"
+
+# Benchmarking
+criterion = { version = "0.5", features = ["html_reports"] }
+
+# Bytes and buffer
+bytes = "1"
+
+# Cryptography
+sha2 = "0.10"
+
+# Concurrent data structures
+dashmap = "6"
+
+# Configuration
+figment = { version = "0.10", features = ["toml", "env"] }
+toml = "0.8"
+dirs = "6"
+
+# UUID
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Hostname
+hostname = "0.4"
+
+# Nix (Unix APIs)
+nix = { version = "0.29", features = [
+    "fs",
+    "net",
+    "process",
+    "socket",
+    "ioctl",
+    "mman",
+    "term",
+    "signal",
+    "user",
+] }
+
+# libc
+libc = "0.2"
+
+# macOS bridge FDB (forwarding database) access via private ioctls
+ifbridge = "0.1"
+
+# Process identity (pidpath, bsdinfo)
+libproc = "0.14"
+
+arcbox-asset = { version = "0.10.4", path = "common/arcbox-asset", features = ["download"] } # x-release-please-version
+arcbox-atomic-file = { version = "0.10.4", path = "common/arcbox-atomic-file" } # x-release-please-version
+arcbox-storage = { version = "0.10.4", path = "common/arcbox-storage" } # x-release-please-version
+arcbox-local-ca = { version = "0.10.4", path = "common/arcbox-local-ca" } # x-release-please-version
+arcbox-snapshot = { version = "0.10.4", path = "engine/arcbox-snapshot" } # x-release-please-version
+arcbox-docker-tools = { version = "0.10.4", path = "app/arcbox-docker-tools" } # x-release-please-version
+
+# External crates
+arcbox-boot = { version = "0.8.0", features = ["download"] }
+macos-resolver = "0.2.0"
+
+fc-sdk = "0.2.3"
+
+# Internal crates
+arcbox-constants = { version = "0.10.4", path = "common/arcbox-constants", features = ["std"] } # x-release-please-version
+arcbox-pty = { version = "0.10.4", path = "common/arcbox-pty" } # x-release-please-version
+arcbox-dns = { version = "0.10.4", path = "common/arcbox-dns" } # x-release-please-version
+arcbox-error = { version = "0.10.4", path = "common/arcbox-error" } # x-release-please-version
+arcbox-route = { version = "0.10.4", path = "common/arcbox-route" } # x-release-please-version
+arcbox-packet = { version = "0.10.4", path = "common/arcbox-packet" } # x-release-please-version
+arcbox-datapath = { version = "0.10.4", path = "common/arcbox-datapath" } # x-release-please-version
+arcbox-xnu-net = { version = "0.10.4", path = "common/arcbox-xnu-net" } # x-release-please-version
+arcbox-conntrack = { version = "0.10.4", path = "common/arcbox-conntrack" } # x-release-please-version
+arcbox-fakeip = { version = "0.10.4", path = "common/arcbox-fakeip" } # x-release-please-version
+arcbox-proxy = { version = "0.10.4", path = "common/arcbox-proxy" } # x-release-please-version
+splicetcp = { version = "0.10.4", path = "common/splicetcp" } # x-release-please-version
+# arcbox-hv has its own release cadence (Apple Hypervisor.framework
+# bindings), so the workspace dep pin is bumped manually when arcbox-hv
+# itself is bumped — not by release-please.
+arcbox-hv = { version = "0.3.20", path = "virt/arcbox-hv" }
+arcbox-vz = { version = "0.10.4", path = "virt/arcbox-vz" } # x-release-please-version
+arcbox-hypervisor = { version = "0.10.4", path = "virt/arcbox-hypervisor" } # x-release-please-version
+arcbox-vmm = { version = "0.10.4", path = "virt/arcbox-vmm" } # x-release-please-version
+arcbox-virtio = { version = "0.10.4", path = "virt/arcbox-virtio" } # x-release-please-version
+arcbox-virtio-core = { version = "0.10.4", path = "virt/arcbox-virtio-core" } # x-release-please-version
+arcbox-virtio-blk = { version = "0.10.4", path = "virt/arcbox-virtio-blk" } # x-release-please-version
+arcbox-virtio-console = { version = "0.10.4", path = "virt/arcbox-virtio-console" } # x-release-please-version
+arcbox-virtio-fs = { version = "0.10.4", path = "virt/arcbox-virtio-fs" } # x-release-please-version
+arcbox-virtio-net = { version = "0.10.4", path = "virt/arcbox-virtio-net" } # x-release-please-version
+arcbox-virtio-rng = { version = "0.10.4", path = "virt/arcbox-virtio-rng" } # x-release-please-version
+arcbox-virtio-vsock = { version = "0.10.4", path = "virt/arcbox-virtio-vsock" } # x-release-please-version
+arcbox-virtio-balloon = { version = "0.10.4", path = "virt/arcbox-virtio-balloon" } # x-release-please-version
+arcbox-vm-proto = { version = "0.10.4", path = "virt/arcbox-vm-proto" } # x-release-please-version
+arcbox-vm-driver = { version = "0.10.4", path = "virt/arcbox-vm-driver" } # x-release-please-version
+arcbox-fc-driver = { version = "0.10.4", path = "virt/arcbox-fc-driver" } # x-release-please-version
+arcbox-tap-net = { version = "0.10.4", path = "virt/arcbox-tap-net" } # x-release-please-version
+arcbox-fs = { version = "0.10.4", path = "virt/arcbox-fs" } # x-release-please-version
+arcbox-net = { version = "0.10.4", path = "virt/arcbox-net" } # x-release-please-version
+arcbox-vmnet = { version = "0.10.4", path = "virt/arcbox-vmnet" } # x-release-please-version
+arcbox-net-inject = { version = "0.10.4", path = "virt/arcbox-net-inject" } # x-release-please-version
+arcbox-dhcp = { version = "0.10.4", path = "virt/arcbox-dhcp" } # x-release-please-version
+arcbox-container = { version = "0.10.4", path = "runtime/arcbox-container" } # x-release-please-version
+arcbox-protocol = { version = "0.10.4", path = "rpc/arcbox-protocol" } # x-release-please-version
+arcbox-grpc = { version = "0.10.4", path = "rpc/arcbox-grpc" } # x-release-please-version
+arcbox-connect = { version = "0.10.4", path = "rpc/arcbox-connect" } # x-release-please-version
+arcbox-transport = { version = "0.10.4", path = "rpc/arcbox-transport" } # x-release-please-version
+arcbox-docker = { version = "0.10.4", path = "app/arcbox-docker" } # x-release-please-version
+# Pinned to app/arcbox-helper's own version (not workspace.package). Do not
+# attach x-release-please-version — helper releases are manual.
+arcbox-helper = { version = "1.1.0", path = "app/arcbox-helper" }
+arcbox-image = { version = "0.10.4", path = "engine/arcbox-image" } # x-release-please-version
+arcbox-engine = { version = "0.10.4", path = "engine/arcbox-engine" } # x-release-please-version
+arcbox-computer = { version = "0.10.4", path = "computer/arcbox-computer" } # x-release-please-version
+arcbox-computer-runtime = { version = "0.10.4", path = "computer/arcbox-computer-runtime" } # x-release-please-version
+arcbox-core = { version = "0.10.4", path = "app/arcbox-core" } # x-release-please-version
+arcbox-api = { version = "0.10.4", path = "app/arcbox-api" } # x-release-please-version
+arcbox-migration = { version = "0.10.4", path = "app/arcbox-migration" } # x-release-please-version
+arcbox-ssh = { version = "0.10.4", path = "app/arcbox-ssh" } # x-release-please-version
+arcbox-logging = { version = "0.10.4", path = "common/arcbox-logging", default-features = false } # x-release-please-version
+
+# Temporary files and directories (tests, staging paths)
+tempfile = "3"
+
+[workspace.lints.clippy]
+# Enable pedantic and nursery at workspace level
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+# Pedantic lints that are project-wide noise
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"
+missing_const_for_fn = "allow"
+# Style preferences
+uninlined_format_args = "allow"
+redundant_else = "allow"
+items_after_statements = "allow"
+if_not_else = "allow"
+single_match_else = "allow"
+option_if_let_else = "allow"
+redundant_closure_for_method_calls = "allow"
+significant_drop_tightening = "allow"
+# Numeric casts — common in low-level/systems code
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+cast_lossless = "allow"
+# Protobuf generated code
+derive_partial_eq_without_eq = "allow"
+# Other pedantic lints not useful for this project
+similar_names = "allow"
+unreadable_literal = "allow"
+match_same_arms = "allow"
+needless_pass_by_value = "allow"
+unused_self = "allow"
+unused_async = "allow"
+# 1.98 split the async-family half out of `unused_async` above. Same call:
+# whether one member of an async surface awaits today is an implementation
+# detail, and de-asyncing it would encode that in a public signature.
+unused_async_trait_impl = "allow"
+too_many_lines = "allow"
+return_self_not_must_use = "allow"
+struct_excessive_bools = "allow"
+manual_let_else = "allow"
+default_trait_access = "allow"
+wildcard_imports = "allow"
+# Rust 1.96 made these style lints noisy across hot-path systems code; keep
+# semantic changes separate from mechanical churn.
+collapsible_if = "allow"
+duration_suboptimal_units = "allow"
+manual_is_multiple_of = "allow"
+
+[workspace.lints.rust]
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.bench]
+inherits = "release"
+debug = true
+
+[profile.dev]
+# Faster incremental builds
+incremental = true
+
+[profile.dev.package."*"]
+# Optimize dependencies in dev mode for better performance
+opt-level = 2

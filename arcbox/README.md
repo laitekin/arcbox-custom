@@ -1,0 +1,378 @@
+<div align="center">
+
+# ArcBox
+
+**A fast, open-source container and VM runtime for macOS.**
+
+**Built from scratch in Rust. Drop-in Docker, agent sandboxes, native
+Kubernetes, and full Linux and macOS VMs.**
+
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
+[![Rust](https://img.shields.io/badge/rust-1.96+-orange.svg)](https://www.rust-lang.org)
+[![Runtime](https://img.shields.io/github/v/release/arcboxlabs/arcbox?label=runtime&color=green)](https://github.com/arcboxlabs/arcbox/releases)
+[![Desktop](https://img.shields.io/github/v/release/arcboxlabs/arcbox-desktop?label=desktop&color=green)](https://github.com/arcboxlabs/arcbox-desktop/releases)
+[![Discord](https://img.shields.io/badge/discord-chat-5865F2?logo=discord)](https://arcbox.link/discord)
+[![Telegram](https://img.shields.io/badge/telegram-chat-26A5E4?logo=telegram)](https://arcbox.link/telegram)
+[![Docs](https://img.shields.io/badge/docs-arcbox.dev-blueviolet?logo=gitbook)](https://arcbox.link/docs)
+
+</div>
+
+## Why ArcBox
+
+ArcBox is an open-source alternative to Docker Desktop and OrbStack on macOS.
+OrbStack set the bar for running Docker on a Mac quickly and with little
+overhead, but it is closed-source. ArcBox is open source under MIT/Apache-2.0
+and written from scratch in Rust — its own VMM, VirtIO devices, filesystem
+sharing, and network datapath — and aims to match it.
+
+One daemon, one CLI, four kinds of workload on the same runtime:
+
+| Tier | What it is | Where to start |
+|------|------------|----------------|
+| **Containers** | A drop-in Docker engine, plus native Kubernetes | `docker …`, `abctl k8s` |
+| **Sandboxes** | Disposable microVMs for AI agents and untrusted code | `abctl claude`, `abctl sandbox` |
+| **Linux machines** | Full VMs with their own kernel, disk, and distro | `abctl machine` |
+| **macOS guests** | Throwaway macOS VMs, cloned from a base image | `abctl macos` |
+
+These workloads run locally on your Mac. ArcBox does not require a Platform
+account or a cloud control plane. The [Sandbox SDKs](sdk/) use the local daemon.
+
+ArcBox is in public beta. Join us on [Discord](https://arcbox.link/discord), or
+[open an issue](https://github.com/arcboxlabs/arcbox/issues).
+
+## Quick start
+
+```bash
+# Install with Homebrew
+brew install --cask arcboxlabs/tap/arcbox
+
+# or with the install script
+curl -fsSL https://get.arcbox.dev | bash
+
+# Start the daemon and enable Docker compatibility
+abctl daemon start
+abctl docker enable
+
+# Run a container
+docker run -d -p 8080:80 nginx
+curl http://localhost:8080
+```
+
+Run `abctl doctor` to check the runtime, and `abctl --help` to see every command.
+
+## Containers
+
+ArcBox is a drop-in Docker engine. It exposes a Docker-compatible socket and
+proxies to a guest `dockerd`, so the Docker CLI, your scripts, and your Compose
+files work without changes.
+
+```bash
+abctl docker enable        # creates and activates the "arcbox" Docker context
+docker run -d -p 8080:80 nginx
+docker compose up
+docker build -t myapp .
+```
+
+Containers, images, builds (BuildKit/Buildx), Compose, port forwarding, bind
+mounts, named volumes, and interactive `exec` all work today. `abctl docker setup`
+installs and manages the matching `docker`, `buildx`, and `compose` binaries for
+you.
+
+The engine is configured from `~/.config/arcbox/config.toml`; a daemon restart
+applies it:
+
+```toml
+[docker]
+expose_ports_to_lan = false     # -p 8080:80 binds 127.0.0.1 instead of every interface
+registry_mirrors = ["https://mirror.example.com"]   # tried before Docker Hub
+insecure_registries = ["registry.corp:5000"]
+
+[docker.engine]                 # any other dockerd daemon.json key
+max-concurrent-downloads = 6
+```
+
+### amd64 and arm64 images
+
+ArcBox runs `linux/amd64` images on Apple Silicon next to native arm64. x86-64 is
+translated inside the guest by [FEX](https://github.com/FEX-Emu/FEX), an
+open-source emulator, with nothing to configure.
+
+```bash
+docker run --platform linux/amd64 alpine uname -m
+# x86_64
+```
+
+### Native Kubernetes
+
+A local k3s cluster, managed by the daemon, with host integration for `kubectl`.
+
+```bash
+abctl k8s start
+abctl k8s enable      # installs kubectl, merges the kubeconfig, switches context
+kubectl get nodes
+```
+
+`abctl k8s kubeconfig` prints the managed kubeconfig on its own, if you would
+rather wire it into your own tooling than let `enable` touch `~/.kube/config`.
+
+A Service of type LoadBalancer answers on its port on the Mac, like a published
+container port, and `abctl k8s status` shows where each port is forwarded:
+
+```bash
+kubectl expose deployment web --type=LoadBalancer --port=8080
+curl http://localhost:8080/
+```
+
+### Container files in Finder
+
+The guest's Docker data is mounted read-only on the host at `~/ArcBox/docker`,
+served over NFSv4 through a vsock relay. Named volumes, container state, and
+image layers are browsable in Finder and readable by any host tool — no
+`docker cp`.
+
+```bash
+open ~/ArcBox/docker
+grep -r "panic" ~/ArcBox/docker/volumes/my-app-data/_data
+```
+
+### Machine files in Finder
+
+A running Linux machine's root filesystem is mounted read-write at
+`~/ArcBox/machines/<name>`, served over NFSv3 by the machine itself on its
+bridge NIC. Edit a machine's files with any Mac editor; the mount appears
+when the machine starts and goes away when it stops.
+
+```bash
+abctl machine start ubuntu
+code ~/ArcBox/machines/ubuntu/root/project
+```
+
+Files the Mac creates belong to root inside the machine, and root's files
+show as yours on the Mac; every other owner keeps its numeric id.
+`~/ArcBox` itself is a plain folder; `ARCBOX_HOST_MOUNT_DIR` moves it.
+
+### Live resource usage
+
+```bash
+abctl top          # streaming CPU, memory, disk, and network for the System VM
+abctl disk usage   # Docker data image usage; `abctl disk compact [machine]` returns freed space now
+                   # (it also returns on its own: idle System VM, hourly per machine)
+```
+
+`abctl top` adds a per-container table — CPU, memory against the limit, disk and
+network rates, PIDs — whenever containers are running. The same samples feed the
+API and the desktop app.
+
+### Migrate from Docker Desktop or OrbStack
+
+```bash
+abctl migrate from orbstack --dry-run   # show the plan, change nothing
+abctl migrate from orbstack
+abctl migrate from docker-desktop
+```
+
+Images (with every tag), named volumes, user-defined bridge networks and
+containers come across, and containers that were running on the source are
+started again at the end — pass `--no-start` to leave them stopped. Add
+`--json` to `--dry-run` for the machine-readable plan.
+
+Containers using `--network container:<id>` are reported as blocking and must
+be removed from the source, or migrated by hand, before the run proceeds.
+
+## Sandboxes and coding agents
+
+ArcBox runs disposable microVMs — each with its own kernel, booted by Firecracker
+nested inside the guest — for AI agents, untrusted code, and CI jobs.
+`abctl claude` is that primitive with the ergonomics finished: it builds a sandbox
+from a built-in template and attaches your terminal to Claude Code inside it,
+with the agent's permission prompts switched off, because the microVM is the
+isolation boundary instead.
+
+```bash
+export ANTHROPIC_API_KEY=sk-...
+abctl claude                    # first run builds the image; later runs start in ~1s
+abctl claude --id review        # a second, independent session
+abctl claude -- --model opus    # everything after -- goes to the agent
+```
+
+Nothing on the host is mounted into the sandbox: `/workspace` starts empty, the
+agent clones what it needs, and you copy results back out. See
+[docs/agent-sandbox.md](docs/agent-sandbox.md).
+
+Build sandboxes from a template, an existing Docker image, or a Dockerfile, and
+snapshot a booted, idle sandbox to skip a cold boot on the next one:
+
+```bash
+abctl sandbox templates                            # built-in images
+abctl sandbox create --from-image myapp:latest --memory 512 --ttl 3600
+abctl sandbox run <id> -- ./untrusted-binary       # or `exec` for interactive
+abctl sandbox cp <id>:/tmp/out.tgz .               # files in and out
+abctl sandbox expose <id> 8080                     # reach a sandbox port on the host
+abctl sandbox checkpoint <id> --name clean         # capture a ready snapshot
+abctl sandbox restore <snapshot-id>                # new sandbox, near-zero boot
+```
+
+> Sandboxes need nested virtualization: Apple Silicon **M3 or newer** with
+> **macOS 15+**, on the default VZ backend. On other hosts sandbox commands fail
+> fast with a clear error.
+
+Everything the CLI does is a gRPC call on the daemon socket, with server
+reflection enabled, so SDKs and your own tooling can drive sandboxes directly —
+create, exec, file transfer, port exposure, lifecycle events, snapshots. The
+integration reference is [docs/sandbox-api.md](docs/sandbox-api.md).
+
+## Linux machines
+
+When you want a complete environment instead of a container, ArcBox creates full
+Linux VMs, each with its own kernel, persistent disk, and a distro you choose.
+
+```bash
+abctl machine create dev --distro ubuntu --disk 50 --mount ~/code:/code
+abctl machine start dev
+abctl machine ssh dev                   # login shell (root; -u <user> for another account)
+abctl machine exec dev -- cargo build   # one-shot command
+abctl machine default dev               # then `abctl machine exec cargo build` needs no name
+abctl machine resize dev --cpus 4 --memory 8192   # applies at the next start
+abctl machine ls
+```
+
+Create, start, stop, inspect, directory mounts, interactive shells, and command
+execution work today for Alpine, Arch Linux, Debian, Fedora, and Ubuntu.
+
+A stopped machine clones in an instant and travels as one file:
+
+```bash
+abctl machine clone dev dev-2            # copy-on-write: no extra space until they diverge
+abctl machine export dev dev.tar.zst     # manifest + sparse data disk; the rootfs stays an image
+abctl machine import dev.tar.zst --name dev-restored
+```
+
+The archive names the published image the machine boots; import requires that
+image in the local registry at the same version, and says which one it needs
+when it is missing. Clone and export refuse a running machine: its data disk
+is a btrfs volume mounted read-write in the guest, so stop it first.
+
+A machine is its name: the guest's hostname is the machine name, and while it
+runs the Mac reaches it as `<name>.arcbox.local` (`ssh user@dev.arcbox.local`,
+`curl http://dev.arcbox.local:3000`). `_` and `.` in a name become `-` in the
+hostname (`my_box.v2` answers as `my-box-v2`); what is left must be a DNS label
+of up to 63 letters, digits and hyphens. The System VM behind `docker` is
+`default.arcbox.local`.
+
+## macOS guests
+
+On Apple Silicon, ArcBox also runs disposable macOS VMs: pull a published base
+image once, then copy-on-write clone it to boot clean, throwaway guests in
+seconds — the same "clone, use, discard" model, extended to macOS. A CoW clone of
+a 64 GiB disk takes microseconds on APFS.
+
+```bash
+abctl macos image pull tahoe-base        # once (multi-GB, progress streams)
+abctl macos create ci --image tahoe-base --cpus 4 --memory 8192
+abctl macos start ci
+abctl macos ip ci --wait 30              # reach it over the network
+```
+
+macOS guests run through Virtualization.framework only — Apple permits booting
+macOS no other way — need an APFS data directory, and are capped at **2 guests
+per host** by Apple's license. Details in
+[docs/macos-guest.md](docs/macos-guest.md).
+
+## Built from scratch
+
+Most of ArcBox's performance-critical code is custom rather than vendored:
+
+- **Two hypervisor backends.** ArcBox's own VMM on Hypervisor.framework, with
+  manual vCPU execution and a device model we maintain, plus a
+  Virtualization.framework backend through a Swift shim. Switch with
+  `abctl system backend hv|vz`; size the VM with
+  `abctl system resources --cpus 4 --memory 4096`.
+- **VirtIO devices**: `virtio-net`, `virtio-blk`, `virtio-fs`, `virtio-console`,
+  `virtio-vsock`, `virtio-rng`, and a balloon device.
+- **A userspace network datapath on macOS**: DHCP, DNS forwarding, NAT and
+  connection tracking, batched socket I/O, and userspace TCP termination that
+  splices guest flows onto real host sockets — no `pf` NAT and no `utun` device.
+  Containers are reachable by IP, and `abctl dns install` adds
+  `*.arcbox.local` name resolution: `http://<container>.arcbox.local` reaches
+  whatever port the container serves (or its `dev.arcbox.http-port` label),
+  and `https://` works too once `abctl tls trust` has trusted the local,
+  name-constrained CA. Guest DNS follows the Mac's resolvers as
+  they change (Wi-Fi switch, VPN up or down), and guest egress follows the
+  Mac's proxy settings by default; `proxy = "none"` or a proxy URL under
+  `[network]` in `~/.config/arcbox/config.toml` overrides that, with
+  `proxy_exclude` for hosts that stay direct.
+- **VirtioFS/FUSE filesystem sharing**, an NFSv4 export for `~/ArcBox/docker`, and a
+  vsock guest agent that speaks protobuf.
+- **x86 translation through FEX**, so `linux/amd64` images run on Apple Silicon.
+- A privileged helper with code-signature-based peer authentication for the few
+  operations that need root, so the daemon itself does not run as root.
+
+Measured, and documented in [docs/benchmarks/network.md](docs/benchmarks/network.md):
+single-stream host→VM throughput of 22.7 Gbps on the custom backend, about twice
+Apple's VirtIO-net in the same test (multi-flow saturation currently tops out at
+10–12 Gbps combined).
+
+These are the numbers we are working toward, with OrbStack for comparison:
+
+| Metric | ArcBox target | OrbStack |
+|--------|---------------|----------|
+| Cold boot | <1.5 s | ~2 s |
+| Warm boot | <500 ms | <1 s |
+| Idle memory | <150 MB | ~200 MB |
+| File I/O (vs native) | >90% | 75–95% |
+| Network throughput | >50 Gbps | ~45 Gbps |
+
+## Desktop app
+
+ArcBox Desktop is a native SwiftUI app. It talks to the daemon over gRPC and uses
+the Docker-compatible API for Docker resources. It covers Docker (containers,
+images, volumes, networks) and Kubernetes (pods, services), and includes log
+streaming, a terminal, live resource monitoring, and a file browser for
+container, image, and volume filesystems. Source:
+[arcboxlabs/arcbox-desktop](https://github.com/arcboxlabs/arcbox-desktop).
+
+## What's next
+
+- Sandbox SDK general availability
+- Faster x86 translation
+- Wider Docker Engine API coverage
+- Lower idle footprint
+
+## Requirements
+
+- macOS on Apple Silicon. Intel support is in progress.
+- Sandboxes (and therefore `abctl claude`) additionally need M3 or newer on
+  macOS 15+; macOS guests need an APFS data directory.
+- The Docker CLI. ArcBox replaces the engine, not the CLI; `abctl docker setup`
+  can install it for you.
+
+## Uninstall
+
+```bash
+abctl uninstall                 # daemon, helper, links, integrations, data
+brew uninstall --cask arcbox    # then, if the app came from Homebrew
+```
+
+Add `--keep-data` to keep containers, images and volumes for a reinstall. The
+command lists what it found, asks once, reports every step, and leaves anything
+that belongs to another tool (OrbStack's or Docker Desktop's links) alone. The
+full inventory of what ArcBox writes is in
+[docs/data-directories.md](docs/data-directories.md#11-uninstall).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions, code standards, and
+development setup. The runtime is open source under MIT/Apache-2.0. Personal use
+is free, and commercial use is free during the public beta.
+
+## License
+
+[MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE)
+
+---
+
+<div align="center">
+
+[Website](https://arcbox.dev) · [Docs](https://arcbox.link/docs) · [Discord](https://arcbox.link/discord)
+
+</div>

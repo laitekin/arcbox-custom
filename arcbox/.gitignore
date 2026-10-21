@@ -1,0 +1,40 @@
+/target
+*.profraw
+*.profdata
+
+# macOS
+.DS_Store
+
+# Test resources (binary)
+tests/resources/*.img
+tests/resources/Image-*
+tests/resources/vmlinuz-*
+tests/resources/initramfs-*
+tests/resources/modloop-*
+
+# Boot assets (generated)
+boot-assets/
+boot-assets-arm64-*.tar.gz*
+tests/resources/boot-assets-*
+tests/resources/boot-assets-arm64-*
+# Claude Code (track skills symlink, ignore everything else)
+.claude/*
+!.claude/skills
+
+# Scratch notes
+perf-issue.md
+issues.net.md
+
+# Devenv
+.devenv*
+devenv.local.nix
+devenv.local.yaml
+
+# direnv
+.direnv
+
+# pre-commit
+.pre-commit-config.yaml
+
+# Internal planning docs live in the private company repo (engineering/arcbox/)
+/internal-docs/

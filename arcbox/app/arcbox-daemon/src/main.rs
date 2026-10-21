@@ -1,0 +1,250 @@
+//! ArcBox daemon — orchestrates VM, networking, and API services.
+
+mod context;
+mod control_plane;
+mod disk_reclaim;
+mod dns_service;
+mod host_mount;
+mod kubernetes_lb;
+mod kubernetes_proxy;
+mod machine_dns;
+mod machine_mount;
+#[cfg(target_os = "macos")]
+mod mdns;
+mod nfs_mount;
+mod power;
+mod recovery;
+mod sandbox_cleanup;
+mod self_setup;
+mod services;
+mod shutdown;
+mod ssh_agent;
+mod ssh_service;
+mod startup;
+mod storage_health;
+
+use std::sync::Arc;
+
+use anyhow::Result;
+use arcbox_api::SetupState;
+use arcbox_constants::container_network::ContainerNetwork;
+use arcbox_constants::paths::ArcboxProfile;
+use arcbox_logging::LogConfig;
+use clap::Parser;
+
+#[derive(Debug, Parser)]
+#[command(name = "arcbox-daemon")]
+#[command(author, version, about, long_about = None)]
+pub struct DaemonArgs {
+    /// Runtime profile (production or development).
+    #[arg(long)]
+    pub profile: Option<ArcboxProfile>,
+
+    /// Unix socket path for Docker API (default: ~/.arcbox/run/docker.sock).
+    #[arg(long)]
+    pub socket: Option<std::path::PathBuf>,
+
+    /// Unix socket path for gRPC API (default: ~/.arcbox/run/arcbox.sock).
+    #[arg(long)]
+    pub grpc_socket: Option<std::path::PathBuf>,
+
+    /// Data directory for ArcBox.
+    #[arg(long)]
+    pub data_dir: Option<std::path::PathBuf>,
+
+    /// DNS suffix served by this daemon (default: arcbox.local).
+    #[arg(long)]
+    pub dns_domain: Option<arcbox_helper::validate::Domain>,
+
+    /// Host UDP port for DNS; 0 asks the OS to allocate one. Unset, the
+    /// profile's port (5553 production, 5554 development) is tried first and
+    /// an OS-allocated port is used when it is taken.
+    #[arg(long)]
+    pub dns_port: Option<u16>,
+
+    /// Install `/etc/resolver/<dns-domain>` for this explicitly isolated
+    /// instance. Canonical production DNS is installed automatically.
+    #[arg(long)]
+    pub install_dns_resolver: bool,
+
+    /// Host TCP port for the Kubernetes API proxy; 0 asks the OS to allocate one
+    /// (default: 16443).
+    #[arg(long)]
+    pub kubernetes_port: Option<u16>,
+
+    /// Name written into the Kubernetes kubeconfig (default: profile context).
+    #[arg(long)]
+    pub kubernetes_context: Option<String>,
+
+    /// Host loopback TCP port for the SSH server; 0 asks the OS to allocate
+    /// one (default: 16022).
+    #[arg(long)]
+    pub ssh_port: Option<u16>,
+
+    /// Private IPv4 pool used by this instance's container networks.
+    #[arg(long)]
+    pub container_cidr: Option<ContainerNetwork>,
+
+    /// Custom kernel path for VM boot.
+    #[arg(long)]
+    pub kernel: Option<std::path::PathBuf>,
+
+    /// Automatically enable Docker CLI integration.
+    #[arg(long)]
+    pub docker_integration: bool,
+
+    /// Run as a VM host only: do not boot the default Linux VM, and disable the
+    /// Docker API, Docker CLI integration, and Kubernetes proxy. macOS guest
+    /// management is unaffected. Overrides `[vm] autostart` in the config file.
+    #[arg(long)]
+    pub no_linux_vm: bool,
+
+    /// Run in foreground (also log to stderr in human-readable format).
+    #[arg(long)]
+    pub foreground: bool,
+
+    /// Guest dockerd API vsock port.
+    #[arg(long)]
+    pub guest_docker_vsock_port: Option<u32>,
+
+    /// Do not mount the guest docker data export at ~/ArcBox/docker.
+    #[arg(long)]
+    pub no_mount_nfs: bool,
+}
+
+fn main() -> Result<()> {
+    let args = DaemonArgs::parse();
+    let profile = args
+        .profile
+        .unwrap_or_else(ArcboxProfile::from_env_or_default);
+    validate_docker_integration(profile, args.docker_integration)?;
+
+    let _sentry_guard = sentry::init(sentry::ClientOptions {
+        dsn: sentry_dsn().and_then(|s| s.parse().ok()),
+        release: Some(env!("CARGO_PKG_VERSION").into()),
+        environment: sentry_environment().map(Into::into),
+        traces_sample_rate: 0.2,
+        sample_rate: 1.0,
+        attach_stacktrace: true,
+        ..Default::default()
+    });
+
+    let data_dir = startup::resolve_data_dir(profile, args.data_dir.as_ref());
+    let log_guard = arcbox_logging::init_with_sentry(LogConfig {
+        log_dir: data_dir.join(arcbox_constants::paths::host::LOG),
+        file_name: arcbox_constants::paths::host::DAEMON_LOG.to_string(),
+        // `guest_serial` (PL011 earlycon) and `guest_console` (VirtioConsole
+        // hvc0) carry the in-VM kernel + agent boot output. Enable them by
+        // default so a stuck guest boot is diagnosable without a RUST_LOG
+        // override — they fall quiet once userspace is up.
+        default_filter: "arcbox=info,arcbox_daemon=info,guest_serial=info,guest_console=info"
+            .to_string(),
+        foreground: args.foreground,
+        ..LogConfig::default()
+    });
+
+    // Build identity — match a running daemon to its source revision. The
+    // packaged app restores its own daemon, so dev work must confirm this SHA.
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        build = env!("ARCBOX_BUILD_SHA"),
+        profile = ?profile,
+        "arcbox-daemon starting"
+    );
+
+    let result = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to build tokio runtime")
+        .block_on(run(args));
+    if let Err(ref e) = result {
+        let error: &(dyn std::error::Error + Send + Sync + 'static) = e.as_ref();
+        sentry::capture_error(error);
+        tracing::error!("Daemon exited with error: {e:?}");
+    }
+
+    log_guard.flush();
+    result
+}
+
+fn validate_docker_integration(profile: ArcboxProfile, enabled: bool) -> Result<()> {
+    anyhow::ensure!(
+        !enabled || profile == ArcboxProfile::Production,
+        "--docker-integration is production-only because it changes the global Docker current context; use the development instance's Docker context explicitly"
+    );
+    Ok(())
+}
+
+fn sentry_dsn() -> Option<String> {
+    std::env::var("ARCBOX_DAEMON_SENTRY_DSN")
+        .or_else(|_| std::env::var("SENTRY_DSN"))
+        .ok()
+}
+
+fn sentry_environment() -> Option<String> {
+    std::env::var("ARCBOX_DAEMON_SENTRY_ENVIRONMENT")
+        .or_else(|_| std::env::var("SENTRY_ENVIRONMENT"))
+        .ok()
+}
+
+async fn run(args: DaemonArgs) -> Result<()> {
+    let handles = context::StartupHandles::new(Arc::new(SetupState::new()));
+
+    // The signal watcher must be armed for the whole startup window: the
+    // pipeline boots the VM, and without a handler the default SIGTERM
+    // disposition kills the process mid-boot, orphaning the VM and the
+    // Virtualization.framework helpers holding its disk images.
+    let ready = tokio::select! {
+        ready = start(args, handles.clone()) => match ready {
+            Ok(ready) => ready,
+            Err(e) => {
+                // Publish the failure on the setup stream before exiting so a
+                // WatchSetupStatus client (desktop app, e2e harness) learns the
+                // cause instead of seeing a bare disconnect. The brief grace
+                // period lets already-connected streams flush the final event;
+                // with no clients it only delays the error exit.
+                handles.setup_state.set_failed(&format!("{e:#}"));
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                shutdown::abort_failed_startup(&handles).await;
+                return Err(e);
+            }
+        },
+        () = shutdown::wait_for_signal() => {
+            return shutdown::interrupt_startup(&handles).await;
+        }
+    };
+
+    shutdown::run(ready.ctx, ready.handles).await
+}
+
+async fn start(args: DaemonArgs, handles: context::StartupHandles) -> Result<startup::ReadyDaemon> {
+    startup::Startup::from_args(args, handles)
+        .prepare_host()
+        .await?
+        .acquire_daemon_lease()
+        .await?
+        .start_control_plane()
+        .await?
+        .release_stale_resources()
+        .await?
+        .prepare_assets()
+        .await?
+        .boot_runtime()
+        .await?
+        .start_runtime_services()
+        .await?
+        .mark_ready()
+        .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn development_cannot_mutate_the_global_docker_context() {
+        assert!(validate_docker_integration(ArcboxProfile::Development, true).is_err());
+        assert!(validate_docker_integration(ArcboxProfile::Development, false).is_ok());
+        assert!(validate_docker_integration(ArcboxProfile::Production, true).is_ok());
+    }
+}

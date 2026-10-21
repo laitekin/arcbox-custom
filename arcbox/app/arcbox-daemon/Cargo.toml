@@ -1,0 +1,79 @@
+[package]
+name = "arcbox-daemon"
+description = "ArcBox daemon process"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "arcbox-daemon"
+path = "src/main.rs"
+
+[dependencies]
+arcbox-api = { workspace = true }
+arcbox-core = { workspace = true }
+arcbox-docker = { workspace = true }
+arcbox-helper = { workspace = true }
+async-trait = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { version = "0.1", features = ["net"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+sentry = { workspace = true }
+arcbox-logging = { workspace = true, features = ["sentry"] }
+dirs = { workspace = true }
+libc = { workspace = true }
+arcbox-constants = { workspace = true }
+arcbox-net = { workspace = true }
+axum.workspace = true
+bytes.workspace = true
+http-body-util = "0.1"
+tokio-util = "0.7"
+arcbox-docker-tools.workspace = true
+filetime = "0.2.29"
+arcbox-transport.workspace = true
+connectrpc = { package = "arcbox-connectrpc", version = "0.9.0-arcbox.1", features = ["axum"] }
+hyper-util = { version = "0.1.20", features = ["server", "server-auto", "server-graceful", "tokio", "http1", "http2", "service"] }
+hyper = { workspace = true, features = ["server", "http1", "http2"] }
+connectrpc-reflection = { package = "arcbox-connectrpc-reflection", version = "0.9.0-arcbox.1" }
+arcbox-connect.workspace = true
+arcbox-ssh.workspace = true
+arcbox-error.workspace = true
+arcbox-computer.workspace = true
+arcbox-engine.workspace = true
+nix.workspace = true
+libproc.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+arcbox-route.workspace = true
+macos-resolver = { workspace = true }
+
+[features]
+# `vmnet` is on by default: the bridge NIC (NIC2) for host→container L3
+# routing only compiles behind it, and no build pipeline passes
+# `--features` — without it release daemons ship without container
+# routing, `route_installed` stays false, and the desktop app falls back
+# to localhost instead of *.arcbox.local domains. Failure to create the
+# vmnet interface at runtime (e.g. unsigned dev builds) is non-fatal.
+default = ["gic", "vmnet"]
+vmnet = ["arcbox-core/vmnet"]
+gic = ["arcbox-core/gic"]
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+arcbox-grpc.workspace = true
+arcbox-protocol.workspace = true
+connectrpc = { package = "arcbox-connectrpc", version = "0.9.0-arcbox.1", features = ["client"] }
+serde_json.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+tonic.workspace = true
+tonic-reflection = "0.14"
+tower.workspace = true

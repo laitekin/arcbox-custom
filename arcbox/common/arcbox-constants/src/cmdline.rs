@@ -1,0 +1,86 @@
+/// Kernel cmdline key for guest Docker API vsock port propagation.
+pub const GUEST_DOCKER_VSOCK_PORT_KEY: &str = "arcbox.guest_docker_vsock_port=";
+
+/// Kernel cmdline key carrying the container address pool shared by host
+/// routing, guest firewall rules, and Docker network allocation.
+pub const CONTAINER_NETWORK_KEY: &str = "arcbox.container_network=";
+
+/// Kernel cmdline key for guest Docker data block-device path.
+pub const DOCKER_DATA_DEVICE_KEY: &str = "arcbox.docker_data_device=";
+
+/// Kernel cmdline key for guest Docker metadata block-device path.
+pub const DOCKER_METADATA_DEVICE_KEY: &str = "arcbox.docker_metadata_device=";
+
+/// Kernel cmdline key identifying the runtime generation to materialize onto
+/// the guest data disk.
+pub const RUNTIME_GENERATION_KEY: &str = "arcbox.runtime_generation=";
+
+/// Kernel cmdline key carrying the host path of the interactive debug-console
+/// Unix socket (custom-HV backend).
+///
+/// When present, the host wires the virtio-console to a bidirectional socket at
+/// this path and the guest rcS spawns a root shell on the console — giving a
+/// serial shell reachable via `socat - UNIX-CONNECT:<path>` even when early boot
+/// hangs before networking.
+pub const DEBUG_CONSOLE_KEY: &str = "arcbox.debug_console=";
+
+/// Guest path of the machine boot shim executed as PID 1 via `init=`.
+///
+/// Packaged into the boot-assets EROFS; the shim stages the distro rootfs
+/// (overlay over squashfs), spawns the agent, and `switch_root`s into the
+/// distro's own init.
+pub const MACHINE_INIT_PATH: &str = "/sbin/arcbox-machine-init";
+
+/// Kernel cmdline key carrying the distro rootfs block device (`/dev/vdb`)
+/// the machine boot shim mounts as the overlay lower layer.
+pub const MACHINE_ROOTFS_KEY: &str = "arcbox.machine_rootfs=";
+
+/// Kernel cmdline key carrying the distro rootfs filesystem type
+/// (`squashfs`), from the machine image manifest.
+pub const MACHINE_ROOTFS_TYPE_KEY: &str = "arcbox.machine_rootfs_type=";
+
+/// Kernel cmdline key carrying the per-machine data block device
+/// (`/dev/vdc`) the shim first-boot-formats as btrfs and uses as the overlay
+/// upper layer.
+pub const MACHINE_DATA_KEY: &str = "arcbox.machine_data=";
+
+/// Explicit `earlycon` directive pinning the kernel's early console to the
+/// custom-HV PL011 UART emulator at `0x0B00_0000` (see
+/// `arcbox_vmm::vmm::darwin_hv::pl011::PL011_BASE`).
+///
+/// A bare `earlycon` relies on the device-tree `stdout-path`, which in practice
+/// produces no output on the HV backend — leaving every boot failure
+/// undiagnosable. Pinning the address routes early kernel messages through the
+/// emulator, which forwards them to the host `guest_serial` log.
+///
+/// The address is verified against `PL011_BASE` by a drift-guard test in
+/// `arcbox-vmm` (`darwin_hv::pl011`), the crate that owns the emulator.
+pub const HV_EARLYCON_DIRECTIVE: &str = "earlycon=pl011,0x0b000000";
+
+/// Kernel cmdline key carrying the machine's user mounts.
+///
+/// The value is `tag=guest_path[:ro]` entries joined by commas (e.g.
+/// `m0=/work,m1=/data:ro`). Each tag names a per-machine VirtioFS share the
+/// shim mounts into the new root after staging the overlay. Guest paths are
+/// validated host-side to contain neither `,` nor `=`.
+pub const MACHINE_MOUNTS_KEY: &str = "arcbox.machine_mounts=";
+
+/// Kernel cmdline key carrying the machine's name.
+///
+/// The boot shim's `machine-init` makes it the guest's hostname (kernel
+/// nodename plus `/etc/hostname`, which every distro init in scope re-reads
+/// at boot), so a shell prompt inside `abctl machine ssh dev` says `dev`
+/// and the host's `<name>.arcbox.local` record names the same thing the
+/// guest calls itself. Fixed at create like the rest of the machine cmdline.
+pub const MACHINE_NAME_KEY: &str = "arcbox.machine_name=";
+
+/// Kernel routing protocol (`rtm_protocol`) tagging the routes the agent's
+/// own DHCP client installs.
+///
+/// Values 5 and up are free for userspace; this one is outside the ranges
+/// `/etc/iproute2/rt_protos` names, so nothing else on a stock image claims
+/// it. In a distro machine the tag is what lets the boot-done hook remove
+/// *only* the provisional default route `machine-init` installed once the
+/// distro's own network manager has added its own — deleting by prefix and
+/// device alone would take the distro's route with it.
+pub const AGENT_DHCP_ROUTE_PROTO: u32 = 200;

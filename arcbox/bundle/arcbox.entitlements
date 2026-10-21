@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Virtualization.framework access (required for VMs on macOS) -->
+    <key>com.apple.security.virtualization</key>
+    <true/>
+
+    <!-- Hypervisor access (low-level VM control) -->
+    <key>com.apple.security.hypervisor</key>
+    <true/>
+
+    <!-- Network access for container networking -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <key>com.apple.security.network.server</key>
+    <true/>
+
+    <!-- vmnet.framework direct access (bridge NIC without root) -->
+    <key>com.apple.vm.networking</key>
+    <true/>
+
+    <!-- Allow unsigned executable memory (for JIT in containers) -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!-- NOTE: library validation is intentionally NOT disabled here. The
+         shipped daemon links against system libraries only, so it keeps
+         the hardened-runtime guarantee that it can only load dylibs signed
+         by Apple or the same Team ID. Local devenv builds that link
+         nix-store libiconv use bundle/arcbox.dev.entitlements instead. -->
+</dict>
+</plist>

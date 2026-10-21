@@ -1,0 +1,63 @@
+# ArcBox asset lock — pins versions and checksums for reproducible builds.
+#
+# The [[tools]] section pins third-party and internal binaries:
+#   - group "docker"/"kubernetes": macOS binaries downloaded to
+#     ~/.arcbox/runtime/bin/. The whole data dir is a VirtioFS share, so the
+#     guest can see them, but they are darwin artifacts and only the host
+#     CLI ever runs them.
+#   - group "desktop": host-only binaries embedded in the app bundle
+#     (e.g. pstramp for PTY session isolation).
+#
+# The guest runtime binaries (dockerd, containerd, …) come from the boot
+# manifest pinned under [boot], NOT from [[tools]]. Keep the "docker" tool
+# below on the same version as the boot bundle's dockerd when bumping either
+# side — the CLI tolerates an older daemon through API negotiation, but the
+# two pins should only diverge for the short window between a bundle release
+# and the [boot] bump.
+
+[boot]
+version = "0.8.10"
+cdn = "https://boot.arcboxcdn.com"
+manifest_sha256 = "ade60dc939585170e30944a3679c367837ca1fcfadaf425f5a756e31dd307257"
+
+[[tools]]
+name = "docker"
+group = "docker"
+version = "29.8.2"
+arch.arm64.sha256 = "5ffa2bafbabe073470f0333f4a129599230b73d1170bb61146b3d9b08e1d1325"
+arch.x86_64.sha256 = "384d9b259c1efd2265e6a0ff05512d5998035df0877053cb7763405caf17ca23"
+
+[[tools]]
+name = "docker-buildx"
+group = "docker"
+version = "0.37.2"
+arch.arm64.sha256 = "149e6a006edaa430f297b2bdcf65baaa6d7ee5ccfc7aa67dd50ce1c2b1db47e2"
+arch.x86_64.sha256 = "91cfde39945b0a76f0320db72d16f22ddf320da1d7a967b6871369041577cb88"
+
+[[tools]]
+name = "docker-compose"
+group = "docker"
+version = "5.6.0"
+arch.arm64.sha256 = "bd714a42b46e51757fc1121085b3096b9064e3f80d3ca5a991e33f44df4f43c9"
+arch.x86_64.sha256 = "c76e3abf5fde1aeb3bd7c7306ff15bef2246afc1f9e54832a0a050dd7cdfb2f8"
+
+[[tools]]
+name = "docker-credential-osxkeychain"
+group = "docker"
+version = "0.9.9"
+arch.arm64.sha256 = "3585188b1df1c3568ae536999eddb48ad2c781b3cf07a2f7d7181262d045820c"
+arch.x86_64.sha256 = "1be33ae30c8c80277bea3364d0d71afad411fa22e88bcabf3375550b989fd272"
+
+[[tools]]
+name = "pstramp"
+group = "desktop"
+version = "0.2.0"
+arch.arm64.sha256 = "48448a426bb994e45b603588b19b62629f07d6040f1501235e969c07ecc57413"
+arch.x86_64.sha256 = "eb3cc921de1aed02348821f4a653705a33b012b6a1da7466e577673c5ce80609"
+
+[[tools]]
+name = "kubectl"
+group = "kubernetes"
+version = "1.37.1"
+arch.arm64.sha256 = "fd65982c97ddad3106754b69ffa196d0e543aa591930ae52aed1adfb92f8c77f"
+arch.x86_64.sha256 = "6851381c486ff6edd691623e3d65c87cb9a5b02887ff8fbbb38d8a031b748387"

@@ -1,0 +1,218 @@
+// macOS guest protocol definitions.
+//
+// macOS guests are disposable, single-purpose VMs on Apple Silicon: pull a
+// pre-baked base image once from ArcBox's distribution bucket, then
+// copy-on-write clone it to boot clean, throwaway VMs. They run only through
+// Virtualization.framework and share no lifecycle with Linux machines (no
+// guest agent, no kernel boot, no ArcBox NAT stack — networking is vmnet NAT,
+// with the guest address resolved from its DHCP lease), so they have their
+// own service rather than overloading MachineService.
+
+syntax = "proto3";
+
+package arcbox.v1;
+
+import "common.proto";
+
+// MacosService manages macOS guest VMs and their base images (Apple Silicon only).
+service MacosService {
+    // Creates a macOS guest by copy-on-write cloning a base image.
+    rpc Create(CreateMacosMachineRequest) returns (Empty);
+
+    // Starts a stopped macOS guest and waits until it is running.
+    rpc Start(StartMacosMachineRequest) returns (Empty);
+
+    // Stops a running macOS guest.
+    rpc Stop(StopMacosMachineRequest) returns (Empty);
+
+    // Removes a macOS guest and its cloned disks.
+    rpc Remove(RemoveMacosMachineRequest) returns (Empty);
+
+    // Lists macOS guests.
+    rpc List(Empty) returns (MacosMachineListResponse);
+
+    // Inspects a macOS guest.
+    rpc Inspect(InspectMacosMachineRequest) returns (MacosMachineInfo);
+
+    // Pulls a published base image from the distribution bucket, streaming
+    // progress until the image is verified and registered (long-running).
+    rpc ImagePull(MacosImagePullRequest) returns (stream MacosImagePullEvent);
+
+    // Resolves a published image reference against the distribution index
+    // without downloading anything: the concrete version a pull would land,
+    // its host requirements, and the locally installed version of the same
+    // stream. Fails if the image's hardware model cannot boot on this host.
+    rpc ImageResolve(MacosImageResolveRequest) returns (MacosImageResolveResponse);
+
+    // Lists base images.
+    rpc ImageList(Empty) returns (MacosImageListResponse);
+
+    // Removes a base image.
+    rpc ImageRemove(MacosImageRemoveRequest) returns (Empty);
+}
+
+// Request to create a macOS guest from a base image.
+message CreateMacosMachineRequest {
+    // Guest name (unique).
+    string name = 1;
+    // Base image to copy-on-write clone.
+    string image = 2;
+    // Number of CPUs.
+    uint32 cpus = 3;
+    // Memory in MiB.
+    uint64 memory_mib = 4;
+}
+
+// Request to start a macOS guest.
+message StartMacosMachineRequest {
+    // Guest name.
+    string name = 1;
+}
+
+// Request to stop a macOS guest.
+message StopMacosMachineRequest {
+    // Guest name.
+    string name = 1;
+}
+
+// Request to remove a macOS guest.
+message RemoveMacosMachineRequest {
+    // Guest name.
+    string name = 1;
+    // Remove even if running (stops it first).
+    bool force = 2;
+}
+
+// Request to inspect a macOS guest.
+message InspectMacosMachineRequest {
+    // Guest name.
+    string name = 1;
+}
+
+// Summary of a macOS guest.
+message MacosMachineSummary {
+    // Guest name.
+    string name = 1;
+    // State (running, starting, stopped).
+    string state = 2;
+    // Number of CPUs.
+    uint32 cpus = 3;
+    // Memory in MiB.
+    uint64 memory_mib = 4;
+    // Base image it was cloned from.
+    string image = 5;
+    // Creation timestamp.
+    int64 created = 6;
+}
+
+// Response listing macOS guests.
+message MacosMachineListResponse {
+    // Guests.
+    repeated MacosMachineSummary machines = 1;
+}
+
+// Detailed information about a macOS guest.
+message MacosMachineInfo {
+    // Guest name.
+    string name = 1;
+    // State.
+    string state = 2;
+    // Number of CPUs.
+    uint32 cpus = 3;
+    // Memory in MiB.
+    uint64 memory_mib = 4;
+    // Base image it was cloned from.
+    string image = 5;
+    // Creation timestamp.
+    int64 created = 6;
+    // MAC address of the guest's NAT interface, pinned at creation.
+    string mac_address = 7;
+    // IPv4 address of the guest's DHCP lease. Empty until the running guest
+    // has acquired one (typically a few seconds after boot), and always
+    // empty for a stopped guest.
+    string ip_address = 8;
+}
+
+// Request to pull a published base image.
+//
+// Exactly one of `reference` / `manifest_url` must be set. CPU/memory/disk
+// characteristics come from the published manifest, not the request.
+message MacosImagePullRequest {
+    // Image reference: a stream name with an optional pinned version,
+    // e.g. "tahoe-base" or "tahoe-base@2026.07.03".
+    string reference = 1;
+    // Manifest override (URL or daemon-local path); bypasses the published
+    // index. Intended for development and pinning escapes.
+    string manifest_url = 2;
+}
+
+// Progress event emitted while a base image pull runs.
+message MacosImagePullEvent {
+    // Stage: resolving | validating | disk | aux | verifying | done.
+    string stage = 1;
+    // Completion fraction within the stage (0.0..=1.0).
+    double fraction = 2;
+    // Set only on the final "done" event: the image that landed (or was
+    // already present) in the registry, so a caller learns the concrete
+    // version a floating reference resolved to.
+    MacosImageSummary image = 3;
+}
+
+// Request to resolve a published image reference. Same source semantics as
+// MacosImagePullRequest: exactly one of `reference` / `manifest_url`.
+message MacosImageResolveRequest {
+    // Image reference: a stream name with an optional pinned version.
+    string reference = 1;
+    // Manifest override (URL or daemon-local path); bypasses the index.
+    string manifest_url = 2;
+}
+
+// What a reference resolves to, without pulling.
+message MacosImageResolveResponse {
+    // Stream name (e.g. "tahoe-base").
+    string name = 1;
+    // Concrete version a pull would land, even for a floating reference.
+    string version = 2;
+    // Guest macOS product version (e.g. "26.5").
+    string os_version = 3;
+    // Minimum CPU count required by the guest.
+    uint64 minimum_cpu_count = 4;
+    // Minimum guest memory in MiB required by the guest.
+    uint64 minimum_memory_mib = 5;
+    // System disk size in GB (decimal, logical).
+    uint64 disk_gb = 6;
+    // Version currently installed under this stream name; empty if none.
+    string installed_version = 7;
+}
+
+// Summary of a macOS base image.
+message MacosImageSummary {
+    // Image name.
+    string name = 1;
+    // Minimum CPU count required by the guest.
+    uint64 minimum_cpu_count = 2;
+    // Minimum memory in MiB required by the guest.
+    uint64 minimum_memory_mib = 3;
+    // System disk size in GB (decimal, logical).
+    uint64 disk_gb = 4;
+    // Creation timestamp.
+    int64 created = 5;
+    // Source (manifest location), if known.
+    string source = 6;
+    // Published version label (e.g. "2026.07.03"), if pulled.
+    string version = 7;
+    // Guest macOS product version (e.g. "26.5"), if known.
+    string os_version = 8;
+}
+
+// Response listing macOS base images.
+message MacosImageListResponse {
+    // Base images.
+    repeated MacosImageSummary images = 1;
+}
+
+// Request to remove a macOS base image.
+message MacosImageRemoveRequest {
+    // Image name.
+    string name = 1;
+}

@@ -1,0 +1,529 @@
+//! Runtime migration commands.
+//!
+//! This module provides a thin CLI wrapper around the daemon-side migration
+//! gRPC service for importing local Docker Desktop and OrbStack workloads.
+
+use anyhow::{Context, Result, bail};
+use arcbox_connect::v1 as pb;
+use arcbox_connect::v1::MigrationServiceClient;
+use arcbox_connect::v1::{
+    MigrationContainerSpec, MigrationNetworkMode, MigrationPlan, PrepareMigrationRequest,
+    PrepareMigrationResponse, RunMigrationEvent, RunMigrationRequest,
+};
+use clap::{Args, Subcommand};
+use std::fmt::Write as _;
+use std::io::{self, IsTerminal, Write};
+use std::path::{Path, PathBuf};
+
+use crate::connect;
+
+/// Runtime migration commands.
+#[derive(Subcommand)]
+pub enum MigrateCommands {
+    /// Import workloads from another local runtime
+    #[command(subcommand)]
+    From(MigrateFromCommands),
+}
+
+/// Supported runtime migration sources.
+#[derive(Subcommand)]
+pub enum MigrateFromCommands {
+    /// Import from Docker Desktop
+    DockerDesktop(MigrateSourceArgs),
+    /// Import from OrbStack
+    Orbstack(MigrateSourceArgs),
+}
+
+/// Shared arguments for a runtime migration source.
+#[derive(Args, Clone)]
+pub struct MigrateSourceArgs {
+    /// Override the source Docker-compatible socket path
+    #[arg(long = "source-socket")]
+    pub source_socket: Option<PathBuf>,
+    /// Skip the confirmation prompt
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+    /// Show what would be migrated and exit without changing anything
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Print the migration plan as JSON
+    #[arg(long, requires = "dry_run")]
+    pub json: bool,
+    /// Recreate containers but leave them stopped
+    #[arg(long)]
+    pub no_start: bool,
+}
+
+#[derive(Clone, Copy)]
+enum MigrationSourceKind {
+    DockerDesktop,
+    Orbstack,
+}
+
+impl MigrationSourceKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::DockerDesktop => "docker-desktop",
+            Self::Orbstack => "orbstack",
+        }
+    }
+
+    fn display_name(self) -> &'static str {
+        match self {
+            Self::DockerDesktop => "Docker Desktop",
+            Self::Orbstack => "OrbStack",
+        }
+    }
+
+    fn default_socket_path(self) -> PathBuf {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+        match self {
+            Self::DockerDesktop => home.join(".docker").join("run").join("docker.sock"),
+            Self::Orbstack => home.join(".orbstack").join("run").join("docker.sock"),
+        }
+    }
+}
+
+fn migration_client() -> MigrationServiceClient<connectrpc::client::SharedHttp2Connection> {
+    let (transport, config) = connect::daemon(&super::resolve_grpc_socket_path());
+    MigrationServiceClient::new(transport, config)
+}
+
+/// Executes a runtime migration subcommand.
+pub async fn execute(cmd: MigrateCommands) -> Result<()> {
+    match cmd {
+        MigrateCommands::From(MigrateFromCommands::DockerDesktop(args)) => {
+            execute_source(MigrationSourceKind::DockerDesktop, args).await
+        }
+        MigrateCommands::From(MigrateFromCommands::Orbstack(args)) => {
+            execute_source(MigrationSourceKind::Orbstack, args).await
+        }
+    }
+}
+
+async fn execute_source(source_kind: MigrationSourceKind, args: MigrateSourceArgs) -> Result<()> {
+    let source_socket = args
+        .source_socket
+        .clone()
+        .unwrap_or_else(|| source_kind.default_socket_path());
+    ensure_source_socket_exists(source_kind, &source_socket)?;
+
+    if !args.json {
+        println!("Preparing migration from {}...", source_kind.display_name());
+    }
+
+    let client = migration_client();
+    let prepare: PrepareMigrationResponse = client
+        .prepare_migration(PrepareMigrationRequest {
+            source_kind: source_kind.as_str().to_string(),
+            source_socket_path: source_socket.to_string_lossy().into_owned(),
+            allow_replacements: true,
+            dry_run: args.dry_run,
+            ..Default::default()
+        })
+        .await
+        .context("Failed to prepare migration")?
+        .into_owned();
+
+    if args.dry_run {
+        // `--no-start` never reaches the daemon on this path, so the preview has
+        // to apply it locally or it would advertise the opposite of what the
+        // same flags would actually do.
+        return report_dry_run(source_kind, &prepare, args.json, args.no_start);
+    }
+
+    print_prepare_summary(source_kind, &prepare);
+    print_blocking_issues(&prepare);
+    // Checked before the plan ID: a blocked plan is deliberately not stored, so
+    // its empty ID is expected and the blocking issues are the useful message.
+    if !prepare.unsupported_resources.is_empty() {
+        bail!(
+            "Migration cannot run until the blocking issues above are resolved. \
+             Re-run with --dry-run to inspect the full plan."
+        );
+    }
+    if prepare.plan_id.is_empty() {
+        bail!("Migration prepare response did not include a plan ID");
+    }
+
+    if !args.yes && !confirm_migration(&prepare)? {
+        println!("Migration cancelled.");
+        return Ok(());
+    }
+
+    if args.yes {
+        println!("Skipping confirmation because --yes was provided.");
+    }
+
+    println!();
+    println!("Running migration...");
+
+    let mut stream = client
+        .run_migration(RunMigrationRequest {
+            plan_id: prepare.plan_id.clone(),
+            // We only reach this point after the user has explicitly confirmed
+            // (either via interactive prompt or --yes), so allow both
+            // replacements and stopping blocker containers.
+            allow_replacements: true,
+            skip_start: args.no_start,
+            ..Default::default()
+        })
+        .await
+        .context("Failed to start migration")?;
+
+    let mut terminal = None;
+    while let Some(item) = stream
+        .message::<pb::RunMigrationEvent>()
+        .await
+        .context("Failed to read migration progress")?
+    {
+        let event: RunMigrationEvent = item.to_owned_message();
+        print_progress_event(&event);
+        if event.done {
+            terminal = Some(event);
+            break;
+        }
+    }
+
+    let Some(terminal) = terminal else {
+        bail!("Migration stream ended without a final status event");
+    };
+    if !terminal.success {
+        bail!("Migration failed");
+    }
+
+    // Warnings ride alongside success: everything migrated, but the user needs
+    // to see what did not come up before they walk away from the terminal.
+    if terminal.warnings.is_empty() {
+        println!("Migration completed successfully.");
+    } else {
+        println!();
+        println!("Warnings:");
+        for warning in &terminal.warnings {
+            println!("  - {warning}");
+        }
+        println!();
+        println!(
+            "Migration completed, but {} item(s) need attention (see above).",
+            terminal.warnings.len()
+        );
+    }
+    Ok(())
+}
+
+fn ensure_source_socket_exists(source_kind: MigrationSourceKind, path: &Path) -> Result<()> {
+    if path.exists() {
+        return Ok(());
+    }
+
+    bail!(
+        "{} socket not found at {}. Use --source-socket to override it.",
+        source_kind.display_name(),
+        path.display()
+    )
+}
+
+fn print_prepare_summary(source_kind: MigrationSourceKind, prepare: &PrepareMigrationResponse) {
+    println!("Migration plan ready");
+    println!("  Source:         {}", source_kind.display_name());
+    println!("  Source socket:  {}", prepare.source_socket_path);
+    println!("  Plan ID:        {}", prepare.plan_id);
+    println!("  Images:         {}", prepare.image_count);
+    println!("  Volumes:        {}", prepare.volume_count);
+    println!("  Networks:       {}", prepare.network_count);
+    println!("  Containers:     {}", prepare.container_count);
+    println!(
+        "  Replacements:   {}",
+        if prepare.replacements_required {
+            "required"
+        } else {
+            "none"
+        }
+    );
+
+    if !prepare.warnings.is_empty() {
+        println!();
+        println!("Warnings:");
+        for warning in &prepare.warnings {
+            println!("  - {warning}");
+        }
+    }
+}
+
+/// Renders a dry run and reports whether the plan could actually be executed.
+fn report_dry_run(
+    source_kind: MigrationSourceKind,
+    prepare: &PrepareMigrationResponse,
+    as_json: bool,
+    skip_start: bool,
+) -> Result<()> {
+    // The daemon populates the plan for every dry run, so its absence is a
+    // broken contract rather than a state to render around.
+    let plan = prepare
+        .plan
+        .as_option()
+        .context("Daemon returned no plan for a dry run")?;
+
+    if as_json {
+        // Serialized from the wire message, so the JSON a consumer sees is the
+        // documented `MigrationPlan` schema. `--no-start` is deliberately not
+        // folded in: the plan describes the migration, and a consumer combining
+        // the two flags reads `--no-start` from its own invocation.
+        let rendered = serde_json::to_string_pretty(plan)
+            .context("Failed to render migration plan as JSON")?;
+        println!("{rendered}");
+        return Ok(());
+    }
+
+    print_prepare_summary(source_kind, prepare);
+    print_plan_details(plan, skip_start);
+    print_blocking_issues(prepare);
+
+    println!();
+    if prepare.unsupported_resources.is_empty() {
+        println!("Dry run only; nothing was changed. Re-run without --dry-run to migrate.");
+    } else {
+        println!(
+            "Dry run only; nothing was changed. Migration is blocked until the issues above are resolved."
+        );
+    }
+    Ok(())
+}
+
+fn print_blocking_issues(prepare: &PrepareMigrationResponse) {
+    if prepare.unsupported_resources.is_empty() {
+        return;
+    }
+    println!();
+    println!("Blocking issues:");
+    for issue in &prepare.unsupported_resources {
+        println!("  - {issue}");
+    }
+}
+
+/// Prints the per-resource breakdown of the plan.
+///
+/// `skip_start` mirrors `--no-start` so container rows describe the run the same
+/// flags would produce.
+fn print_plan_details(plan: &MigrationPlan, skip_start: bool) {
+    print_section("Images", &plan.images, |image| {
+        image.export_references.join(", ")
+    });
+    print_section("Volumes", &plan.volumes, |volume| {
+        format!(
+            "{} ({} container(s))",
+            volume.name,
+            volume.attached_containers.len()
+        )
+    });
+    print_section("Networks", &plan.networks, |network| network.name.clone());
+    print_section("Containers", &plan.containers, |container| {
+        format!(
+            "{} [{}] image={} network={}",
+            container.name,
+            describe_start_state(container.was_running, skip_start),
+            container.image_reference,
+            container
+                .spec
+                .as_option()
+                .map_or_else(|| "?".to_string(), describe_network_mode),
+        )
+    });
+}
+
+/// Describes what will happen to a container after it is created.
+///
+/// A source-running container is started unless `--no-start` was passed, in
+/// which case every container arrives stopped.
+fn describe_start_state(was_running: bool, skip_start: bool) -> &'static str {
+    match (was_running, skip_start) {
+        (true, false) => "will start",
+        (true, true) => "stopped (--no-start)",
+        (false, _) => "stopped",
+    }
+}
+
+/// Renders a container's network mode as a short label.
+///
+/// `NAMED` reads its network from the companion `named_network` field, which the
+/// wire format keeps separate from the mode; an unset one leaves nothing to name.
+/// A mode this build has no variant for is printed as its wire number rather
+/// than folded into a neighbouring label, so a newer daemon reads as unknown
+/// instead of quietly as `default`.
+fn describe_network_mode(spec: &MigrationContainerSpec) -> String {
+    match spec.network_mode.as_known() {
+        Some(MigrationNetworkMode::Default) => "default".to_string(),
+        Some(MigrationNetworkMode::Host) => "host".to_string(),
+        Some(MigrationNetworkMode::None) => "none".to_string(),
+        Some(MigrationNetworkMode::Named) => spec
+            .named_network
+            .as_option()
+            .map_or_else(|| "named".to_string(), |network| network.network.clone()),
+        None => format!("unknown({})", spec.network_mode.to_i32()),
+    }
+}
+
+fn print_section<T, F>(title: &str, items: &[T], describe: F)
+where
+    F: Fn(&T) -> String,
+{
+    if items.is_empty() {
+        return;
+    }
+    println!();
+    println!("{title}:");
+    for item in items {
+        println!("  - {}", describe(item));
+    }
+}
+
+fn confirm_migration(prepare: &PrepareMigrationResponse) -> Result<bool> {
+    if !io::stdin().is_terminal() {
+        bail!("Migration confirmation requires a terminal. Re-run with --yes to continue.");
+    }
+
+    println!();
+    if prepare.replacements_required {
+        println!("This migration will modify existing resources and may stop source containers.");
+    }
+
+    print!("Proceed with migration? [y/N]: ");
+    io::stdout()
+        .flush()
+        .context("Failed to flush confirmation prompt")?;
+
+    let mut answer = String::new();
+    io::stdin()
+        .read_line(&mut answer)
+        .context("Failed to read confirmation prompt")?;
+
+    Ok(is_confirmation_yes(&answer))
+}
+
+fn is_confirmation_yes(answer: &str) -> bool {
+    matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+}
+
+fn print_progress_event(event: &RunMigrationEvent) {
+    let phase = if event.phase.is_empty() {
+        "migration"
+    } else {
+        event.phase.as_str()
+    };
+
+    let mut line = format!("[{phase}]");
+    if event.total > 0 {
+        let _ = write!(&mut line, " {}/{}", event.completed, event.total);
+    } else if event.completed > 0 {
+        let _ = write!(&mut line, " {}", event.completed);
+    }
+
+    if !event.resource.is_empty() {
+        line.push(' ');
+        line.push_str(&event.resource);
+    }
+
+    if !event.message.is_empty() {
+        line.push_str(": ");
+        line.push_str(&event.message);
+    }
+
+    if event.done {
+        line.push_str(if event.success {
+            " [done]"
+        } else {
+            " [failed]"
+        });
+    }
+
+    println!("{line}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        MigrationContainerSpec, MigrationNetworkMode, MigrationSourceKind, describe_network_mode,
+        describe_start_state, is_confirmation_yes,
+    };
+    use arcbox_connect::v1::MigrationContainerNetworkAttachment;
+
+    fn spec_with(mode: MigrationNetworkMode) -> MigrationContainerSpec {
+        MigrationContainerSpec {
+            network_mode: mode.into(),
+            ..MigrationContainerSpec::default()
+        }
+    }
+
+    #[test]
+    fn docker_desktop_default_socket_ends_with_expected_path() {
+        assert!(
+            MigrationSourceKind::DockerDesktop
+                .default_socket_path()
+                .ends_with(".docker/run/docker.sock")
+        );
+    }
+
+    #[test]
+    fn orbstack_default_socket_ends_with_expected_path() {
+        assert!(
+            MigrationSourceKind::Orbstack
+                .default_socket_path()
+                .ends_with(".orbstack/run/docker.sock")
+        );
+    }
+
+    #[test]
+    fn network_modes_render_as_short_labels() {
+        assert_eq!(
+            describe_network_mode(&spec_with(MigrationNetworkMode::Host)),
+            "host"
+        );
+        assert_eq!(
+            describe_network_mode(&spec_with(MigrationNetworkMode::Default)),
+            "default"
+        );
+        assert_eq!(
+            describe_network_mode(&MigrationContainerSpec {
+                named_network: MigrationContainerNetworkAttachment {
+                    network: "usernet".into(),
+                    aliases: vec!["api".into()],
+                    ..Default::default()
+                }
+                .into(),
+                ..spec_with(MigrationNetworkMode::Named)
+            }),
+            "usernet"
+        );
+    }
+
+    #[test]
+    fn a_named_mode_without_its_network_still_renders() {
+        // The wire format lets the two fields disagree even though the daemon
+        // never emits that, so the renderer must not depend on the pairing.
+        assert_eq!(
+            describe_network_mode(&spec_with(MigrationNetworkMode::Named)),
+            "named"
+        );
+    }
+
+    #[test]
+    fn the_preview_matches_what_the_run_would_do() {
+        // Mirrors `start_containers: !skip_start` on the daemon side: only a
+        // source-running container with --no-start absent is started, so that is
+        // the one row allowed to say so.
+        assert_eq!(describe_start_state(true, false), "will start");
+        assert_eq!(describe_start_state(true, true), "stopped (--no-start)");
+        assert_eq!(describe_start_state(false, false), "stopped");
+        assert_eq!(describe_start_state(false, true), "stopped");
+    }
+
+    #[test]
+    fn confirmation_parser_accepts_yes_variants() {
+        assert!(is_confirmation_yes("y"));
+        assert!(is_confirmation_yes("Y"));
+        assert!(is_confirmation_yes("yes"));
+        assert!(is_confirmation_yes(" YES "));
+        assert!(!is_confirmation_yes("n"));
+        assert!(!is_confirmation_yes(""));
+    }
+}

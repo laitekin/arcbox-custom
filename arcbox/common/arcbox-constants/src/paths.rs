@@ -1,0 +1,793 @@
+/// Guest mount point for dockerd persistent state (`/var/lib/docker`).
+///
+/// Backed by the Btrfs `@docker` subvolume on `/dev/vdb`.
+pub const DOCKER_DATA_MOUNT_POINT: &str = "/var/lib/docker";
+
+/// Guest mount point for containerd persistent state (`/var/lib/containerd`).
+///
+/// Backed by the Btrfs `@containerd` subvolume on `/dev/vdb`.
+pub const CONTAINERD_DATA_MOUNT_POINT: &str = "/var/lib/containerd";
+
+/// Guest mount point for K3s persistent state (`/var/lib/rancher/k3s`).
+pub const K3S_DATA_MOUNT_POINT: &str = "/var/lib/rancher/k3s";
+
+/// Guest mount point for kubelet persistent state (`/var/lib/kubelet`).
+pub const KUBELET_DATA_MOUNT_POINT: &str = "/var/lib/kubelet";
+
+/// Guest mount point for CNI persistent state (`/var/lib/cni`).
+pub const CNI_DATA_MOUNT_POINT: &str = "/var/lib/cni";
+
+/// Guest base directory for Firecracker jailer chroots, laid out as
+/// `{base}/{firecracker binary name}/{vm id}/root`.
+///
+/// Short on purpose, and every byte of it is spent twice over. The jail's
+/// sockets carry the VM id in their absolute path and AF_UNIX leaves 107
+/// bytes for one, so the base is subtracted from what the id may use
+/// (`arcbox_fc_driver::jail::id_budget`): `/var/lib/arcbox/jailer` left
+/// 39, and the control plane mints 41-byte `inst-<uuid v7>` ids, so every
+/// create was refused at ingress. This leaves 52.
+///
+/// Under `/var` rather than the jailer's own `/srv/jailer` default because
+/// that is what the System VM has: its root is a read-only EROFS image
+/// carrying no `/srv`, and the jailer `mknod`s the rootfs inside the
+/// chroot, so the base must be a writable, dev-allowing mount —
+/// `arcbox-agent init` mounts a tmpfs here for exactly that.
+pub const JAILER_CHROOT_BASE: &str = "/var/jail";
+
+/// Docker Engine API Unix socket path in guest.
+pub const DOCKER_API_UNIX_SOCKET: &str = "/var/run/docker.sock";
+
+/// containerd gRPC socket path in guest.
+pub const CONTAINERD_SOCKET: &str = "/run/containerd/containerd.sock";
+
+/// Guest Unix socket for SSH agent-forwarding into containers.
+///
+/// The System VM agent listens here; a container bind-mounts it with
+/// `-v /run/host-services/ssh-auth.sock:/run/host-services/ssh-auth.sock` and
+/// points `SSH_AUTH_SOCK` at it, matching OrbStack and Docker Desktop. The
+/// agent relays each accepted connection over
+/// [`crate::ports::SSH_AUTH_RELAY_PORT`] to the daemon, which in turn connects
+/// to the user's real `ssh-agent` on the Mac.
+pub const HOST_SERVICES_SSH_AUTH_SOCK: &str = "/run/host-services/ssh-auth.sock";
+
+/// K3s-generated kubeconfig path inside the guest.
+pub const K3S_KUBECONFIG_PATH: &str = "/var/lib/rancher/k3s/k3s.yaml";
+
+/// K3s-managed CNI config directory for the kubelet/containerd stack.
+pub const K3S_CNI_CONF_DIR: &str = "/var/lib/rancher/k3s/agent/etc/cni/net.d";
+
+/// K3s-managed CNI plugin directory used by current releases.
+pub const K3S_CNI_BIN_DIR: &str = "/var/lib/rancher/k3s/data/cni";
+
+/// Stable guest-local runtime root.
+///
+/// The guest atomically points this symlink at the active generation on the
+/// persistent Btrfs data disk.
+pub const ARCBOX_RUNTIME_DIR: &str = "/run/arcbox/runtime";
+
+/// Directory where guest runtime binaries (containerd, dockerd, runc, …) are
+/// executed from the persistent Btrfs data disk.
+pub const ARCBOX_RUNTIME_BIN_DIR: &str = "/run/arcbox/runtime/bin";
+
+/// Host-side privileged paths (require root to write).
+pub mod privileged {
+    /// Installed helper binary path.
+    pub const HELPER_BINARY: &str = "/usr/local/libexec/arcbox-helper";
+    /// Helper launchd plist path.
+    pub const HELPER_PLIST: &str = "/Library/LaunchDaemons/com.arcboxlabs.desktop.helper.plist";
+    /// Helper socket-activation socket path.
+    pub const HELPER_SOCKET: &str = "/var/run/arcbox-helper.sock";
+    /// Docker socket symlink path.
+    pub const DOCKER_SOCKET: &str = "/var/run/docker.sock";
+}
+
+/// launchd service labels.
+pub mod labels {
+    /// Daemon (user-level LaunchAgent).
+    pub const DAEMON: &str = "com.arcboxlabs.desktop.daemon";
+    /// Development daemon (user-level LaunchAgent).
+    pub const DEVELOPMENT_DAEMON: &str = "com.arcboxlabs.desktop.dev.daemon";
+    /// Helper (system-level LaunchDaemon).
+    pub const HELPER: &str = "com.arcboxlabs.desktop.helper";
+    /// Daemon LaunchAgent written by the `curl | bash` installer
+    /// (`scripts/install.sh`), which registers the daemon under its own
+    /// label. Uninstall removes it alongside the Desktop one.
+    pub const LEGACY_SCRIPT_DAEMON: &str = "dev.arcbox.daemon";
+}
+
+/// Desktop app bundle identity.
+pub mod bundles {
+    /// Bundle name of the production Desktop app, without `.app`.
+    pub const APP_NAME: &str = "ArcBox";
+    /// Bundle identifier of the production Desktop app.
+    pub const DESKTOP: &str = "com.arcboxlabs.desktop";
+    /// Bundle identifier of the development Desktop app.
+    pub const DEVELOPMENT_DESKTOP: &str = "com.arcboxlabs.desktop.dev";
+}
+
+/// Runtime profile names and derived host identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ArcboxProfile {
+    /// Production profile using `~/.arcbox` and the `arcbox` Docker context.
+    #[default]
+    Production,
+    /// Development profile using `~/.arcbox-dev` and the `arcbox-dev` Docker context.
+    Development,
+}
+
+impl ArcboxProfile {
+    /// Returns the canonical profile name used in environment variables and CLIs.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Production => "production",
+            Self::Development => "development",
+        }
+    }
+
+    /// Returns the Docker context name for this profile.
+    #[must_use]
+    pub const fn docker_context_name(self) -> &'static str {
+        match self {
+            Self::Production => "arcbox",
+            Self::Development => "arcbox-dev",
+        }
+    }
+
+    /// Returns the SSH host alias for this profile (`ssh <machine>@arcbox`),
+    /// distinct per profile so both can be included from `~/.ssh/config`.
+    #[must_use]
+    pub const fn ssh_host(self) -> &'static str {
+        match self {
+            Self::Production => "arcbox",
+            Self::Development => "arcbox-dev",
+        }
+    }
+
+    /// Returns the launchd daemon label for this profile.
+    #[must_use]
+    pub const fn daemon_label(self) -> &'static str {
+        match self {
+            Self::Production => labels::DAEMON,
+            Self::Development => labels::DEVELOPMENT_DAEMON,
+        }
+    }
+
+    /// Returns the default host DNS port for this profile.
+    ///
+    /// The daemon binds it best-effort and falls back to an OS-allocated
+    /// port when it is taken; an explicit `--dns-port` must bind.
+    #[must_use]
+    pub const fn dns_host_port(self) -> u16 {
+        match self {
+            Self::Production => crate::ports::DNS_HOST_PORT,
+            Self::Development => crate::ports::DEVELOPMENT_DNS_HOST_PORT,
+        }
+    }
+
+    /// Returns the Desktop app's bundle name for this profile, without `.app`.
+    #[must_use]
+    pub const fn app_name(self) -> &'static str {
+        match self {
+            Self::Production => bundles::APP_NAME,
+            Self::Development => "ArcBox Dev",
+        }
+    }
+
+    /// Returns the Desktop app's bundle identifier for this profile.
+    #[must_use]
+    pub const fn app_bundle_id(self) -> &'static str {
+        match self {
+            Self::Production => bundles::DESKTOP,
+            Self::Development => bundles::DEVELOPMENT_DESKTOP,
+        }
+    }
+
+    /// Returns the profile selected by `ARCBOX_PROFILE`, defaulting to production.
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub fn from_env_or_default() -> Self {
+        std::env::var(crate::env::PROFILE)
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or_default()
+    }
+
+    /// Returns this profile's default data directory.
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub fn default_data_dir(self) -> std::path::PathBuf {
+        dirs::home_dir().map_or_else(
+            || std::path::PathBuf::from("/var/lib/arcbox"),
+            |home| match self {
+                Self::Production => home.join(".arcbox"),
+                Self::Development => home.join(".arcbox-dev"),
+            },
+        )
+    }
+}
+
+impl core::fmt::Display for ArcboxProfile {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Gated on the `std` feature: the error message is an allocated `String`,
+/// which `no_std` builds of this crate don't have.
+#[cfg(feature = "std")]
+impl core::str::FromStr for ArcboxProfile {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "production" | "prod" => Ok(Self::Production),
+            "development" | "dev" => Ok(Self::Development),
+            other => Err(format!(
+                "unknown ArcBox profile '{other}' (expected production or development)"
+            )),
+        }
+    }
+}
+
+/// Docker CLI tool names managed by the helper's cli_link.
+pub const DOCKER_CLI_TOOLS: &[&str] = &[
+    "docker",
+    "docker-buildx",
+    "docker-compose",
+    "docker-credential-osxkeychain",
+];
+
+/// Subset of `DOCKER_CLI_TOOLS` that are Docker CLI plugins — binaries that
+/// upstream `docker` discovers via its plugin mechanism and invokes as
+/// `docker <name>` (e.g. `docker compose`, `docker buildx`).
+///
+/// Upstream Docker CLI searches these paths in order for plugin binaries:
+///   1. entries listed in `cliPluginsExtraDirs` in `~/.docker/config.json`
+///   2. `~/.docker/cli-plugins/`
+///   3. `/usr/local/lib/docker/cli-plugins/`
+///   4. `/usr/lib/docker/cli-plugins/`
+///
+/// Putting a plugin only in `$PATH` (as a standalone `docker-compose` binary)
+/// is *not* enough — `docker compose` (with a space) will fail to find it.
+/// Excludes the `docker` host binary itself and credential helpers (which
+/// are discovered via a different, credsStore-based mechanism).
+pub const DOCKER_CLI_PLUGINS: &[&str] = &["docker-buildx", "docker-compose"];
+
+/// Returns true if a symlink target points inside an ArcBox app bundle's
+/// `Contents/MacOS/xbin/`.
+///
+/// Used by multiple subsystems (privileged helper, brew hooks, setup install,
+/// uninstall) to decide whether an existing `/usr/local/bin/` symlink is ours
+/// to replace or remove.
+///
+/// Single source of truth for the path shape also enforced by the helper's
+/// `CliTarget` parser: absolute, under `/Applications/` or `/Users/`, contains
+/// `<bundle>.app/Contents/MacOS/xbin/` where `<bundle>` is an ArcBox bundle
+/// name (see [`is_arcbox_bundle_name`]), no `..`. The bundle name matters:
+/// OrbStack lays out its CLI links exactly the same way
+/// (`/usr/local/bin/docker -> /Applications/OrbStack.app/Contents/MacOS/xbin/docker`),
+/// so the layout alone classified its links as ours (#715). The check stays
+/// on the path string rather than on `Info.plist`: a link left by a deleted
+/// bundle must still be recognized, and its `Info.plist` is gone.
+///
+/// Kept in this crate so callers do not need to depend on the helper.
+///
+/// Gated on the `std` feature: it takes a `std::path::Path`, so it is
+/// unavailable (and unusable) in `no_std` builds.
+#[cfg(feature = "std")]
+pub fn is_arcbox_owned(target: &std::path::Path) -> bool {
+    use std::path::Component;
+
+    if !target.is_absolute()
+        || target
+            .components()
+            .any(|c| matches!(c, Component::ParentDir))
+    {
+        return false;
+    }
+
+    let bytes = target.as_os_str().as_encoded_bytes();
+    let under_apps_or_users = bytes.starts_with(b"/Applications/") || bytes.starts_with(b"/Users/");
+    if !under_apps_or_users {
+        return false;
+    }
+
+    has_arcbox_xbin_structure(target)
+}
+
+/// `true` when `name` is a `.app` bundle name the Desktop app ships under:
+/// `ArcBox.app`, `ArcBox Dev.app`, or a copy Finder renamed, such as
+/// `ArcBox 2.app`.
+#[must_use]
+pub fn is_arcbox_bundle_name(name: &[u8]) -> bool {
+    let Some(stem) = name.strip_suffix(b".app") else {
+        return false;
+    };
+    let app = bundles::APP_NAME.as_bytes();
+    stem == app || (stem.starts_with(app) && stem.get(app.len()) == Some(&b' '))
+}
+
+/// `true` when some component window is `<ArcBox bundle>.app/Contents/MacOS/xbin`.
+#[cfg(feature = "std")]
+fn has_arcbox_xbin_structure(target: &std::path::Path) -> bool {
+    use std::path::Component;
+
+    let components: Vec<_> = target.components().collect();
+    components.windows(4).any(|w| {
+        matches!(&w[0], Component::Normal(name) if is_arcbox_bundle_name(name.as_encoded_bytes()))
+            && w[1] == Component::Normal("Contents".as_ref())
+            && w[2] == Component::Normal("MacOS".as_ref())
+            && w[3] == Component::Normal("xbin".as_ref())
+    })
+}
+
+/// Host-side subdirectory names within the profile data directory.
+pub mod host {
+    /// Runtime state (sockets, PID files, ephemeral markers).
+    pub const RUN: &str = "run";
+    /// Centralized log directory.
+    pub const LOG: &str = "log";
+    /// Persistent data aggregation (images, containers, volumes, …).
+    pub const DATA: &str = "data";
+    /// SSH server state: its host key, the client key it authorizes, and
+    /// the client config generated from them.
+    pub const SSH: &str = "ssh";
+    /// Generated OpenSSH client config (inside `SSH`).
+    pub const SSH_CONFIG: &str = "config";
+
+    /// Log file names (written by each component's tracing-appender).
+    pub const DAEMON_LOG: &str = "daemon.log";
+    pub const AGENT_LOG: &str = "agent.log";
+
+    /// Default daemon lock file name (inside `RUN`).
+    pub const DAEMON_LOCK: &str = "daemon.lock";
+    /// Default Docker API socket name (inside `RUN`).
+    pub const DOCKER_SOCKET: &str = "docker.sock";
+    /// Default gRPC API socket name (inside `RUN`).
+    pub const GRPC_SOCKET: &str = "arcbox.sock";
+}
+
+/// Resolved host-side directory layout.
+///
+/// Single source of truth for every path derived from the ArcBox data
+/// directory (`~/.arcbox` by default). Both the daemon and CLI should
+/// construct a `HostLayout` once and pass it around instead of
+/// recalculating paths independently.
+#[cfg(feature = "std")]
+#[derive(Debug, Clone)]
+pub struct HostLayout {
+    /// Root data directory (e.g. `~/.arcbox`).
+    pub data_dir: std::path::PathBuf,
+    /// `<data_dir>/run` — sockets, PID file, lock.
+    pub run_dir: std::path::PathBuf,
+    /// `<data_dir>/log` — daemon and agent logs.
+    pub log_dir: std::path::PathBuf,
+    /// `<data_dir>/data` — persistent VM/container data.
+    pub data_subdir: std::path::PathBuf,
+    /// `<data_dir>/ssh` — SSH server keys and the generated client config.
+    pub ssh_dir: std::path::PathBuf,
+    /// `<ssh_dir>/config` — the OpenSSH client config `ssh` includes.
+    pub ssh_config: std::path::PathBuf,
+    /// `<run_dir>/docker.sock`
+    pub docker_socket: std::path::PathBuf,
+    /// `<run_dir>/arcbox.sock`
+    pub grpc_socket: std::path::PathBuf,
+    /// `<run_dir>/daemon.lock`
+    pub lock_file: std::path::PathBuf,
+    /// `<log_dir>/daemon.log`
+    pub daemon_log: std::path::PathBuf,
+}
+
+#[cfg(feature = "std")]
+impl HostLayout {
+    /// Build a layout from an explicit data directory.
+    #[must_use]
+    pub fn new(data_dir: std::path::PathBuf) -> Self {
+        let run_dir = data_dir.join(host::RUN);
+        let log_dir = data_dir.join(host::LOG);
+        let data_subdir = data_dir.join(host::DATA);
+        let ssh_dir = data_dir.join(host::SSH);
+        let ssh_config = ssh_dir.join(host::SSH_CONFIG);
+        let docker_socket = run_dir.join(host::DOCKER_SOCKET);
+        let grpc_socket = run_dir.join(host::GRPC_SOCKET);
+        let lock_file = run_dir.join(host::DAEMON_LOCK);
+        let daemon_log = log_dir.join(host::DAEMON_LOG);
+        Self {
+            data_dir,
+            run_dir,
+            log_dir,
+            data_subdir,
+            ssh_dir,
+            ssh_config,
+            docker_socket,
+            grpc_socket,
+            lock_file,
+            daemon_log,
+        }
+    }
+
+    /// Build a layout from a runtime profile.
+    #[must_use]
+    pub fn for_profile(profile: ArcboxProfile) -> Self {
+        Self::new(profile.default_data_dir())
+    }
+
+    /// Resolve the data directory from an optional override, falling
+    /// back to the production profile directory.
+    #[must_use]
+    pub fn resolve(data_dir: Option<&std::path::Path>) -> Self {
+        Self::resolve_for_profile(ArcboxProfile::Production, data_dir)
+    }
+
+    /// Resolve the data directory from an optional override, falling back to
+    /// the selected profile's default directory.
+    #[must_use]
+    pub fn resolve_for_profile(profile: ArcboxProfile, data_dir: Option<&std::path::Path>) -> Self {
+        match data_dir {
+            Some(d) => Self::new(d.to_path_buf()),
+            None => Self::for_profile(profile),
+        }
+    }
+
+    /// Resolve the data directory from an optional override, then
+    /// `ARCBOX_DATA_DIR`, then the selected profile's default directory.
+    #[must_use]
+    pub fn resolve_for_profile_from_env(
+        profile: ArcboxProfile,
+        data_dir: Option<&std::path::Path>,
+    ) -> Self {
+        if let Some(data_dir) = data_dir {
+            return Self::new(data_dir.to_path_buf());
+        }
+
+        if let Ok(data_dir) = std::env::var(crate::env::DATA_DIR) {
+            if !data_dir.is_empty() {
+                return Self::new(std::path::PathBuf::from(data_dir));
+            }
+        }
+
+        Self::for_profile(profile)
+    }
+
+    /// Resolve the layout from environment (`ARCBOX_DATA_DIR`, then
+    /// `ARCBOX_PROFILE`) or the production defaults.
+    #[must_use]
+    pub fn from_env_or_default() -> Self {
+        Self::resolve_for_profile_from_env(ArcboxProfile::from_env_or_default(), None)
+    }
+}
+
+/// Default data directory: `~/.arcbox`, falling back to `/var/lib/arcbox`
+/// when the home directory cannot be resolved.
+///
+/// Uses `dirs::home_dir()` which handles edge cases (launchd, sudo,
+/// non-interactive shells) that raw `$HOME` does not.
+#[cfg(feature = "std")]
+#[must_use]
+pub fn default_data_dir() -> std::path::PathBuf {
+    ArcboxProfile::Production.default_data_dir()
+}
+
+/// Names under the host mount root, the one folder in which the daemon
+/// shows the user guest filesystems (ADR 0003).
+pub mod host_mount {
+    /// The root's name under the home directory: `~/ArcBox`.
+    pub const ROOT: &str = "ArcBox";
+    /// `<root>/docker`: the System VM's docker data, read-only. Its
+    /// containerd data is the NFSv4 child export at `docker/containerd`.
+    pub const DOCKER: &str = "docker";
+    /// `<root>/machines/<name>`: a running machine's root, read-write.
+    pub const MACHINES: &str = "machines";
+    /// Before the single root, machine roots were mounted under a sibling
+    /// of the root named `<root>Machines` (`~/ArcBoxMachines`); the daemon
+    /// removes what one left behind.
+    pub const LEGACY_MACHINES_SUFFIX: &str = "Machines";
+}
+
+/// The host mount root and the mount points under it.
+///
+/// `~/ArcBox` unless `ARCBOX_HOST_MOUNT_DIR` moves it; `docker/` and
+/// `machines/<name>` derive from the root. The daemon creates the root and
+/// the mounts; `abctl uninstall` removes them; both derive the paths here.
+#[cfg(feature = "std")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostMountLayout {
+    root: std::path::PathBuf,
+}
+
+#[cfg(feature = "std")]
+impl HostMountLayout {
+    /// A layout rooted at `root`.
+    #[must_use]
+    pub const fn new(root: std::path::PathBuf) -> Self {
+        Self { root }
+    }
+
+    /// The default layout for a home directory: `<home>/ArcBox`.
+    #[must_use]
+    pub fn under_home(home: &std::path::Path) -> Self {
+        Self::new(home.join(host_mount::ROOT))
+    }
+
+    /// The layout `ARCBOX_HOST_MOUNT_DIR` names, else the one under the
+    /// home directory; `None` when neither can be resolved.
+    #[must_use]
+    pub fn from_env_or_home() -> Option<Self> {
+        if let Some(root) = std::env::var_os(crate::env::HOST_MOUNT_DIR)
+            && !root.is_empty()
+        {
+            return Some(Self::new(std::path::PathBuf::from(root)));
+        }
+        dirs::home_dir().map(|home| Self::under_home(&home))
+    }
+
+    /// The root directory, a plain directory the daemon creates.
+    #[must_use]
+    pub fn root(&self) -> &std::path::Path {
+        &self.root
+    }
+
+    /// Mount point of the docker data export.
+    #[must_use]
+    pub fn docker(&self) -> std::path::PathBuf {
+        self.root.join(host_mount::DOCKER)
+    }
+
+    /// The directory the machine roots are mounted under.
+    #[must_use]
+    pub fn machines(&self) -> std::path::PathBuf {
+        self.root.join(host_mount::MACHINES)
+    }
+
+    /// Mount point of machine `name`'s root.
+    #[must_use]
+    pub fn machine(&self, name: &str) -> std::path::PathBuf {
+        self.machines().join(name)
+    }
+
+    /// Where a daemon from before the single root mounted machine roots:
+    /// the root's sibling `<root>Machines`.
+    #[must_use]
+    pub fn legacy_machines_root(&self) -> std::path::PathBuf {
+        let mut name = self.root.file_name().unwrap_or_default().to_os_string();
+        name.push(host_mount::LEGACY_MACHINES_SUFFIX);
+        self.root.with_file_name(name)
+    }
+}
+
+/// Privileged log directory (root-owned, for arcbox-helper).
+pub mod privileged_log {
+    /// Directory for helper logs (root-writable).
+    pub const HELPER_LOG_DIR: &str = "/var/log/arcbox";
+    /// Helper log file name.
+    pub const HELPER_LOG: &str = "helper.log";
+}
+
+/// Guest-side subdirectory names within `/arcbox/`.
+pub mod guest {
+    /// Mount point of the host data directory inside the guest.
+    ///
+    /// The `arcbox` VirtioFS tag is mounted here, so a host path under the
+    /// data directory is visible to the guest at the same relative path
+    /// below this prefix.
+    pub const MOUNT: &str = "/arcbox";
+
+    /// Log directory inside the VirtioFS mount.
+    pub const LOG: &str = "log";
+
+    /// Host-written configuration the guest reads at boot, relative to
+    /// [`MOUNT`] on the guest side and to the data directory on the host.
+    pub const CONFIG: &str = "config";
+
+    /// Operator overrides for the guest `dockerd` `daemon.json`, inside
+    /// [`CONFIG`]. The host renders `[docker.engine]` here before every
+    /// System VM boot; the guest agent merges it over the keys it manages.
+    pub const DOCKER_ENGINE_CONFIG: &str = "docker-engine.json";
+
+    /// The local CA behind HTTPS for container domains.
+    ///
+    /// Relative to [`MOUNT`] on the guest side and to the data directory on
+    /// the host. The daemon generates it once; the guest agent signs with it.
+    pub const TLS: &str = "tls";
+
+    /// The CA certificate (PEM) inside [`TLS`], which users trust.
+    pub const TLS_CA_CERT: &str = "ca.pem";
+
+    /// The CA private key (PKCS#8 PEM, mode 0600) inside [`TLS`].
+    pub const TLS_CA_KEY: &str = "ca-key.pem";
+
+    /// Host-built artifacts the guest reads back.
+    ///
+    /// Currently unused: the sandbox image staging that lived here moved
+    /// into the guest when templates replaced host rootfs paths (CORE-54).
+    /// Kept as the agreed name for this seam so a future host-staged
+    /// artifact does not invent a second one.
+    pub const CACHE: &str = "cache";
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn host_layout_new_derives_all_paths() {
+        let layout = HostLayout::new(PathBuf::from("/tmp/arcbox"));
+        assert_eq!(layout.run_dir, PathBuf::from("/tmp/arcbox/run"));
+        assert_eq!(layout.log_dir, PathBuf::from("/tmp/arcbox/log"));
+        assert_eq!(layout.data_subdir, PathBuf::from("/tmp/arcbox/data"));
+        assert_eq!(layout.ssh_config, PathBuf::from("/tmp/arcbox/ssh/config"));
+        assert_eq!(
+            layout.docker_socket,
+            PathBuf::from("/tmp/arcbox/run/docker.sock")
+        );
+        assert_eq!(
+            layout.grpc_socket,
+            PathBuf::from("/tmp/arcbox/run/arcbox.sock")
+        );
+        assert_eq!(
+            layout.lock_file,
+            PathBuf::from("/tmp/arcbox/run/daemon.lock")
+        );
+        assert_eq!(
+            layout.daemon_log,
+            PathBuf::from("/tmp/arcbox/log/daemon.log")
+        );
+    }
+
+    #[test]
+    fn host_mount_layout_derives_the_mounts_from_one_root() {
+        let layout = HostMountLayout::under_home(std::path::Path::new("/Users/tester"));
+        assert_eq!(layout.root(), std::path::Path::new("/Users/tester/ArcBox"));
+        assert_eq!(
+            layout.docker(),
+            PathBuf::from("/Users/tester/ArcBox/docker")
+        );
+        assert_eq!(
+            layout.machines(),
+            PathBuf::from("/Users/tester/ArcBox/machines")
+        );
+        assert_eq!(
+            layout.machine("ubuntu"),
+            PathBuf::from("/Users/tester/ArcBox/machines/ubuntu")
+        );
+        // The pre-single-root machine mount root, for the migration.
+        assert_eq!(
+            layout.legacy_machines_root(),
+            PathBuf::from("/Users/tester/ArcBoxMachines")
+        );
+        // A relocated root (test daemons) keeps the same shape beside it.
+        let relocated = HostMountLayout::new(PathBuf::from("/tmp/e2e/ArcBox"));
+        assert_eq!(
+            relocated.legacy_machines_root(),
+            PathBuf::from("/tmp/e2e/ArcBoxMachines")
+        );
+    }
+
+    #[test]
+    fn is_arcbox_owned_matches_cli_target_rules() {
+        assert!(is_arcbox_owned(std::path::Path::new(
+            "/Applications/ArcBox.app/Contents/MacOS/xbin/docker"
+        )));
+        assert!(is_arcbox_owned(std::path::Path::new(
+            "/Users/alice/Apps/ArcBox.app/Contents/MacOS/xbin/docker-compose"
+        )));
+        // The development app and a Finder-renamed copy are ours too.
+        assert!(is_arcbox_owned(std::path::Path::new(
+            "/Applications/ArcBox Dev.app/Contents/MacOS/xbin/docker"
+        )));
+        assert!(is_arcbox_owned(std::path::Path::new(
+            "/Applications/ArcBox 2.app/Contents/MacOS/xbin/docker"
+        )));
+        // Relative / traversal / wrong prefix — must not count as ours.
+        assert!(!is_arcbox_owned(std::path::Path::new(
+            "Contents/MacOS/xbin/docker"
+        )));
+        assert!(!is_arcbox_owned(std::path::Path::new(
+            "/Applications/ArcBox.app/Contents/MacOS/xbin/../../evil"
+        )));
+        assert!(!is_arcbox_owned(std::path::Path::new(
+            "/tmp/ArcBox.app/Contents/MacOS/xbin/docker"
+        )));
+        assert!(!is_arcbox_owned(std::path::Path::new(
+            "/usr/local/bin/docker"
+        )));
+    }
+
+    /// OrbStack links its CLI tools from the same `xbin` layout (#715); the
+    /// layout alone must not make a bundle ours.
+    #[test]
+    fn foreign_bundles_with_the_xbin_layout_are_not_ours() {
+        for target in [
+            "/Applications/OrbStack.app/Contents/MacOS/xbin/docker",
+            "/Applications/OrbStack.app/Contents/MacOS/xbin/docker-credential-osxkeychain",
+            "/Users/alice/Applications/OrbStack.app/Contents/MacOS/xbin/docker-compose",
+            "/Applications/ArcBoxClone.app/Contents/MacOS/xbin/docker",
+            "/Users/evil/not-really.app/Contents/MacOS/xbin/nested.app/Contents/MacOS/xbin/docker",
+        ] {
+            assert!(
+                !is_arcbox_owned(std::path::Path::new(target)),
+                "{target} must not be ArcBox-owned"
+            );
+        }
+        // A nested bundle inside an ArcBox bundle's xbin is still inside ours.
+        assert!(is_arcbox_owned(std::path::Path::new(
+            "/Users/alice/ArcBox.app/Contents/MacOS/xbin/nested.app/Contents/MacOS/xbin/docker"
+        )));
+    }
+
+    #[test]
+    fn bundle_names_the_desktop_app_ships_under() {
+        assert!(is_arcbox_bundle_name(b"ArcBox.app"));
+        assert!(is_arcbox_bundle_name(b"ArcBox Dev.app"));
+        assert!(is_arcbox_bundle_name(b"ArcBox 2.app"));
+        assert!(!is_arcbox_bundle_name(b"ArcBox"));
+        assert!(!is_arcbox_bundle_name(b"ArcBoxClone.app"));
+        assert!(!is_arcbox_bundle_name(b"OrbStack.app"));
+        assert!(!is_arcbox_bundle_name(b"arcbox.app"));
+        assert_eq!(ArcboxProfile::Production.app_name(), "ArcBox");
+        assert!(is_arcbox_bundle_name(
+            format!("{}.app", ArcboxProfile::Development.app_name()).as_bytes()
+        ));
+    }
+
+    #[test]
+    fn host_layout_resolve_uses_explicit_dir() {
+        let dir = PathBuf::from("/custom/dir");
+        let layout = HostLayout::resolve(Some(&dir));
+        assert_eq!(layout.data_dir, dir);
+    }
+
+    #[test]
+    fn host_layout_resolve_uses_default_when_none() {
+        let layout = HostLayout::resolve(None);
+        assert_eq!(layout.data_dir, default_data_dir());
+    }
+
+    #[test]
+    fn host_layout_resolve_for_profile_uses_explicit_dir() {
+        let dir = PathBuf::from("/custom/dev");
+        let layout = HostLayout::resolve_for_profile_from_env(
+            ArcboxProfile::Development,
+            Some(dir.as_path()),
+        );
+        assert_eq!(layout.data_dir, dir);
+    }
+
+    #[test]
+    fn development_profile_uses_dev_data_dir_and_context() {
+        let layout = HostLayout::for_profile(ArcboxProfile::Development);
+        assert!(layout.data_dir.ends_with(".arcbox-dev"));
+        assert_eq!(
+            ArcboxProfile::Development.docker_context_name(),
+            "arcbox-dev"
+        );
+        assert_eq!(
+            ArcboxProfile::Development.daemon_label(),
+            labels::DEVELOPMENT_DAEMON
+        );
+    }
+
+    #[test]
+    fn parses_profile_names_and_aliases() {
+        assert_eq!(
+            "production".parse::<ArcboxProfile>().unwrap(),
+            ArcboxProfile::Production
+        );
+        assert_eq!(
+            "dev".parse::<ArcboxProfile>().unwrap(),
+            ArcboxProfile::Development
+        );
+    }
+
+    #[test]
+    fn default_data_dir_returns_home_based_path() {
+        // When HOME is set (normal dev environment), the path should
+        // end with ".arcbox" under the home directory.
+        if dirs::home_dir().is_some() {
+            let dir = default_data_dir();
+            assert!(dir.ends_with(".arcbox"));
+        }
+    }
+}

@@ -1,0 +1,143 @@
+//! Error types for Docker API.
+
+use arcbox_error::CommonError;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use serde::Serialize;
+use thiserror::Error;
+
+/// Result type alias for Docker API operations.
+pub type Result<T> = std::result::Result<T, DockerError>;
+
+/// Errors that can occur in Docker API operations.
+#[derive(Debug, Error)]
+pub enum DockerError {
+    /// Common errors (I/O, timeout, etc.).
+    #[error(transparent)]
+    Common(#[from] CommonError),
+
+    /// Container not found.
+    #[error("No such container: {0}")]
+    ContainerNotFound(String),
+
+    /// Image not found.
+    #[error("No such image: {0}")]
+    ImageNotFound(String),
+
+    /// Volume not found.
+    #[error("No such volume: {0}")]
+    VolumeNotFound(String),
+
+    /// Network not found.
+    #[error("No such network: {0}")]
+    NetworkNotFound(String),
+
+    /// Exec instance not found.
+    #[error("No such exec instance: {0}")]
+    ExecNotFound(String),
+
+    /// Invalid parameter.
+    #[error("Invalid parameter: {0}")]
+    InvalidParameter(String),
+
+    /// Bad request.
+    #[error("Bad request: {0}")]
+    BadRequest(String),
+
+    /// Conflict (e.g., container already exists).
+    #[error("Conflict: {0}")]
+    Conflict(String),
+
+    /// Server error.
+    #[error("Server error: {0}")]
+    Server(String),
+
+    /// Guest dockerd transport failure (connect, handshake, send, or
+    /// response read). Distinguished from [`Self::Server`] so the proxy
+    /// invalidates its cached endpoint readiness only when the *guest* side
+    /// failed — a client-side error (e.g. an aborted upload) says nothing
+    /// about the guest.
+    #[error("guest docker unavailable: {0}")]
+    GuestUnavailable(String),
+
+    /// Persistent storage cannot accept the requested mutation.
+    #[error("{0}")]
+    StorageProtected(String),
+
+    /// Not implemented.
+    #[error("Not implemented: {0}")]
+    NotImplemented(String),
+
+    /// Context management error.
+    #[error("Context error: {0}")]
+    Context(String),
+}
+
+impl DockerError {
+    /// Returns the HTTP status code for this error.
+    #[must_use]
+    pub const fn status_code(&self) -> StatusCode {
+        match self {
+            Self::Common(e) => Self::common_status_code(e),
+            Self::ContainerNotFound(_)
+            | Self::ImageNotFound(_)
+            | Self::VolumeNotFound(_)
+            | Self::NetworkNotFound(_)
+            | Self::ExecNotFound(_) => StatusCode::NOT_FOUND,
+            Self::InvalidParameter(_) | Self::BadRequest(_) => StatusCode::BAD_REQUEST,
+            Self::Conflict(_) => StatusCode::CONFLICT,
+            Self::Server(_) | Self::Context(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::GuestUnavailable(_) => StatusCode::BAD_GATEWAY,
+            Self::StorageProtected(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Self::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
+        }
+    }
+
+    /// Whether this error indicates the guest-side transport failed (as
+    /// opposed to a client-side or internal error). Used to decide whether a
+    /// proxy failure should invalidate the cached endpoint readiness.
+    #[must_use]
+    pub const fn is_guest_transport(&self) -> bool {
+        matches!(
+            self,
+            Self::GuestUnavailable(_) | Self::Common(CommonError::Timeout(_))
+        )
+    }
+
+    /// Maps `CommonError` to HTTP status code.
+    const fn common_status_code(err: &CommonError) -> StatusCode {
+        match err {
+            CommonError::Config(_) | CommonError::InvalidState(_) => StatusCode::BAD_REQUEST,
+            CommonError::NotFound(_) => StatusCode::NOT_FOUND,
+            CommonError::AlreadyExists(_) => StatusCode::CONFLICT,
+            CommonError::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
+            CommonError::PermissionDenied(_) => StatusCode::FORBIDDEN,
+            CommonError::Io(_) | CommonError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+
+// Allow automatic conversion from std::io::Error to DockerError via CommonError.
+impl From<std::io::Error> for DockerError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Common(CommonError::from(err))
+    }
+}
+
+/// Docker API error response.
+#[derive(Debug, Serialize)]
+pub struct ErrorResponse {
+    /// Error message.
+    pub message: String,
+}
+
+impl IntoResponse for DockerError {
+    fn into_response(self) -> Response {
+        let status = self.status_code();
+        let body = serde_json::json!({
+            "message": self.to_string()
+        });
+
+        (status, axum::Json(body)).into_response()
+    }
+}

@@ -1,0 +1,184 @@
+//! Capturing a checkpoint, stopping a guest, and the three releases.
+
+use std::time::Duration;
+
+use tracing::{debug, info};
+
+use super::ComputerFlows;
+use crate::error::ComputerError;
+use crate::lifecycle::effect::ReleaseScope;
+use crate::lifecycle::tasks::checkpoint::{CheckpointFailure, CheckpointRequest, checkpoint_impl};
+use crate::lifecycle::tasks::pause::release_for_pause;
+use crate::lifecycle::tasks::release::{release_everything, release_runtime_resources};
+use crate::lifecycle::tasks::{CaptureSpec, Drain, TaskFailure, TaskResult};
+use crate::sandbox::pause::PAUSE_SNAPSHOT_NAME;
+use crate::sandbox::{CheckpointInfo, ComputerState};
+
+/// How often a stop looks for the workload it is draining to finish.
+const DRAIN_POLL: Duration = Duration::from_millis(100);
+
+impl ComputerFlows {
+    /// Capture a checkpoint into the catalog.
+    ///
+    /// `hold` is the pause path: the guest stays quiesced, because progress
+    /// past the memory image would diverge from the retained disk overlay.
+    /// It is also what names the capture — a pause writes the reserved
+    /// internal name, and a user checkpoint brings its own.
+    pub(super) async fn capture(
+        &self,
+        hold: bool,
+        spec: Option<CaptureSpec>,
+    ) -> TaskResult<CheckpointInfo> {
+        let request = match spec {
+            Some(spec) => CheckpointRequest {
+                name: spec.name,
+                labels: spec.labels,
+                expected_state: ComputerState::Ready,
+                resume_after: !hold,
+            },
+            None => CheckpointRequest {
+                name: PAUSE_SNAPSHOT_NAME.to_owned(),
+                labels: std::collections::HashMap::new(),
+                expected_state: ComputerState::Pausing,
+                resume_after: !hold,
+            },
+        };
+        checkpoint_impl(&self.computer, &self.services.snapshots, &self.id, request)
+            .await
+            .map_err(|failure| match failure {
+                // The port has no verb to thaw a held VM (pause is
+                // hold-then-kill by design), so a frozen guest cannot go back
+                // to `Ready`; the machine degrades it rather than reporting
+                // `Ready` for a guest that answers nothing.
+                CheckpointFailure::Frozen(error) => TaskFailure::frozen(error),
+                CheckpointFailure::Recoverable(error) => TaskFailure::recoverable(error),
+            })
+    }
+
+    /// Drain the workload, ask the guest to shut down, and release what it
+    /// was running on.
+    pub(super) async fn stop_vm(&self, budget: Duration, drain: Drain) -> TaskResult {
+        let deadline = tokio::time::Instant::now() + budget;
+        let handle = self.computer.lock().unwrap().handle.clone();
+
+        // Give an active workload the budget to finish. The exit watcher
+        // records `last_exited_at` when the exit chunk arrives, so poll for
+        // that signal — against the marker as it stood when the stop was
+        // ordered, which is what makes an exit landing in between count.
+        if let Drain::Until { since } = drain {
+            while tokio::time::Instant::now() < deadline {
+                if self.computer.lock().unwrap().last_exited_at != since {
+                    break;
+                }
+                tokio::time::sleep(DRAIN_POLL).await;
+            }
+        }
+
+        // Ask the guest to shut down (Ctrl+Alt+Del reboots it, which the VMM
+        // turns into a VM exit) and wait for it within the remaining budget;
+        // the driver kills the VMM at the deadline (and reports a reap that
+        // timed out — the handle stays on the computer for a retry). A VM
+        // that never came up has no handle to ask.
+        if let Some(handle) = handle {
+            let remaining = deadline
+                .checked_duration_since(tokio::time::Instant::now())
+                .unwrap_or(Duration::from_secs(1))
+                .max(Duration::from_secs(1));
+            handle
+                .shutdown(arcbox_vm_driver::ShutdownMode::Graceful { timeout: remaining })
+                .await
+                .map_err(|error| {
+                    TaskFailure::recoverable(ComputerError::Process(format!(
+                        "shut down computer {}: {error}",
+                        self.id
+                    )))
+                })?;
+        }
+
+        // Release the VMM (already exited, or never booted) and with it the
+        // area its files were staged into, then TAP/IP and the CoW device;
+        // the record itself stays inspectable until Remove.
+        self.release_scope(ReleaseScope::Runtime).await?;
+        info!(sandbox_id = %self.id, "computer stopped");
+        Ok(())
+    }
+
+    /// Hand this computer's VM to the next process.
+    ///
+    /// The handle deliberately stays on the computer: the read path still
+    /// describes the guest it names, and after the driver has released it a
+    /// drop no longer kills. Nothing durable is written — the record already
+    /// says `Ready`, which is what the successor's sweep adopts from.
+    ///
+    /// This is also the only place that can tell a real handover from an `Ok`
+    /// there was nothing behind, so it is where each one is logged: the answer
+    /// the actor gives its caller carries no payload, and `detach_all` would
+    /// otherwise report a saved guest per paused or resting computer it asked.
+    pub(super) async fn detach_vm(&self) -> TaskResult {
+        let handle = self.computer.lock().unwrap().handle.clone();
+        // No VM to hand over, or a driver that runs its VMs in-process and
+        // never produced a handle a successor could pick up — the same
+        // reasoning the startup sweep applies to `Adopt`.
+        let Some(handle) = handle else {
+            debug!(sandbox_id = %self.id, "no vm to hand to the next process");
+            return Ok(());
+        };
+        let Some(detach) = handle.detach() else {
+            debug!(sandbox_id = %self.id, "the driver holds its vms in-process; nothing to hand over");
+            return Ok(());
+        };
+        detach.detach().await.map_err(|error| {
+            TaskFailure::recoverable(ComputerError::Process(format!(
+                "hand computer {} to the next process: {error}",
+                self.id
+            )))
+        })?;
+        info!(sandbox_id = %self.id, "handed the computer's vm to the next process");
+        Ok(())
+    }
+
+    pub(super) async fn release_scope(&self, scope: ReleaseScope) -> TaskResult {
+        let services = &self.services;
+        let outcome = match scope {
+            ReleaseScope::Runtime => {
+                release_runtime_resources(
+                    &self.id,
+                    &self.computer,
+                    &services.network,
+                    &services.cow_manager,
+                )
+                .await
+            }
+            // Unreachable: `pause_computer` refuses direct mode before it
+            // claims anything, because a direct-mode vmstate pins origin
+            // paths and could never resume.
+            ReleaseScope::KeepDisk if services.config.firecracker.jailer.is_none() => {
+                Err(ComputerError::Config(
+                    "computer pause requires jailer isolation; direct mode cannot resume".into(),
+                ))
+            }
+            ReleaseScope::KeepDisk => {
+                release_for_pause(
+                    &self.id,
+                    &self.computer,
+                    &services.config,
+                    &services.cow_manager,
+                    &*services.network,
+                )
+                .await
+            }
+            ReleaseScope::Full => {
+                release_everything(
+                    &self.id,
+                    &self.computer,
+                    &services.network,
+                    &services.config,
+                    &services.cow_manager,
+                    &services.snapshots,
+                )
+                .await
+            }
+        };
+        outcome.map_err(TaskFailure::recoverable)
+    }
+}

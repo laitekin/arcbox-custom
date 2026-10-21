@@ -1,0 +1,182 @@
+//! The slow work a lifecycle transition asks for: one verb per `Spawn*`
+//! effect, run in a sub-task the actor owns.
+//!
+//! The machine decides *that* a flow should run and the actor sequences it;
+//! this port runs it. Keeping the two apart is what makes the actor's
+//! sequencing — preemption, epochs, the boot's resource handoff, the parked
+//! replies — testable with no VMM, no driver and no record store, and it is
+//! the seam R3 PR-F1 moves the flow bodies onto one file at a time while the
+//! manager still drives them.
+//!
+//! Every verb reports back exactly once. A failure says which *class* it is,
+//! because that is what the machine branches on: a recoverable one leaves the
+//! computer where it was ([`TaskFailure::recoverable`]), a frozen guest cannot
+//! go back to `Ready` ([`TaskFailure::frozen`]).
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use async_trait::async_trait;
+use tokio::sync::oneshot;
+
+pub mod boot;
+pub mod checkpoint;
+pub mod pause;
+pub mod release;
+pub mod restore;
+pub mod resume;
+
+use super::effect::ReleaseScope;
+use super::event::{Event, RestoreOrigin};
+use crate::agent::GuestAgent;
+use crate::error::ComputerError;
+use crate::sandbox::CheckpointInfo;
+use crate::sandbox::record::ComputerProvisionOutcome;
+
+/// What a sub-task hands back: its own success value, or the failure class
+/// the machine branches on.
+pub type TaskResult<T = ()> = std::result::Result<T, TaskFailure>;
+
+/// A sub-task failure: the error the caller gets, plus the class the machine
+/// branches on.
+///
+/// The event is private so a failure can only be built through the
+/// constructors below — an arbitrary `Event` here would let a task's error
+/// path drive the machine anywhere.
+#[derive(Debug)]
+pub struct TaskFailure {
+    event: Event,
+    error: ComputerError,
+}
+
+impl TaskFailure {
+    /// Whatever usable state the computer had survives: the flow unwound what
+    /// it had allocated.
+    pub fn recoverable(error: ComputerError) -> Self {
+        Self {
+            event: Event::Failure,
+            error,
+        }
+    }
+
+    /// The guest is quiesced with no verb able to thaw it: the port is
+    /// hold-then-kill by design, so the computer cannot go back to `Ready`.
+    pub fn frozen(error: ComputerError) -> Self {
+        Self {
+            event: Event::Frozen,
+            error,
+        }
+    }
+
+    /// The flow could not unwind what it had allocated, so the computer
+    /// cannot go back to the phase it came from — see [`Event::Stranded`].
+    pub fn stranded(error: ComputerError) -> Self {
+        Self {
+            event: Event::Stranded,
+            error,
+        }
+    }
+
+    /// The event this failure drives the machine with.
+    pub(super) fn event(&self) -> Event {
+        self.event.clone()
+    }
+
+    /// The reason as the FAILED event and the durable record carry it.
+    pub(super) fn message(&self) -> String {
+        self.error.to_string()
+    }
+
+    /// The error the parked caller gets.
+    pub(super) fn into_error(self) -> ComputerError {
+        self.error
+    }
+}
+
+/// Whether a stop must wait a workload out, and the exit marker it waits to
+/// move past.
+///
+/// The marker is read **with** the `Running -> Stopping` transition rather
+/// than when the task first runs: the exit and the stop are both messages to
+/// the same actor, so an exit recorded between them is already the change
+/// this is waiting for — and a task that sampled the marker afterwards would
+/// wait for a second exit that can never come, burning the whole budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Drain {
+    /// Nothing is running.
+    No,
+    Until {
+        since: Option<chrono::DateTime<chrono::Utc>>,
+    },
+}
+
+/// What a user checkpoint records in the catalog. The pause capture brings
+/// none: it writes the reserved internal name, which no user checkpoint may
+/// squat on.
+#[derive(Debug, Clone)]
+pub struct CaptureSpec {
+    pub name: String,
+    pub labels: std::collections::HashMap<String, String>,
+}
+
+/// The flows the actor spawns. One method per `Spawn*` effect.
+#[async_trait]
+pub trait ComputerTasks: Send + Sync + 'static {
+    /// Boot the VM and wait for the guest agent to announce itself.
+    ///
+    /// `handed_off` is signalled once every cleanup resource the boot
+    /// allocated belongs to the computer rather than to this task — until
+    /// then aborting the task would strand one, which is why the actor waits
+    /// for it before it may abort. `warm` asks the boot tail to publish a
+    /// warm snapshot before readiness is announced.
+    async fn boot(
+        &self,
+        warm: bool,
+        handed_off: oneshot::Sender<()>,
+    ) -> TaskResult<Arc<dyn GuestAgent>>;
+
+    /// The readiness gate: the warm publish, the initial `cmd` and the ready
+    /// probe — everything READY is withheld for.
+    async fn gate(&self) -> TaskResult;
+
+    /// Restore the computer from a checkpoint, up to the point where the
+    /// guest is configured and reachable.
+    async fn restore(
+        &self,
+        origin: RestoreOrigin,
+    ) -> TaskResult<(Arc<dyn GuestAgent>, ComputerProvisionOutcome)>;
+
+    /// Capture a checkpoint. `hold` keeps the guest quiesced afterwards (the
+    /// pause path): progress past the memory image would diverge from the
+    /// retained disk overlay.
+    async fn checkpoint(&self, hold: bool, spec: Option<CaptureSpec>)
+    -> TaskResult<CheckpointInfo>;
+
+    /// Restore a paused computer in place, back onto a fresh network.
+    async fn resume(&self) -> TaskResult<Arc<dyn GuestAgent>>;
+
+    /// Shut the guest down and release its runtime resources within
+    /// `budget`, giving a running workload the budget to finish first.
+    async fn stop(&self, budget: Duration, drain: Drain) -> TaskResult;
+
+    /// Release the resources `scope` names.
+    async fn release(&self, scope: ReleaseScope) -> TaskResult;
+
+    /// Give the VM up without stopping it, so the next process can adopt it.
+    ///
+    /// `Ok` with nothing to hand over — no handle, or a driver that runs its
+    /// VMs in-process and has no `Detach` — is a real success: there is no VM
+    /// this process would have killed on the way out. Unlike the other verbs
+    /// this one is awaited inside the actor's dispatch rather than spawned; see
+    /// [`Effect::Detach`](super::effect::Effect::Detach).
+    async fn detach(&self) -> TaskResult;
+
+    /// The agent reaching a computer this process never launched: the one
+    /// the startup sweep took back, whose handle it already holds.
+    ///
+    /// Every other computer's agent arrives with the flow that produced it.
+    /// An adopted one runs no flow at all, and the data plane reads the
+    /// agent off the snapshot — so without this an adopted computer would be
+    /// `Ready` and undialable, which is most of what adoption is for.
+    fn adopted_agent(&self) -> Option<Arc<dyn GuestAgent>>;
+}

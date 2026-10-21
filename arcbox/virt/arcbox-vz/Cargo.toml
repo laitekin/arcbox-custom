@@ -1,0 +1,43 @@
+[package]
+name = "arcbox-vz"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Safe Rust bindings for Apple's Virtualization.framework"
+repository.workspace = true
+keywords = ["virtualization", "macos", "apple", "vm", "hypervisor"]
+categories = ["os::macos-apis", "virtualization"]
+# The published crate must carry the Swift shim sources: build.rs compiles
+# them with SwiftPM on macOS (Xcode CLT required). Examples are not packaged.
+include = [
+    "src/**",
+    "build.rs",
+    "shim/Package.swift",
+    "shim/.swift-format",
+    "shim/Sources/**",
+    "README.md",
+]
+
+[dependencies]
+
+# Async runtime
+tokio = { version = "1", features = ["sync", "rt", "io-util", "net", "time", "macros"] }
+
+# Error handling
+thiserror = "2"
+
+# Logging
+tracing = "0.1"
+
+# Utilities
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "macros"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# macOS-specific dependencies (none for now, using FFI directly)
+
+[lints]
+workspace = true

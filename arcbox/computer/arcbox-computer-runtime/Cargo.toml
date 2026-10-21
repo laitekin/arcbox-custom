@@ -1,0 +1,56 @@
+[package]
+name              = "arcbox-computer-runtime"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description       = "Sandbox orchestration over nested microVMs behind the arcbox-vm-driver port: boot, exec, files, checkpoints, warm pools. The in-sandbox init is arcbox-vm-agent; the wire vocabulary is arcbox-vm-proto."
+
+[features]
+# The agent-port fake: `FakeAgentFactory`, and `fake_environment`, which
+# composes it with the driver port's `FakeDriver` and `FakeNetwork` to run
+# the real boot path with no VMM. Off by default so production builds
+# carry none of it.
+testkit = ["arcbox-vm-driver/testkit"]
+# Registry access for callers that resolve an image before building a rootfs.
+remote-image = ["oci2rootfs/remote"]
+
+[dependencies]
+arcbox-atomic-file.workspace = true
+arcbox-vm-proto.workspace = true
+arcbox-vm-driver.workspace = true
+arcbox-error.workspace = true
+arcbox-snapshot.workspace = true
+tokio.workspace        = true
+thiserror.workspace    = true
+anyhow.workspace       = true
+async-trait.workspace  = true
+serde.workspace        = true
+serde_json.workspace   = true
+uuid.workspace         = true
+tracing.workspace      = true
+nix            = { workspace = true, features = ["process", "term", "signal", "mount"] }
+libc.workspace         = true
+chrono.workspace       = true
+toml.workspace         = true
+sha2.workspace         = true
+oci2rootfs = { version = "0.2.1", default-features = false }
+arcbox-ext4 = "0.1.2"
+statig = "0.4.1"
+
+[dev-dependencies]
+# The crate's own tests always exercise the testkit: a path-only self
+# dev-dependency turns the feature on for test builds and is stripped at
+# publish time.
+arcbox-computer-runtime = { path = ".", features = ["testkit"] }
+arcbox-snapshot = { workspace = true, features = ["test-probe"] }
+tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
+anyhow.workspace   = true
+tracing-subscriber.workspace = true
+tempfile.workspace = true
+arcbox-vm-driver = { workspace = true, features = ["testkit"] }
+arcbox-constants.workspace = true
+
+[lints]
+workspace = true

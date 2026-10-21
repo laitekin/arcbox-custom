@@ -1,0 +1,450 @@
+//! Daemon startup: lock acquisition, config, runtime initialization.
+
+mod assets;
+mod cleanup;
+mod container_network_lease;
+mod host_mounts;
+mod lock;
+mod pipeline;
+mod resource_cleanup;
+
+pub use assets::find_bundle_contents;
+pub use container_network_lease::ContainerNetworkLease;
+pub use lock::DaemonLock;
+pub use pipeline::{ReadyDaemon, Startup};
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use anyhow::{Context, Result};
+use arcbox_api::SetupPhase;
+use arcbox_constants::paths::{ArcboxProfile, HostLayout, HostMountLayout};
+use arcbox_core::{Config, InitProgress, Runtime};
+use arcbox_helper::validate::Domain;
+use tracing::info;
+
+use crate::DaemonArgs;
+use crate::context::{DaemonContext, EarlyContext, StartupHandles, VmArgs};
+
+pub const DEFAULT_DNS_DOMAIN: &str = "arcbox.local";
+
+/// Phase 1: directories, config, sockets. No runtime, no lock yet.
+///
+/// Returns an [`EarlyContext`] sufficient to start the gRPC
+/// SystemService so clients can observe the full startup progression.
+/// Call [`acquire_lock`] next to obtain a [`DaemonContext`].
+async fn init_early(args: DaemonArgs, handles: StartupHandles) -> Result<EarlyContext> {
+    let profile = args
+        .profile
+        .unwrap_or_else(ArcboxProfile::from_env_or_default);
+    let mut layout = HostLayout::resolve_for_profile_from_env(profile, args.data_dir.as_deref());
+
+    // CLI overrides for socket paths.
+    if let Some(socket) = args.socket {
+        layout.docker_socket = socket;
+    }
+    if let Some(grpc) = args.grpc_socket {
+        layout.grpc_socket = grpc;
+    }
+
+    let dns_domain = dns_domain(args.dns_domain)?;
+    validate_explicit_dns_resolver(profile, args.install_dns_resolver, &dns_domain)?;
+
+    std::fs::create_dir_all(&layout.data_dir).context("Failed to create data directory")?;
+    std::fs::create_dir_all(&layout.run_dir).context("Failed to create run directory")?;
+    // The gRPC/Docker sockets live in run_dir and are the daemon's only access
+    // control (a connected client gets full sandbox read/write/exec). Restrict
+    // the directory to the owner so the posture doesn't depend on the umask.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&layout.run_dir, std::fs::Permissions::from_mode(0o700))
+            .context("Failed to restrict run directory permissions")?;
+    }
+    std::fs::create_dir_all(&layout.log_dir).context("Failed to create log directory")?;
+    std::fs::create_dir_all(&layout.data_subdir)
+        .context("Failed to create persistent data directory")?;
+
+    let dns_port = dns_port(args.dns_port);
+    let kubernetes_context = kubernetes_context(profile, args.kubernetes_context)?;
+    let host_mounts = HostMountLayout::from_env_or_home().with_context(|| {
+        format!(
+            "could not determine the host mount root: set {} or HOME",
+            arcbox_constants::env::HOST_MOUNT_DIR
+        )
+    })?;
+
+    Ok(EarlyContext {
+        profile,
+        layout,
+        shared_runtime: handles.shared_runtime,
+        early_runtime: handles.early_runtime,
+        setup_state: handles.setup_state,
+        shutdown: handles.shutdown,
+        daemon_lock_slot: handles.daemon_lock,
+        container_network_lease_slot: handles.container_network_lease,
+        dns_domain,
+        dns_port,
+        install_dns_resolver: args.install_dns_resolver,
+        kubernetes_port: args.kubernetes_port,
+        kubernetes_context,
+        ssh_port: args.ssh_port,
+        docker_integration: args.docker_integration,
+        mount_nfs: !args.no_mount_nfs,
+        host_mounts,
+        vm_args: VmArgs {
+            guest_docker_vsock_port: args.guest_docker_vsock_port,
+            container_cidr: args.container_cidr,
+            kernel: args.kernel,
+            no_linux_vm: args.no_linux_vm,
+        },
+    })
+}
+
+fn validate_explicit_dns_resolver(
+    profile: ArcboxProfile,
+    enabled: bool,
+    domain: &str,
+) -> Result<()> {
+    anyhow::ensure!(
+        profile == ArcboxProfile::Production || !enabled || domain != DEFAULT_DNS_DOMAIN,
+        "development --install-dns-resolver requires a non-canonical --dns-domain"
+    );
+    Ok(())
+}
+
+/// Acquire the daemon lock, consuming the [`EarlyContext`].
+///
+/// Fast when no stale daemon exists. If a stale daemon holds the lock,
+/// sends SIGTERM (with 30 s grace period and SIGKILL fallback), then
+/// blocks on `flock(LOCK_EX)` until the lock is released. Must run
+/// before `start_grpc` because the old daemon may still be listening
+/// on the same socket paths.
+async fn acquire_lock(early: EarlyContext) -> Result<DaemonContext> {
+    let lock_file = early.layout.lock_file.clone();
+    let lock = tokio::task::spawn_blocking(move || DaemonLock::acquire(&lock_file))
+        .await
+        .context("lock task panicked")?
+        .context("failed to acquire daemon lock")?;
+    let lock = Arc::new(lock);
+    // Publish a sibling clone into the pre-pipeline handles: a signal drops
+    // this pipeline's context mid-flight, and the flock must outlive that
+    // drop for as long as the interrupt path is still tearing down the VM.
+    early
+        .daemon_lock_slot
+        .set(Arc::clone(&lock))
+        .map_err(|_| anyhow::anyhow!("acquire_lock called twice"))?;
+    Ok(DaemonContext {
+        profile: early.profile,
+        layout: early.layout,
+        daemon_lock: lock,
+        shared_runtime: early.shared_runtime,
+        early_runtime: early.early_runtime,
+        setup_state: early.setup_state,
+        shutdown: early.shutdown,
+        container_network_lease_slot: early.container_network_lease_slot,
+        dns_domain: early.dns_domain,
+        dns_port: early.dns_port,
+        install_dns_resolver: early.install_dns_resolver,
+        kubernetes_port: early.kubernetes_port,
+        kubernetes_context: early.kubernetes_context,
+        ssh_port: early.ssh_port,
+        docker_integration: early.docker_integration,
+        mount_nfs: early.mount_nfs,
+        host_mounts: early.host_mounts,
+        vm_args: early.vm_args,
+    })
+}
+
+/// Wait for residual resource holders (e.g. docker.img) to release.
+///
+/// Must complete before [`init_runtime`] — on macOS, orphaned
+/// Virtualization.framework XPC helpers of a just-displaced or crashed daemon
+/// may still hold a previous daemon's disk images. Clean starts skip the
+/// expensive scan unless persisted machine state shows the previous daemon was
+/// interrupted while a VM was running. Reports the `CleaningUp` phase so gRPC
+/// clients can show progress.
+///
+/// Scans every persistent dockerd image owned by a configured utility
+/// VM role (native `docker.img`, rosetta `docker-rosetta.img`) so a
+/// stale VZ holder on either side does not block daemon startup.
+///
+/// On non-macOS this is a no-op (no XPC helpers).
+#[cfg(target_os = "macos")]
+async fn wait_for_resources(ctx: &DaemonContext) -> Result<()> {
+    // Remove a stale Docker socket from a previous session up front. It is
+    // otherwise (re)bound only in start_runtime_services, so if a later phase
+    // (e.g. VM boot) fails, a leftover socket makes clients hit "connection
+    // refused" against a dead listener instead of seeing the daemon as
+    // not-yet-ready. Mirrors the gRPC socket's early unlink-then-bind.
+    let _ = std::fs::remove_file(&ctx.layout.docker_socket);
+
+    let docker_imgs = resource_cleanup::disk_image_paths(&ctx.layout.data_subdir);
+    let decision = resource_cleanup::decide(
+        ctx.daemon_lock.displaced_stale_daemon(),
+        resource_cleanup::has_interrupted_running_machine(&ctx.layout.data_dir),
+        !docker_imgs.is_empty(),
+    );
+
+    let resource_cleanup::ResourceCleanupDecision::ScanDiskImageHolders { reason } = decision
+    else {
+        info!(
+            decision = ?decision,
+            "Skipping startup resource-holder cleanup"
+        );
+        return Ok(());
+    };
+
+    info!(
+        reason = ?reason,
+        image_count = docker_imgs.len(),
+        "Scanning disk-image holders before runtime startup"
+    );
+
+    ctx.setup_state
+        .set_phase(SetupPhase::CleaningUp, "Waiting for resource release…");
+
+    tokio::task::spawn_blocking(move || {
+        for path in docker_imgs {
+            cleanup::wait_for_docker_img_holders(&path);
+        }
+    })
+    .await
+    .context("resource wait task panicked")?;
+
+    ctx.setup_state.set_phase(
+        SetupPhase::Initializing,
+        "Finished waiting for resource release (see logs for details)",
+    );
+    Ok(())
+}
+
+/// No-op on non-macOS — no Virtualization.framework XPC helpers.
+#[cfg(not(target_os = "macos"))]
+async fn wait_for_resources(_ctx: &DaemonContext) -> Result<()> {
+    Ok(())
+}
+
+/// Reconciles bundle, downloaded, and staged assets for this startup.
+///
+/// Called after gRPC is already listening so clients can observe download
+/// progress and before [`init_runtime`] so the runtime sees coherent artifacts
+/// for the launched app version.
+async fn prepare_assets(ctx: &DaemonContext) -> Result<assets::PreparedAssets> {
+    let config = effective_config(ctx)?;
+    let prepared = assets::prepare(&config, &ctx.setup_state).await?;
+    ctx.setup_state
+        .set_phase(SetupPhase::AssetsReady, "Boot assets ready");
+    Ok(prepared)
+}
+
+/// Phase 2: seed/download boot assets, build runtime, start VM.
+///
+/// Called after gRPC SystemService is already listening so clients
+/// can observe DOWNLOADING_ASSETS → ASSETS_READY progression, and
+/// publishes VM_STARTING → VM_READY around the guest boot itself.
+/// Returns the initialized runtime.
+async fn init_runtime(ctx: &DaemonContext) -> Result<Arc<Runtime>> {
+    let config = effective_config(ctx)?;
+    if config.vm.autostart
+        && let Some(lease) = ContainerNetworkLease::acquire(config.container.cidr)?
+    {
+        ctx.container_network_lease_slot
+            .set(lease)
+            .map_err(|_| anyhow::anyhow!("container network lease already configured"))?;
+    }
+    let selected_guest_docker_port = config.container.guest_docker_vsock_port;
+    let runtime = Arc::new(Runtime::new(config).context("Failed to create runtime")?);
+    // Publish the diagnostics handle before the VM boots: a stuck boot
+    // must stay observable via GetVirtioDebug while `shared_runtime`
+    // (the general RPC gate) is still empty.
+    ctx.early_runtime
+        .set(Arc::clone(&runtime))
+        .map_err(|_| anyhow::anyhow!("init_runtime called twice"))?;
+    // Armed before `init` for the same reason `early_runtime` is published
+    // here: the VM reaches its ready state partway through the call below, so
+    // a mirror started after it returns would report the VM down across the
+    // whole window between the agent answering and dockerd coming up.
+    crate::services::spawn_vm_running_mirror(ctx, &runtime);
+    crate::storage_health::spawn(ctx, &runtime);
+    crate::services::spawn_storage_recovery_mirror(ctx, &runtime);
+    // Armed here for the same reason: a host sleep can land during the boot
+    // below, and the wake that follows must still re-sync the guest clock.
+    crate::power::spawn_wake_clock_sync(&runtime, &ctx.shutdown);
+    // The guest boot is the longest stretch of startup and the only one a
+    // client cannot infer from anything else, so the runtime reports its
+    // milestones from inside and they are published as they arrive.
+    runtime
+        .init(|milestone| match milestone {
+            InitProgress::SystemVmStarting => ctx
+                .setup_state
+                .set_phase(SetupPhase::VmStarting, "Starting the Linux VM…"),
+            InitProgress::SystemVmReady => ctx.setup_state.set_phase(
+                SetupPhase::VmReady,
+                "Linux VM ready; waiting for the container runtime…",
+            ),
+        })
+        .await
+        .context("Failed to initialize runtime")?;
+    info!(
+        data_dir = %ctx.layout.data_dir.display(),
+        guest_docker_vsock_port = selected_guest_docker_port,
+        container_cidr = %runtime.config().container.cidr,
+        "Runtime initialized"
+    );
+
+    if ctx.dns_domain != DEFAULT_DNS_DOMAIN {
+        runtime.network_manager().set_dns_domain(&ctx.dns_domain);
+    }
+
+    // Replay the startup cleanup before the runtime is published, so no
+    // sandbox state from a previous daemon outlives it. The stream is a
+    // streaming RPC, which the HV backend's blocking agent transport cannot
+    // carry; HV runs no sandboxes, so there is nothing to replay there. The
+    // same gate, re-evaluated per VM incarnation, keeps the long-lived watch
+    // (`sandbox_cleanup::spawn`) off backends that cannot carry it.
+    let backend = runtime.system_vm_backend();
+    if !runtime.config().vm.autostart || runtime.machine_manager().storage_is_held()? {
+        // No guest, nothing to clean.
+    } else if backend.supports_nested_virt() {
+        let replayed = arcbox_computer::cleanup::initialize(runtime.as_ref())
+            .await
+            .context("Failed to initialize sandbox cleanup")?;
+        if !replayed {
+            info!("sandbox cleanup skipped: the guest runs no sandboxes");
+        }
+    } else {
+        info!(
+            backend = backend.as_str(),
+            "sandbox cleanup skipped: the backend does not run sandboxes"
+        );
+    }
+    Ok(runtime)
+}
+
+fn effective_config(ctx: &DaemonContext) -> Result<Config> {
+    let mut config = Config::load_for_profile(ctx.profile).context("Failed to load config")?;
+    // The daemon's layout (sockets, lock file) was already resolved from
+    // --profile/--data-dir/--socket, so it must win over config files.
+    config.data_dir.clone_from(&ctx.layout.data_dir);
+    config
+        .docker
+        .socket_path
+        .clone_from(&ctx.layout.docker_socket);
+    if let Some(port) = ctx.vm_args.guest_docker_vsock_port {
+        config.container.guest_docker_vsock_port = port;
+    }
+    if let Some(cidr) = ctx.vm_args.container_cidr {
+        config.container.cidr = cidr;
+    }
+
+    // The --kernel CLI flag wins over the config file; Runtime::new
+    // propagates config.vm.* into the VM lifecycle config.
+    if let Some(ref kernel) = ctx.vm_args.kernel {
+        config.vm.kernel_path = Some(kernel.clone());
+    }
+
+    // --no-linux-vm wins over the config file, forcing VM-host-only mode.
+    if ctx.vm_args.no_linux_vm {
+        config.vm.autostart = false;
+    }
+    Ok(config)
+}
+
+/// Resolve the data directory from an optional override.
+///
+/// Re-exported for use by `main.rs` (logging setup runs before
+/// `init_early`, so it needs the path independently).
+pub fn resolve_data_dir(profile: ArcboxProfile, data_dir: Option<&PathBuf>) -> PathBuf {
+    HostLayout::resolve_for_profile_from_env(profile, data_dir.map(PathBuf::as_path)).data_dir
+}
+
+/// The explicitly requested DNS port: `--dns-port`, then `ARCBOX_DNS_PORT`.
+///
+/// `None` leaves the choice to the DNS service, which binds the profile's
+/// port and falls back to an OS-allocated one when it is taken. Isolated
+/// instances request `0` and publish the bound port through their unique
+/// resolver domain.
+fn dns_port(cli_port: Option<u16>) -> Option<u16> {
+    cli_port.or_else(|| {
+        std::env::var("ARCBOX_DNS_PORT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+    })
+}
+
+fn dns_domain(cli_domain: Option<Domain>) -> Result<String> {
+    if let Some(domain) = cli_domain {
+        return Ok(domain.to_string());
+    }
+    std::env::var("ARCBOX_DNS_DOMAIN")
+        .map_or_else(
+            |_| Ok(DEFAULT_DNS_DOMAIN.to_string()),
+            |domain| domain.parse::<Domain>().map(|domain| domain.to_string()),
+        )
+        .map_err(anyhow::Error::msg)
+        .context("Invalid DNS domain")
+}
+
+fn kubernetes_context(profile: ArcboxProfile, requested: Option<String>) -> Result<String> {
+    let context = requested.unwrap_or_else(|| profile.docker_context_name().to_owned());
+    let bytes = context.as_bytes();
+    if bytes.is_empty()
+        || bytes.len() > 253
+        || !bytes.first().is_some_and(u8::is_ascii_alphanumeric)
+        || !bytes.last().is_some_and(u8::is_ascii_alphanumeric)
+        || !bytes
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        anyhow::bail!(
+            "Kubernetes context must be 1-253 ASCII letters, digits, '.', '_' or '-', with an alphanumeric first and last character"
+        );
+    }
+    Ok(context)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DEFAULT_DNS_DOMAIN, kubernetes_context, validate_explicit_dns_resolver};
+    use arcbox_constants::paths::ArcboxProfile;
+
+    #[test]
+    fn kubernetes_context_defaults_by_profile_and_rejects_yaml_syntax() {
+        assert_eq!(
+            kubernetes_context(ArcboxProfile::Production, None).unwrap(),
+            "arcbox"
+        );
+        assert_eq!(
+            kubernetes_context(
+                ArcboxProfile::Development,
+                Some("arcbox-dev-worktree-1".to_owned())
+            )
+            .unwrap(),
+            "arcbox-dev-worktree-1"
+        );
+        assert!(
+            kubernetes_context(ArcboxProfile::Development, Some("bad: value".to_owned())).is_err()
+        );
+    }
+
+    #[test]
+    fn development_cannot_claim_the_production_resolver_domain() {
+        assert!(
+            validate_explicit_dns_resolver(ArcboxProfile::Development, true, DEFAULT_DNS_DOMAIN)
+                .is_err()
+        );
+        assert!(
+            validate_explicit_dns_resolver(
+                ArcboxProfile::Development,
+                true,
+                "worktree.dev.arcbox.local"
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_explicit_dns_resolver(ArcboxProfile::Production, true, DEFAULT_DNS_DOMAIN)
+                .is_ok()
+        );
+    }
+}

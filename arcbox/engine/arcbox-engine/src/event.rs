@@ -1,0 +1,61 @@
+//! Event system for inter-component communication.
+
+use tokio::sync::broadcast;
+
+/// System events.
+#[derive(Debug, Clone)]
+pub enum Event {
+    /// VM started.
+    VmStarted { id: String },
+    /// VM stopped.
+    VmStopped { id: String },
+    /// Machine created.
+    MachineCreated { name: String },
+    /// Machine started.
+    MachineStarted { name: String },
+    /// Machine entered idle state (still running, reduced resources).
+    MachineIdle { name: String },
+    /// Machine is about to stop: its VM still runs, so a consumer that must
+    /// reach the guest before it goes — the host-side unmount of the
+    /// machine's root export — acts on this edge. Internal; the public
+    /// machine event stream does not carry it.
+    MachineStopping { name: String },
+    /// Machine stopped.
+    MachineStopped { name: String },
+    /// Machine removed (record and disks deleted).
+    MachineRemoved { name: String },
+    /// Container subnet route installed on the host for a machine's bridge NIC.
+    ContainerRouteInstalled { name: String },
+}
+
+/// Event bus for system-wide event distribution.
+#[derive(Clone)]
+pub struct EventBus {
+    sender: broadcast::Sender<Event>,
+}
+
+impl EventBus {
+    /// Creates a new event bus.
+    #[must_use]
+    pub fn new() -> Self {
+        let (sender, _) = broadcast::channel(256);
+        Self { sender }
+    }
+
+    /// Publishes an event.
+    pub fn publish(&self, event: Event) {
+        let _ = self.sender.send(event);
+    }
+
+    /// Subscribes to events.
+    #[must_use]
+    pub fn subscribe(&self) -> broadcast::Receiver<Event> {
+        self.sender.subscribe()
+    }
+}
+
+impl Default for EventBus {
+    fn default() -> Self {
+        Self::new()
+    }
+}

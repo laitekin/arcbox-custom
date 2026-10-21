@@ -1,0 +1,34 @@
+[package]
+name = "splicetcp"
+description = "Userspace TCP termination shim, Ethernet frame classifier with a pluggable frame source, and L3<->L2 tunnel shim for the ArcBox datapath"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+authors.workspace = true
+
+[dependencies]
+arcbox-datapath = { workspace = true }
+arcbox-fakeip = { workspace = true }
+arcbox-packet = { workspace = true }
+arcbox-proxy = { workspace = true }
+crossbeam-channel = "0.5"
+libc = { workspace = true }
+socket2 = "0.6"
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[features]
+default = []
+# Tokio-backed ConnSink that emits promoted fast-path TCP frames through a bounded
+# mpsc channel. Consumers that already drive a Tokio runtime (e.g. host utun
+# datapaths) can enable this instead of polling `TcpBridge::poll_fast_path`.
+tokio-frame-sink = []
+
+[lints]
+workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+arcbox-xnu-net.workspace = true

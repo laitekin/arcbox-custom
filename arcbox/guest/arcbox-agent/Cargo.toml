@@ -1,0 +1,91 @@
+[package]
+name = "arcbox-agent"
+description = "Guest agent for ArcBox VMs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "arcbox-agent"
+path = "src/main.rs"
+
+[dependencies]
+arcbox-constants = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+nix = { workspace = true, features = ["mount", "process", "resource", "sched", "signal", "feature", "term", "ioctl", "poll", "fs"] }
+libc = { workspace = true }
+prost = { workspace = true }
+uuid = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+chrono = { workspace = true }
+hostname = { workspace = true }
+notify = "7"
+tokio-stream = { workspace = true }
+async-trait = { workspace = true }
+pin-project-lite = { workspace = true }
+tokio-util = "0.7"
+flate2 = "1"
+tar = "0.4"
+num_cpus = "1"
+arcbox-dns = { workspace = true }
+wait-timeout = "0.2.1"
+arcbox-logging.workspace = true
+hyper = { workspace = true, features = ["http1", "client"] }
+http-body-util = "0.1.4"
+sha2.workspace = true
+arcbox-connect.workspace = true
+buffa = "0.9.1"
+buffa-types = "0.9.1"
+tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring", "tls12", "logging"] }
+arcbox-local-ca.workspace = true
+nfs3_server = "0.11.0"
+xattr = "1.6.1"
+arcbox-storage.workspace = true
+
+# vsock, the sandbox runtime, the VM-driver port it speaks, and the two
+# adapters this crate composes it over (the Firecracker driver and the TAP
+# network) are Linux-only.
+[target.'cfg(target_os = "linux")'.dependencies]
+arcbox-pty.workspace = true
+tokio-vsock = "0.5"
+arcbox-computer-runtime = { workspace = true }
+arcbox-vm-driver = { workspace = true }
+arcbox-fc-driver = { workspace = true }
+arcbox-tap-net = { workspace = true }
+arcbox-snapshot = { workspace = true }
+tonic.workspace = true
+tonic-prost.workspace = true
+tower.workspace = true
+http = "1"
+hyper-util = { version = "0.1.20", features = ["tokio"] }
+toml.workspace = true
+arcbox-transport.workspace = true
+
+[dev-dependencies]
+arcbox-computer-runtime.workspace = true
+tempfile = "3"
+toml.workspace = true
+
+[features]
+default = []
+engine-native = []
+engine-docker-supervisor = []
+provision-bundled = []
+provision-distro = []
+
+# When building for the guest VM (Linux), vsock is fully functional.
+# On macOS host, we provide stubs for development/testing.
+
+[lints]
+workspace = true

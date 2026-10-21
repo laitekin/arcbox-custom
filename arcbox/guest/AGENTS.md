@@ -1,0 +1,312 @@
+# guest/ — Guest Agent Agent Guidance
+
+`arcbox-agent` runs as PID 1 (or the respawned service) inside the Linux VM and
+serves the host over vsock port 1024 (`arcbox_constants::ports::AGENT_PORT`). The
+substantive code is `cfg(target_os = "linux")`-gated. For the RPC surface and
+bootstrap role see `guest/arcbox-agent/README.md`; for the wire/proto evolution
+policy see `rpc/arcbox-protocol/README.md`. This file carries only the
+non-obvious invariants and failure signatures.
+
+## Build & validate
+
+- **Musl cross-compile is mandatory.** On a macOS dev host `agent::Agent` is
+  the no-op `stub.rs` (`agent/mod.rs` cfg-selects `linux` vs `stub`), so
+  `cargo test -p arcbox-agent` only exercises the stub + pure helpers and proves
+  *nothing* about guest behavior. Build for `aarch64-unknown-linux-musl` (recipe
+  in `guest/arcbox-agent/README.md` / root AGENTS.md) and validate through e2e.
+  The unit tests do run on Linux: build them with
+  `cargo test -p arcbox-agent --target aarch64-unknown-linux-musl --bin arcbox-agent --no-run`
+  and run the static binary in any Linux guest of a dev daemon —
+  `docker run -i alpine sh -c 'cat >/t; chmod +x /t; /t <filter>'`, or an
+  alpine machine with the binary's directory mounted (`abctl machine create
+  … -m <dir>:/mnt/t`). The crate's `tests/` targets build for Linux only.
+- **CI runs the agent's unit tests on Linux.** The macOS
+  workspace gate excludes the crate by name from clippy, build *and* test
+  (`--workspace --exclude arcbox-agent`, `.github/workflows/ci.yml`), and the
+  substantive modules are `target_os = "linux"` regardless — so the sole gate
+  is the `Unit tests` step of `.github/workflows/test-vm-linux.yml`
+  (`cargo test --lib --bins … -p arcbox-agent`, unprivileged ubuntu).
+  `cargo fmt --check` is the exception to the exclusions: that same macOS job
+  runs it workspace-wide with no `--exclude`, and cargo-fmt walks every
+  member of a virtual manifest, so rustfmt is the one gate this crate has
+  never escaped — do not add it to another job's `-p` list thinking it is
+  ungated.
+  **`--bins` is required.** Test modules declared only by `main.rs`, including
+  the `agent/` tree, are absent from the lib target. The 2026-08-19 job ran
+  108 lib tests and 189 bin tests: 81 test functions were reachable only
+  through the bin target. Counts change when modules change; modules
+  declared by both targets compile and run twice.
+- **Path filters omit some direct workspace dependencies.** The workflow's
+  `paths:` filters include `guest/arcbox-agent/**` and these direct workspace
+  dependencies: `arcbox-computer-runtime`, `arcbox-vm-driver`,
+  `arcbox-fc-driver`, `arcbox-tap-net`, `arcbox-snapshot`, and
+  `arcbox-constants`. Changes to `Cargo.toml` or `Cargo.lock` also trigger
+  the workflow. The filters omit these direct workspace dependencies:
+  `arcbox-connect`, `arcbox-pty`, `arcbox-dns`, `arcbox-logging`,
+  `arcbox-local-ca`, and `arcbox-transport`. A change confined to those
+  dependency directories does not trigger the agent's tests.
+- **An integration target runs nowhere until a step names it.**
+  `--lib --bins` selects no `--test` targets, so each one needs asking for:
+  `dns_aliases`, the 7 compose-alias tests against the public `dns` API, has
+  its own step beside `Manager lifecycle over the fakes`. A bare `--tests` is
+  not the shortcut — it would pull in `sandbox_manager_e2e` and
+  `sandbox_service_manager`, which need root, KVM and Firecracker and are
+  already driven by the privileged jobs below. `port_forward_cleanup`
+  re-includes `agent/linux/port_forward.rs` by `#[path]`. The Linux bin target
+  already runs those tests, so the extra target would duplicate coverage.
+- **CI still never lints the agent — you must, locally.** No job runs clippy
+  on it: the macOS gate excludes it, the Linux `Unit tests` job deliberately
+  keeps it out of the `-D warnings` clippy step (a pre-existing
+  pedantic/nursery backlog would fail that job for reasons unrelated to the
+  change under test), and nothing lints `aarch64-unknown-linux-musl` at all
+  (`release.yml` only `cargo build`s that target). Run
+  `cargo clippy -p arcbox-agent --target aarch64-unknown-linux-musl --all-targets`
+  and hold *your changed lines* to zero new warnings; do NOT bulk-fix the
+  backlog in an unrelated PR — it buries your diff.
+- **Validation ladder, cheapest first** (from `virt/AGENTS.md`): crate unit
+  tests → bare probe `cargo test -p arcbox-e2e --test hv_vmm -- --ignored` →
+  daemon level `--test boot_assets` / `--test virtio_debug` (each with
+  `-- --ignored`) under `ARCBOX_VM_BACKEND=hv` →
+  `cargo xtask e2e --repeat N` for race-class fixes.
+- **VZ is the oracle**: HV-only red points at the HV implementation; double red
+  points above the hypervisor. Readiness is observed host-side *only* via
+  `WatchSetupStatus` — never log-grep or sleep for it.
+
+## Invariants (each with WHY)
+
+- **Protocol is additive-only.** Never remove/renumber proto fields; proto3
+  field skew is silent (an old agent decodes new fields as defaults and
+  misbehaves with zero diagnostics). Bump `AGENT_PROTOCOL_VERSION`
+  (`common/arcbox-constants/src/wire.rs`) only when the *meaning* of an existing
+  message changes; the host rejects agents below `MIN_AGENT_PROTOCOL_VERSION`
+  (currently 7 for all business APIs, including observation). `Ping` is the one
+  message every agent generation understands and carries `protocol_version`.
+- **Daemon and agent must ship from the same master state.** Both binaries are
+  built from this repo, and the daemon stages the agent it shipped with into the
+  guest's `/arcbox/bin/arcbox-agent` (the agent is NOT baked into the EROFS rootfs — the
+  rootfs only wires that path into inittab). Pairing a new daemon with a stale
+  agent trips the handshake above: boot fails with the intentional, actionable
+  "staged agent binary is stale" error (`check_agent_protocol`, `agent_client.rs`)
+  rather than a silent misdecode — do not treat it as a regression. The
+  rootfs/kernel/FEX half is a SEPARATE, tag-driven release from the sibling repo
+  `../boot-assets`: pushing a `vX.Y.Z` tag there builds the EROFS rootfs for both
+  arches and publishes a merged `manifest.json` to `boot.arcboxcdn.com`
+  (`.github/workflows/release.yml`). arcbox consumes a new release by bumping
+  BOTH `[boot] version` and `manifest_sha256` in `assets.lock`, which is
+  `include_str!`-embedded into the daemon at COMPILE time
+  (`engine/arcbox-image/src/boot_assets/lockfile.rs`) — editing `assets.lock`
+  without rebuilding the daemon changes nothing.
+- **Guest wall clock comes from the Ping handler.** HV exposes no RTC (ABX-416),
+  so `handle_ping` calls `sync_clock_from_host(req.timestamp_secs)` →
+  `clock_settime(CLOCK_REALTIME)` (`agent/linux/rpc.rs`). Before that
+  post-readiness ping the guest sits at the kernel default epoch and *all* TLS
+  cert validation fails. It looks like a liveness no-op — do not "refactor away"
+  the clock set until PL031 lands.
+- **Docker readiness gates on the `/_ping` API probe, not socket-connectable**
+  (`DockerProbe::ready()` in `agent/linux/runtime.rs`): dockerd binds its unix
+  socket before it finishes loading containers, so a socket-only gate fires
+  ready while the first proxied calls 500/EOF (ABX-408). A bound-but-initializing
+  socket is NOT_READY progress, not an error. The host
+  `ContainerRuntimeConfig::startup_timeout_ms` (150s) must stay above the guest
+  ensure-runtime poll budget (~90s dockerd + 30s containerd), or a slow-but-fine
+  boot produces a spurious RuntimeFailed.
+- **init vs serve asymmetry** (`main.rs` `parse_mode`): `arcbox-agent init` (the
+  busybox rcS one-shot) MUST fail fast — it returns `Err` if
+  `verify_critical_mounts()` finds `/etc /run /var /tmp` unmounted, because
+  running on read-only EROFS fails obscurely later. But `init_system()` on the
+  PID 1 path is deliberately best-effort and must NEVER abort — PID 1 death
+  panics the kernel. Do not unify these two paths.
+- **Peer-closed vsock errors are routine teardown, not agent faults**
+  (`is_peer_closed_error` in `agent/linux/vsock.rs`:
+  BrokenPipe/ConnectionReset/ConnectionAborted/UnexpectedEof). The daemon closes
+  the socketpair mid-write during normal teardown/retry and reopens on its next
+  poll — log at warn/debug, never error.
+- **`MmapReadFileRequest` (0x000B) and `KillAgentRequest` (0x000E) are test-only
+  wire types** (see doc comments in `wire.rs`): the ABX-362 DAX path and the
+  busybox-respawn supervision test. Keep them, but keep them test-scoped — do
+  not wire a CLI to them or "clean them up."
+- **A publish pinned to a host address needs the guest-side mirror.** dockerd's
+  DNAT for `-p 127.0.0.1:8080:80` carries `-d 127.0.0.1`; the host relay dials
+  the guest at its uplink address, so that rule never matches and the publish
+  is unreachable from the Mac while `0.0.0.0` publishes work. `publish_mirror.rs`
+  installs an uplink-matching PREROUTING rule per such binding on container
+  `start` (comment `arcbox-publish:<id>`), removes it on `die`/`destroy`, and
+  sweeps orphans at agent start (`docker_events.rs` drives it next to DNS
+  registration). Regression signature: `127.0.0.1:` publishes RST from the
+  host — check `iptables -t nat -S PREROUTING` in the guest for
+  `arcbox-publish:` rules.
+- **`daemon.json` is merged, not owned.** `docker_config.rs` renders ArcBox's
+  keys, then merges `/arcbox/config/docker-engine.json` — the daemon's
+  rendering of `[docker]` from the user's `config.toml` — over the rest.
+  `OWNED_KEYS` (`dns`, `bip`, `default-address-pools`, `allow-direct-routing`,
+  `default-ulimits`, `features`, `host-gateway-ip`, `host-gateway-ips`) are
+  refused with a warning; a key the runtime depends on goes there, or an
+  operator can break it from config. `host-gateway-ips` is `10.0.2.1`, the
+  address the datapath splices into the Mac's loopback: dockerd's default,
+  the guest's `docker0`, sends `--add-host x:host-gateway` (compose
+  `extra_hosts`, workerd's egress sidecar) to the VM instead of the Mac.
+- **A distro machine's agent serves RPC and nothing else.** The machine boot
+  shim starts the same `arcbox-agent serve` as the System VM;
+  `agent::Guest::detect` tells them apart by `arcbox.machine_rootfs=` on the
+  kernel cmdline, and a `DistroMachine` returns into `agent::run` before any
+  System VM service starts — the DNS server on `0.0.0.0:53`, container
+  domains, docker events and the publish mirror, the NFS relay, the standard
+  VirtioFS shares, the Docker and Kubernetes API proxies, the direct-routing
+  reconciler, the sandbox service. The DNS socket alone made
+  systemd-resolved turn its `127.0.0.53`
+  stub off ("Another process is already listening on UDP socket
+  127.0.0.53:53"), which broke every lookup on Debian and Ubuntu; the
+  reconcilers would rewrite the machine's own NAT table as soon as the user
+  installed dockerd there. A new background service has to say which guest
+  it belongs to. Machine readiness also reads `SystemInfo.ip_addresses`,
+  which comes from `getifaddrs`: never shell out to `hostname` for it (some
+  images ship none, and BusyBox's `-i` resolves the name through DNS).
+  Disk trimming is host-driven for both guests: `arcbox-daemon`'s
+  `disk_reclaim` asks the System VM for a `FITRIM` when it goes idle and
+  every running machine hourly; the agent issues the ioctl
+  (`agent/linux/disk.rs`) and runs no loop of its own. The rootfs ships no
+  `fstrim` binary — never shell out to it.
+  The one service a distro machine's agent does run is its root export,
+  and only on request: `EnsureMachineExport` starts an `nfs3_server` on
+  `127.0.0.1:0` and a relay on `<bridge ip>:0` that admits the host
+  addresses named in the request and drops every other peer
+  (`machine_export/server.rs`). It takes no well-known port and no file a
+  distro service may want (the kernel's nfsd would claim 2049 and
+  `/etc/exports`); the System VM answers the RPC with `EINVAL`, and a
+  machine whose bridge NIC has no address yet answers `EAGAIN` so the host
+  retries.
+- **A distro machine's identity and second NIC are `machine-init`'s, set up
+  before the distro's init runs** (`init.rs`, `machine_identity.rs`,
+  `boot_done.rs`). The hostname arrives as `arcbox.machine_name=` on the
+  cmdline (the machine name with `_` and `.` turned into `-`, derived on the
+  host by `machine_hostname`) and lands in the kernel nodename,
+  `/etc/hostname` and a `127.0.1.1` line in `/etc/hosts`: every init in
+  scope re-reads `/etc/hostname`, so set it nowhere else. The bridge NIC is
+  declared unmanaged to systemd-networkd and NetworkManager by MAC before it
+  gets its address — arch's `eth.network` and rocky's NetworkManager
+  otherwise configure it and add a default route through it (measured
+  2026-09-27) — and then gets an address only. The agent's DHCP script tags
+  the default route it installs `proto 200` (`AGENT_DHCP_ROUTE_PROTO`); the
+  boot-done hook is one script, `/etc/arcbox/boot-done.sh`, that every init
+  adapter runs, and it removes that route only while a second default route
+  exists on the uplink (alpine's dhcpcd adds its own next to it; networkd
+  and dhclient replace the table), then writes the sentinel. A distro that
+  configured no network keeps the shim's route. `SystemInfo.bridge_ip_address`
+  reports the bridge NIC's IPv4 address from the same `getifaddrs` pass as
+  `ip_addresses`. Regression signatures: two default routes on alpine;
+  `networkctl list` showing eth1 `configured` on arch; `hostname` printing
+  `distrobuilder-<uuid>` on Debian or Devuan.
+- **Container domains ride nat PREROUTING, and bridged siblings reach them
+  only through the kernel's built-in `br_netfilter`.** `domains/` DNATs
+  `<ip>:80` to the container's HTTP port and REDIRECTs `<ip>:443` to the
+  agent's TLS proxy on 61443 (`domains/https.rs`, CA from `/arcbox/tls/`),
+  tagged `arcbox-domain:<id>`, removed on `die`/`destroy`, swept at agent
+  start. The rules match the destination only; switched sibling traffic meets
+  them because the System VM kernel builds `br_netfilter` in and
+  `bridge-nf-call-iptables` defaults to 1 — dockerd turns it on only for
+  `icc=false` or without the userland proxy, neither of which ArcBox runs. A
+  kernel config that makes it a module, or an operator setting it to 0,
+  silently breaks sibling-to-sibling domain traffic; the agent warns at
+  startup. A container's listeners are read through its init pid only while
+  that pid is in the container's netns (`SandboxKey`): an `nsenter -t 1 -n`
+  container otherwise reports the VM's own sockets as its own. The design
+  lives in `domains/mod.rs`. Regression signature: siblings get RST on
+  `<name>.arcbox.local:80` while the Mac works — check
+  `iptables -t nat -S PREROUTING | grep arcbox-domain` and
+  `/proc/sys/net/bridge/bridge-nf-call-iptables`.
+- **k3s runs servicelb (traefik stays disabled), and `KubernetesLoadBalancers`
+  lists through `k3s kubectl get --raw /api/v1/services`,** bounded at 4 s to
+  stay inside the HV blocking transport's 5 s unary limit
+  (`BLOCKING_RPC_TIMEOUT`), and deliberately not under
+  `kubernetes_control_lock`, which a start holds for up to 30 s. The daemon
+  polls it every 2 s, so `MessageType::is_periodic_poll` requests and
+  per-connection accepts log at debug.
+- **The agent rootfs links every busybox applet into `/bin`** (boot bundle
+  0.8.8 on; earlier bundles linked only the 17 applets the boot sequence
+  runs, so a bare `fstrim` exec failed with ENOENT). There is no `/usr`; the
+  rootfs's own binaries are in `/sbin` (`mkfs.btrfs`, `mkfs.ext4`, `e2fsck`,
+  `mkfs.erofs`, `iptables`, the NFS server utilities). An `abctl debug` shell
+  inherits the agent's `PATH`, and machine-root exec puts the machine's login
+  `PATH` in front of it, so both resolve every applet by name.
+
+## Debugging (symptom → first commands → likely cause)
+
+- **Boot hang / readiness timeout / host logs "agent binary is stale"** →
+  `ls -lt boot-assets/dev/arcbox-agent target/aarch64-unknown-linux-musl/release/arcbox-agent ~/.arcbox/bin/arcbox-agent`
+  then `file <newest>`. `stage_dev_boot_assets` (`tests/e2e/src/boot_assets.rs`)
+  copies the **newest-mtime** agent across those three locations, so a fresh
+  build that wasn't re-staged loses to an old binary from another tree (ABX-385
+  field-skew class). Wrong-version agents now surface as the handshake rejection
+  (`engine/arcbox-engine/src/agent_client.rs`).
+- **"engine ready" then intermittent 500/EOF on first API calls** →
+  read `~/.arcbox/log/agent.log`, grep for `DockerProbe` / `/_ping`. Cause:
+  readiness gated on socket rather than the `/_ping` probe (ABX-408 regression).
+- **TLS / cert-validation failures early in boot** → check whether the host's
+  post-readiness Ping was delivered (`sync_clock_from_host` log line in
+  `agent.log`). Cause: guest still at kernel epoch — Ping not yet delivered or
+  the `clock_settime` was removed (ABX-416).
+- **Agent misbehaves on read-only rootfs (can't write resolv.conf, etc.)** →
+  grep `agent.log` for `verify_critical_mounts` / missing mount targets. Cause:
+  a critical tmpfs (`/etc /run /var /tmp`) didn't mount and the init-path check
+  was bypassed.
+- **Forensic entry point**: guest logs go to `/arcbox/log/agent.log` (VirtioFS,
+  visible host-side as `~/.arcbox/log/agent.log`) with a `/dev/hvc1` console
+  fallback (`main.rs`). e2e failures self-preserve the data dir and capture
+  `virtio-debug.json` while the VM is alive — read those before re-running.
+
+## Extending: add or change an RPC (lockstep set)
+
+Every link below must change together; missing one fails as an opaque
+"unexpected message type" or a silent no-op:
+
+1. `rpc/arcbox-protocol/proto/agent.proto` — message definition (additive only).
+2. `common/arcbox-constants/src/wire.rs` — `MessageType` enum variant + value.
+3. `guest/arcbox-agent/src/rpc.rs` — `RpcRequest`/`RpcResponse` variants plus
+   `parse_request`, `message_type`, and `encode_payload` (all three).
+4. `guest/arcbox-agent/src/agent/linux/rpc.rs` — dispatch in `handle_request`
+   (or a streaming handler like `handle_watch_readiness`, which holds the
+   connection open and emits a sequence of `ReadinessEvent` frames rather than a
+   single response — mirror that shape for new streaming RPCs).
+5. `engine/arcbox-engine/src/agent_client.rs` — the host caller.
+
+The full set above is for a **new message type**. Adding a *field* to an
+already-wired message (e.g. a new `AgentPingRequest` field) touches only 1, the
+generated file, the guest handler (4), and the host caller (5): the
+`MessageType` variant (2) and the `rpc.rs` parse/`message_type`/`encode_payload`
+arms (3) already exist — do not duplicate them.
+
+**EXCEPTION — the sandbox family (every `MessageType` for which
+`is_sandbox_request()` is true: the `Sandbox*` types incl. the
+`SandboxTemplate*` catalog types, plus `WatchSandboxCleanupRequest`)**
+replaces steps 3 and 4: `MessageType::is_sandbox_request()` routes the
+whole family to `handle_sandbox_message` (`agent/linux/sandbox.rs`)
+*before* the `rpc.rs` codec — do not add `rpc.rs` arms for it. Step 1's
+proto file splits by audience: public sandbox API messages live in the
+`arcbox/sandbox/v1` protos (all three build-script arrays, see
+`rpc/AGENTS.md`); host↔guest-internal control frames
+(`SandboxPortForwardRequest`, `SandboxCleanupTicket`,
+`SandboxResumeCommand`, …) stay in `agent.proto` — never expose an
+internal frame through the public schema. A new sandbox-family message
+needs: the proto (in the right file per that split), the `MessageType`
+variant + `is_sandbox_request()` arm, a `handle_sandbox_message` dispatch
+arm, and the `AgentClient` method. `MachineExecRequest`, `DebugExecRequest`
+(a `MachineExecRequest` payload naming the target `container`; its output
+comes back as `DebugExecResponse`) and `MachineTcpConnectRequest` are the
+other codec bypasses: dispatched by name before `parse_request`
+(`agent/linux/rpc.rs`), so they have no `rpc.rs` arms either, and each owns
+the rest of its connection — the agent closes it when the session ends, so
+host frames still in flight are never read as requests. Streaming
+alone does not waive step 3 — `WatchReadiness`/`WatchStats`/
+`WatchMemoryPressure` stream too and keep their codec arms (step 4's
+`handle_watch_readiness` pattern).
+
+Then run the `buf` breaking check, decide whether the change alters existing
+message *meaning* (if so, bump `AGENT_PROTOCOL_VERSION`), and add a test on the
+real request path — not just a leaf helper.
+
+## Guest-controlled input hygiene
+
+Every value the host/guest boundary carries (offsets, lengths, indices) is
+arbitrary bits: use checked arithmetic and bail on overflow (`req.length` bounds
+in `handle_mmap_read_file` is the pattern). Debug builds panic on overflow;
+release wraps past bounds checks — tests must cover near-`u64::MAX` inputs.

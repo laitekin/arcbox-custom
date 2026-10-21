@@ -1,0 +1,22 @@
+[package]
+name = "arcbox-migration"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Shared logic for migrating Docker objects (images, containers, networks) from Docker Desktop or OrbStack into ArcBox."
+
+[dependencies]
+chrono.workspace = true
+dirs.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+
+[lints]
+workspace = true

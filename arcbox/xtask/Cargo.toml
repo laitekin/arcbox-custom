@@ -1,0 +1,32 @@
+[package]
+name = "xtask"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Cargo xtask build-automation tasks for the ArcBox workspace"
+
+[dependencies]
+anyhow.workspace = true
+arcbox-constants.workspace = true
+cargo_metadata = "0.23.1"
+clap = { workspace = true, features = ["derive", "env"] }
+dirs.workspace = true
+flate2 = "1.1.9"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+tar = "0.4.46"
+toml_edit = "0.25.12"
+xshell = "0.2.7"
+xtask-kit = { version = "0.1.4", features = ["apple", "github-actions"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

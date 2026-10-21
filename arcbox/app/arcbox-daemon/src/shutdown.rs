@@ -1,0 +1,314 @@
+//! Graceful shutdown: signal handling, connection drain, cleanup.
+//!
+//! First signal triggers graceful shutdown with visible feedback.
+//! Second signal force-quits: skips the VM graceful stop but still runs
+//! full cleanup (port forwarding, network manager, routes, sockets).
+//!
+//! Signals arriving before startup completes are handled by
+//! [`interrupt_startup`] — `main::run` keeps a signal watcher armed for
+//! the whole startup window so a mid-boot SIGTERM cannot fall through to
+//! the default disposition and orphan the VM.
+
+#[cfg(test)]
+mod tests;
+
+use std::future::Future;
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::{Context, Result};
+use arcbox_core::Runtime;
+use arcbox_docker::DockerContextManager;
+use tokio::signal;
+use tracing::{info, warn};
+
+use crate::context::{DaemonContext, ServiceHandles, StartupHandles};
+
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long a startup interrupt waits for a graceful runtime stop before
+/// force-killing the VM. A boot in flight parks graceful `Stop` behind
+/// itself in the VM lifecycle actor, so an unbounded wait could last the
+/// whole boot timeout — longer than launchd's own SIGKILL patience.
+const STARTUP_ABORT_GRACE: Duration = Duration::from_secs(10);
+
+/// Waits for a shutdown signal, drains services, and cleans up.
+pub async fn run(ctx: DaemonContext, mut handles: ServiceHandles) -> Result<()> {
+    tokio::select! {
+        () = wait_for_signal() => {}
+        () = ctx.shutdown.cancelled() => {
+            warn!("internal safety condition requested daemon shutdown");
+        }
+    }
+    println!("Shutting down guest VM... (press Ctrl+C again to force quit)");
+    info!("Shutdown signal received, draining connections...");
+
+    // Keep the NFS proxy and guest alive until macOS has detached the mount.
+    // Cutting either connection first triggers its interrupted-server alert.
+    // The machine mounts go first for the same reason: their servers are
+    // the machines `stop_runtime` is about to stop.
+    crate::nfs_mount::cleanup(&ctx).await;
+    crate::machine_mount::cleanup().await;
+    ctx.shutdown.cancel();
+
+    drain(&mut handles).await;
+
+    let stopped = match ctx.shared_runtime.get() {
+        Some(runtime) => stop_runtime(Arc::clone(runtime), None).await,
+        None => RuntimeStop::Graceful(Ok(())),
+    };
+
+    cleanup(&ctx).await;
+    info!("ArcBox daemon stopped");
+
+    stopped.finish()
+}
+
+enum RuntimeStop {
+    Graceful(Result<()>),
+    Forced(Result<()>),
+}
+
+impl RuntimeStop {
+    /// Report the result only after the caller completes daemon cleanup.
+    fn finish(self) -> Result<()> {
+        match self {
+            Self::Graceful(result) => result,
+            Self::Forced(result) => {
+                if let Err(error) = &result {
+                    tracing::error!(?error, "Runtime shutdown failed");
+                    eprintln!("Runtime shutdown failed: {error:#}");
+                }
+                // An abandoned graceful task can block runtime drop. Preserve direct exit.
+                std::process::exit(i32::from(result.is_err()));
+            }
+        }
+    }
+}
+
+/// Stops the runtime, racing the graceful stop against a second signal
+/// and an optional `grace` deadline.
+///
+/// `runtime.shutdown()` sends a vsock shutdown RPC and blocks waiting for
+/// the VM to stop, so it runs in its own task — otherwise `select!` could
+/// not poll the signal branch. On a forced stop (second signal, deadline,
+/// or a panicked graceful task — the VM state is then unknown),
+/// `shutdown_force` does everything except the graceful VM stop: port
+/// forwarding, force VM kill, other machines, network manager.
+///
+/// Retains shutdown errors and task panics until daemon cleanup completes.
+/// A forced result must exit directly because the graceful task can remain blocked.
+async fn stop_runtime(runtime: Arc<Runtime>, grace: Option<Duration>) -> RuntimeStop {
+    let graceful_runtime = Arc::clone(&runtime);
+    stop_runtime_with(
+        async move { graceful_runtime.shutdown().await.map_err(Into::into) },
+        async move { runtime.shutdown_force().await.map_err(Into::into) },
+        wait_for_signal(),
+        grace,
+    )
+    .await
+}
+
+async fn stop_runtime_with(
+    graceful: impl Future<Output = Result<()>> + Send + 'static,
+    force: impl Future<Output = Result<()>> + Send + 'static,
+    signal: impl Future<Output = ()>,
+    grace: Option<Duration>,
+) -> RuntimeStop {
+    let graceful = tokio::spawn(graceful);
+    let graceful = async move {
+        match grace {
+            Some(limit) => tokio::time::timeout(limit, graceful)
+                .await
+                .map_err(|_| limit),
+            None => Ok(graceful.await),
+        }
+    };
+
+    let graceful_error = tokio::select! {
+        result = graceful => match result {
+            Ok(Ok(result)) => return RuntimeStop::Graceful(result),
+            Ok(Err(error)) => Some(anyhow::Error::from(error).context("Runtime shutdown task failed")),
+            Err(limit) => {
+                warn!(
+                    "Graceful stop did not finish within {}s, forcing",
+                    limit.as_secs()
+                );
+                None
+            }
+        },
+        () = signal => {
+            println!("Force shutting down...");
+            warn!("Second signal received, forcing shutdown");
+            None
+        }
+    };
+
+    let forced = tokio::spawn(force)
+        .await
+        .context("Forced runtime shutdown task failed")
+        .and_then(std::convert::identity);
+    let result = match (graceful_error, forced) {
+        (None, result) => result,
+        (Some(error), Ok(())) => Err(error),
+        (Some(error), Err(forced)) => {
+            Err(error.context(format!("Forced runtime shutdown also failed: {forced:#}")))
+        }
+    };
+    RuntimeStop::Forced(result)
+}
+
+async fn cleanup(ctx: &DaemonContext) {
+    if ctx.docker_integration {
+        if let Ok(ctx_manager) = DockerContextManager::new(ctx.layout.docker_socket.clone()) {
+            let _ = ctx_manager.disable();
+        }
+    }
+
+    // Retry if shutdown raced a mount that was still being established.
+    crate::nfs_mount::cleanup(ctx).await;
+    crate::machine_mount::cleanup().await;
+
+    cleanup_container_route(ctx.container_network_lease_slot.get()).await;
+
+    remove_sockets(ctx);
+}
+
+async fn cleanup_container_route(lease: Option<&crate::startup::ContainerNetworkLease>) {
+    if let Some(lease) = lease
+        && let Err(error) = lease.cleanup_route().await
+    {
+        warn!(%error, "failed to remove isolated container route");
+    }
+}
+
+fn remove_sockets(ctx: &DaemonContext) {
+    for path in [&ctx.layout.docker_socket, &ctx.layout.grpc_socket] {
+        if let Err(e) = std::fs::remove_file(path) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                warn!("Failed to remove socket {}: {}", path.display(), e);
+            }
+        }
+    }
+
+    // daemon.lock is deliberately kept on disk — the flock is released
+    // automatically when the process exits, and the next daemon reuses the
+    // file. Removing it would race with a concurrent startup.
+}
+
+/// Tears down a daemon whose startup was interrupted by a signal.
+///
+/// The startup future has been dropped at an await point, but a VM that
+/// began booting lives on in its lifecycle tasks — reach it through the
+/// pre-pipeline [`StartupHandles`] and stop it so no orphaned VM or
+/// Virtualization.framework helper keeps holding disk images.
+///
+/// Mirrors [`run`]'s two-signal contract: the graceful stop is bounded by
+/// [`STARTUP_ABORT_GRACE`] (or cut short by a second signal), then the VM
+/// is force-killed.
+pub async fn interrupt_startup(handles: &StartupHandles) -> Result<()> {
+    println!("Shutting down... (press Ctrl+C again to force quit)");
+    info!("Shutdown signal received during startup, aborting");
+
+    // Publish the cause on the setup stream, then give already-connected
+    // WatchSetupStatus clients a moment to flush before the gRPC server
+    // (which observes the cancellation token) shuts down.
+    handles
+        .setup_state
+        .set_failed("startup interrupted by shutdown signal");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    handles.shutdown.cancel();
+
+    // `early_runtime` is filled before the VM boots, so it covers every
+    // window in which a VM can exist; empty means nothing to tear down.
+    let Some(runtime) = handles.early_runtime.get() else {
+        info!("ArcBox daemon stopped");
+        return Ok(());
+    };
+    let stopped = stop_runtime(Arc::clone(runtime), Some(STARTUP_ABORT_GRACE)).await;
+
+    cleanup_container_route(handles.container_network_lease.get()).await;
+
+    info!("ArcBox daemon stopped");
+
+    stopped.finish()
+}
+
+/// Force-cleans a runtime after the startup pipeline itself returns an error.
+///
+/// There is no healthy service to preserve at this point. A forced stop avoids
+/// leaving Virtualization.framework helpers or disk holders behind while still
+/// letting the original startup error reach the caller.
+pub async fn abort_failed_startup(handles: &StartupHandles) {
+    handles.shutdown.cancel();
+    if let Some(runtime) = handles.early_runtime.get() {
+        if let Err(error) = runtime.shutdown_force().await {
+            warn!(%error, "failed to force-clean runtime after startup error");
+        }
+    }
+    cleanup_container_route(handles.container_network_lease.get()).await;
+}
+
+pub async fn wait_for_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("Failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("Failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        () = ctrl_c => {},
+        () = terminate => {},
+    }
+}
+
+async fn drain(handles: &mut ServiceHandles) {
+    if tokio::time::timeout(DRAIN_TIMEOUT, async {
+        let _ = tokio::join!(&mut handles.dns, &mut handles.grpc);
+        if let Some(h) = handles.docker.as_mut() {
+            let _ = h.await;
+        }
+        if let Some(h) = handles.kubernetes_proxy.as_mut() {
+            let _ = h.await;
+        }
+        if let Some(h) = handles.ssh.as_mut() {
+            let _ = h.await;
+        }
+        if let Some(h) = handles.route_guard.as_mut() {
+            let _ = h.await;
+        }
+    })
+    .await
+    .is_err()
+    {
+        warn!(
+            "Server drain timed out after {}s, aborting remaining tasks",
+            DRAIN_TIMEOUT.as_secs()
+        );
+        handles.dns.abort();
+        handles.grpc.abort();
+        if let Some(h) = handles.docker.as_mut() {
+            h.abort();
+        }
+        if let Some(h) = handles.kubernetes_proxy.as_mut() {
+            h.abort();
+        }
+        if let Some(h) = handles.ssh.as_mut() {
+            h.abort();
+        }
+        if let Some(h) = handles.route_guard.as_mut() {
+            h.abort();
+        }
+    }
+}

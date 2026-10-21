@@ -1,0 +1,79 @@
+[package]
+name = "arcbox-core"
+description = "Core orchestration layer for ArcBox"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+arcbox-hypervisor = { workspace = true }
+arcbox-vmm = { workspace = true }
+arcbox-virtio = { workspace = true }
+arcbox-fs = { workspace = true }
+arcbox-net = { workspace = true }
+arcbox-transport = { workspace = true }
+arcbox-constants = { workspace = true }
+arcbox-error = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tokio-util = "0.7"
+serde = { workspace = true }
+serde_json = { workspace = true }
+figment = { workspace = true }
+uuid = { workspace = true }
+dirs = { workspace = true }
+toml = { workspace = true }
+sha2 = { workspace = true }
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "json"] }
+arcbox-dns = { workspace = true }
+arcbox-helper = { workspace = true }
+arcbox-migration = { workspace = true }
+libc = { workspace = true }
+tempfile = "3"
+statig = "0.4.1"
+zstd = "0.13.3"
+base64 = "0.22.1"
+arcbox-connect.workspace = true
+buffa = "0.9.1"
+arcbox-image.workspace = true
+arcbox-engine.workspace = true
+arcbox-computer.workspace = true
+arcbox-fakeip.workspace = true
+arcbox-atomic-file.workspace = true
+toml_edit = "0.25.15"
+arcbox-local-ca.workspace = true
+arcbox-storage.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+arcbox-route.workspace = true
+arcbox-vz.workspace = true
+ifbridge = { workspace = true }
+
+[dev-dependencies]
+figment = { workspace = true, features = ["test"] }
+tokio = { workspace = true, features = ["test-util"] }
+tracing-subscriber.workspace = true
+
+[features]
+default = []
+backend-native = []
+backend-guest-docker = []
+provision-bundled = []
+provision-distro = []
+vmnet = ["arcbox-vmm/vmnet", "arcbox-engine/vmnet"]
+gic = ["arcbox-vmm/gic"]
+# Retained-but-unshipped macOS IPSW installer (install_from_ipsw + Apple IPSW
+# download). The product acquires images via `pull` only; this stays compiled
+# under the feature so the code cannot rot. Not part of any default build.
+macos-ipsw-install = []
+
+[lints]
+workspace = true

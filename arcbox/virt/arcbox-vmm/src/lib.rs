@@ -1,0 +1,105 @@
+//! # arcbox-vmm
+//!
+//! Host-side Virtual Machine Monitor (VMM) for `ArcBox`.
+//!
+//! The engine uses this crate to boot and manage host-side Linux VMs.
+//! Platform-specific backends live in submodules:
+//!
+//! - **macOS VZ**: Virtualization.framework manages execution and devices.
+//! - **macOS HV**: Hypervisor.framework runs vCPUs with ArcBox device emulation.
+//! - **Linux KVM**: KVM runs vCPUs through `arcbox-hypervisor`.
+//!
+//! For the guest-side Firecracker sandbox stack, see `arcbox-computer-runtime`.
+//!
+//! # Key types
+//!
+//! - [`Vmm`]: VM lifecycle/state and device orchestration
+//! - [`VmBuilder`]: Fluent API for VM configuration
+//! - [`VcpuManager`]: Manages vCPU threads and execution
+//! - [`memory::MemoryManager`]: Memory allocation and mapping
+//! - [`DeviceManager`]: Device registration and I/O handling
+//! - [`KernelLoader`] and [`FdtBuilder`]: Boot image and device-tree setup
+//!
+//! ## Architecture
+//!
+//! ```text
+//! arcbox-engine → Vmm
+//!                 ├─ macOS VZ → arcbox-hypervisor → arcbox-vz
+//!                 │                                → Virtualization.framework
+//!                 ├─ macOS HV → arcbox-hv → Hypervisor.framework
+//!                 │           + DeviceManager → arcbox-virtio devices
+//!                 └─ Linux KVM → arcbox-hypervisor::linux → KVM
+//! ```
+//!
+//! [`VmBackend`] selects the macOS backend. Boot loading, memory, IRQ, and
+//! device setup follow the selected backend; VZ does not run the HV device
+//! workers or its vCPU exit loop.
+//!
+//! ## Example
+//!
+//! ```ignore
+//! use arcbox_vmm::builder::VmBuilder;
+//!
+//! let vm = VmBuilder::new()
+//!     .name("my-vm")
+//!     .cpus(4)
+//!     .memory_gb(2)
+//!     .kernel("/path/to/vmlinux")
+//!     .cmdline("console=hvc0 root=/dev/vda")
+//!     .block_device("/path/to/disk.img", false)
+//!     .network_device(None, None)
+//!     .build()?;
+//!
+//! vm.run().await?;
+//! ```
+pub mod blk_worker;
+pub mod boot;
+pub mod builder;
+// Intentionally not `pub` — only used by darwin_hv to spawn the worker.
+#[cfg(target_os = "macos")]
+pub(crate) mod console_rx_worker;
+// DAX windows are mapped through Hypervisor.framework; darwin_hv is the
+// only consumer.
+#[cfg(target_os = "macos")]
+pub mod dax;
+pub mod device;
+pub mod error;
+pub mod event;
+pub mod fdt;
+pub mod irq;
+pub mod memory;
+#[cfg(target_os = "macos")]
+pub(crate) mod net_rx_worker;
+pub mod snapshot;
+pub mod vcpu;
+pub mod vcpu_stats;
+pub mod vmm;
+#[cfg(target_os = "macos")]
+pub(crate) mod vsock_rx_worker;
+/// Back-compat re-export of `arcbox_virtio::vsock_manager`.
+///
+/// The module moved to `arcbox-virtio` so that
+/// `VirtioVsock::poll_rx_injection` can reach `RxOps` /
+/// `VsockConnection` internals without `arcbox-virtio` depending on
+/// `arcbox-vmm`. Existing `crate::vsock_manager::*` imports continue
+/// to work via this shim.
+pub mod vsock_manager {
+    pub use arcbox_virtio::vsock_manager::*;
+}
+
+#[cfg(target_os = "macos")]
+pub use arcbox_hypervisor::darwin::SerialReaders;
+pub use boot::{BootParams, KernelLoader, KernelType};
+pub use builder::{VmBuilder, VmInstance};
+pub use device::{
+    DeviceDebug, DeviceId, DeviceInfo, DeviceManager, DeviceTreeEntry, DeviceType, QueueDebug,
+};
+pub use error::{Result, VmmError};
+pub use fdt::{FdtBuilder, FdtConfig};
+pub use snapshot::{
+    SnapshotCreateOptions, SnapshotError, SnapshotInfo, SnapshotManager, SnapshotState,
+    SnapshotTargetType, VmRestoreData, VmSnapshotContext,
+};
+pub use vcpu::{DeviceManagerExitHandler, ExitHandler, VcpuManager};
+pub use vcpu_stats::{VcpuStats, VcpuStatsSnapshot, VmDebugSnapshot};
+pub use vmm::{BlockDeviceConfig, SharedDirConfig, VmBackend, Vmm, VmmConfig, VmmState};

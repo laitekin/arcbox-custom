@@ -1,0 +1,559 @@
+// Machine service protocol definitions.
+//
+// This service manages virtual machines.
+//
+// Design sources:
+// - internal-docs/architecture/cli-api.md (MachineCommands section)
+// - OrbStack's machine management API (conceptual reference)
+// - Lima VM management interface patterns
+
+syntax = "proto3";
+
+package arcbox.v1;
+
+import "api.proto";
+import "common.proto";
+
+// MachineService manages Linux virtual machines. macOS guests are disposable,
+// single-purpose VMs with a separate lifecycle and live in MacosService.
+service MachineService {
+    // Creates a new virtual machine.
+    rpc Create(CreateMachineRequest) returns (CreateMachineResponse);
+
+    // Starts a stopped machine and returns once it is usable.
+    //
+    // "Usable" means the distro's own init has finished booting, not merely
+    // that the agent answers: the boot shim backgrounds the agent before
+    // exec'ing /sbin/init, and that init reconfigures the network from
+    // scratch, so a call issued in between can fail with ENETUNREACH.
+    //
+    // Budget for the distro's boot, not for the VM's: measured ~2.2s on
+    // alpine/openrc and ~14s on ubuntu/systemd, against ~0.5s before ArcBox
+    // 0.7.0, which returned into that window rather than after it.
+    //
+    // Two limits, because each hands control back other than as stated above:
+    //
+    //   - Boot completion is observed through a hook the agent installs into
+    //     the distro's init, so it needs an init that is recognized (systemd
+    //     or openrc). Where none is, or where the install fails, no signal is
+    //     coming — and rather than wait out a signal that will never arrive,
+    //     Start falls back to the pre-0.7.0 behaviour of returning once the
+    //     agent reports a routable IP. The ENETUNREACH window above is then
+    //     still reachable.
+    //   - The 60s readiness budget is checked between probes, so it bounds
+    //     the retry loop rather than any one probe. A guest that accepts the
+    //     connection and then stalls mid-answer holds Start open past it.
+    //     Keep a client-side timeout; do not treat 60s as a guarantee.
+    rpc Start(StartMachineRequest) returns (Empty);
+
+    // Stops a running machine.
+    rpc Stop(StopMachineRequest) returns (Empty);
+
+    // Removes a machine.
+    rpc Remove(RemoveMachineRequest) returns (Empty);
+
+    // Clones a stopped distro machine into a new one. The clone shares the
+    // source's data disk blocks copy-on-write — instant, and no extra space
+    // until the two diverge — under its own name, hostname, DNS record and
+    // bridge MAC. A running source is refused: its data disk is a btrfs
+    // volume mounted read-write in the guest, so stop it first. (Named
+    // CloneMachine, not Clone: a `clone` method collides with `Clone::clone`
+    // on the generated service handle.)
+    rpc CloneMachine(CloneMachineRequest) returns (CloneMachineResponse);
+
+    // Writes a stopped distro machine to a self-contained archive: a
+    // zstd-compressed tar holding a manifest (the machine's settings and
+    // the published image it boots) and its data disk as a sparse entry.
+    // The daemon writes the file, so `path` is a path on its host. A
+    // running machine is refused, as for Clone.
+    rpc Export(ExportMachineRequest) returns (ExportMachineResponse);
+
+    // Creates a machine from an archive Export wrote. The image the
+    // manifest names must be in the local image registry at the same
+    // version; otherwise the error says which image is missing.
+    rpc Import(ImportMachineRequest) returns (ImportMachineResponse);
+
+    // Changes a machine's CPU and memory limits, checked against the host.
+    // The new size is recorded at once and applies at the machine's next
+    // start; a running machine keeps the size it booted with, and the
+    // response says a restart is needed. The System VM is resized through
+    // SystemService.SetSystemVmResources instead, which restarts it.
+    rpc SetResources(SetMachineResourcesRequest) returns (SetMachineResourcesResponse);
+
+    // Sets the default machine — the one `abctl machine exec` and
+    // `abctl machine ssh` act on when given no name — or clears it with an
+    // empty id. The machine must exist. List reports the current one.
+    rpc SetDefault(SetDefaultMachineRequest) returns (Empty);
+
+    // Lists machines.
+    rpc List(ListMachinesRequest) returns (ListMachinesResponse);
+
+    // Inspects a machine.
+    rpc Inspect(InspectMachineRequest) returns (MachineInfo);
+
+    // Pings the guest agent for a machine.
+    rpc Ping(MachineAgentRequest) returns (MachinePingResponse);
+
+    // Gets guest system information for a machine.
+    rpc GetSystemInfo(MachineAgentRequest) returns (MachineSystemInfo);
+
+    // Compacts a machine's data disk: the guest trims its data filesystems
+    // (FITRIM), which discards every free block so the host punches them out
+    // of the sparse image. The daemon also does this on its own when the
+    // System VM goes idle and hourly for every running machine; this is the
+    // on-demand path behind `abctl disk compact`.
+    rpc CompactDisk(MachineAgentRequest) returns (Empty);
+
+    // Executes a command in a machine (non-interactive: stdin closed).
+    rpc Exec(MachineExecRequest) returns (stream MachineExecOutput);
+
+    // Interactive machine session: the first message must carry `init`;
+    // subsequent messages stream stdin bytes and terminal resizes. Output
+    // frames mirror Exec, with stdout/stderr merged by the PTY.
+    rpc ExecSession(stream MachineExecInput) returns (stream MachineExecOutput);
+
+    // Gets the SSH connection info.
+    rpc SSHInfo(SSHInfoRequest) returns (SSHInfoResponse);
+
+    // Subscribes to machine lifecycle events. The stream stays open until the
+    // client disconnects. Emitted actions:
+    //   "created" | "started" | "idle" | "stopped" | "removed"
+    // plus "resync" (empty name) when the server dropped events under load and
+    // the client should re-list. Events for the default System VM are included.
+    rpc Events(MachineEventsRequest) returns (stream MachineEvent);
+}
+
+// Request to create a machine.
+message CreateMachineRequest {
+    // Machine name.
+    string name = 1;
+    // Number of CPUs (0 = use the daemon default).
+    uint32 cpus = 2;
+    // Memory in bytes.
+    uint64 memory = 3;
+    // Disk size in bytes.
+    uint64 disk_size = 4;
+    // Linux distribution (e.g., "ubuntu", "alpine").
+    string distro = 5;
+    // Version of the distribution.
+    string version = 6;
+    // Architecture (e.g., "aarch64", "x86_64").
+    string arch = 7;
+    // Directory mounts.
+    repeated DirectoryMount mounts = 8;
+    // SSH public key.
+    string ssh_public_key = 9;
+    // Kernel image path.
+    string kernel = 10;
+    // Field 11 was initrd (removed in schema v6).
+    reserved 11;
+    // Kernel command line.
+    string cmdline = 12;
+}
+
+// Request that targets a machine's guest agent.
+message MachineAgentRequest {
+    // Machine ID or name.
+    string id = 1;
+}
+
+// Ping response from machine guest agent.
+message MachinePingResponse {
+    // Response payload.
+    string message = 1;
+    // Agent version.
+    string version = 2;
+}
+
+// System information reported by machine guest agent.
+message MachineSystemInfo {
+    // Kernel version.
+    string kernel_version = 1;
+    // OS name.
+    string os_name = 2;
+    // OS version.
+    string os_version = 3;
+    // Architecture.
+    string arch = 4;
+    // Total memory in bytes.
+    uint64 total_memory = 5;
+    // Available memory in bytes.
+    uint64 available_memory = 6;
+    // Number of CPUs.
+    uint32 cpu_count = 7;
+    // Load average (1, 5, 15 minutes).
+    repeated double load_average = 8;
+    // Hostname.
+    string hostname = 9;
+    // Uptime in seconds.
+    uint64 uptime = 10;
+    // Guest IP addresses (excluding loopback).
+    repeated string ip_addresses = 11;
+    // IPv4 address of the guest's bridge NIC, empty when it has none.
+    string bridge_ip_address = 12;
+}
+
+// Directory mount configuration.
+message DirectoryMount {
+    // Host directory path.
+    string host_path = 1;
+    // Guest mount point.
+    string guest_path = 2;
+    // Read-only flag.
+    bool readonly = 3;
+}
+
+// Response to create machine.
+message CreateMachineResponse {
+    // Machine ID.
+    string id = 1;
+}
+
+// Request to start a machine.
+message StartMachineRequest {
+    // Machine ID or name.
+    string id = 1;
+}
+
+// Request to stop a machine.
+message StopMachineRequest {
+    // Machine ID or name.
+    string id = 1;
+    // Force stop.
+    bool force = 2;
+}
+
+// Request to remove a machine.
+message RemoveMachineRequest {
+    // Machine ID or name.
+    string id = 1;
+    // Force removal.
+    bool force = 2;
+    // Ignored: machine removal always deletes the machine directory
+    // (including the data disk). Retained for wire compatibility.
+    bool volumes = 3;
+}
+
+// Request to list machines.
+message ListMachinesRequest {
+    // Show all machines (including stopped).
+    bool all = 1;
+}
+
+// Response to list machines.
+message ListMachinesResponse {
+    // List of machines.
+    repeated MachineSummary machines = 1;
+    // The default machine (see SetDefault); empty when none is set.
+    string default_machine = 2;
+}
+
+// Request to clone a machine.
+message CloneMachineRequest {
+    // Machine to clone (ID or name); must be stopped.
+    string id = 1;
+    // Name of the clone.
+    string name = 2;
+}
+
+// Response to clone machine.
+message CloneMachineResponse {
+    // The clone's ID.
+    string id = 1;
+}
+
+// Request to export a machine to an archive.
+message ExportMachineRequest {
+    // Machine to export (ID or name); must be stopped.
+    string id = 1;
+    // Where to write the archive, on the daemon's host. Must not exist.
+    string path = 2;
+}
+
+// Response to export machine.
+message ExportMachineResponse {
+    // The archive written.
+    string path = 1;
+    // Its size in bytes.
+    uint64 size = 2;
+}
+
+// Request to import a machine from an archive.
+message ImportMachineRequest {
+    // The archive, on the daemon's host.
+    string path = 1;
+    // Name for the machine; empty uses the name in the archive.
+    string name = 2;
+    // CPUs; 0 uses the archive's value.
+    uint32 cpus = 3;
+    // Memory in bytes; 0 uses the archive's value.
+    uint64 memory = 4;
+}
+
+// Response to import machine.
+message ImportMachineResponse {
+    // The new machine's ID.
+    string id = 1;
+    // Distribution the machine boots (from the archive).
+    string distro = 2;
+    // Distribution release.
+    string distro_version = 3;
+}
+
+// Request to change a machine's CPU and memory limits.
+message SetMachineResourcesRequest {
+    // Machine ID or name.
+    string id = 1;
+    // CPUs, 1 through the host's logical CPU count; 0 keeps the current value.
+    uint32 cpus = 2;
+    // Memory in bytes, 512 MiB through the host's physical memory; 0 keeps
+    // the current value.
+    uint64 memory = 3;
+}
+
+// A machine's CPU and memory limits after SetResources.
+message SetMachineResourcesResponse {
+    // CPUs the machine boots with from now on.
+    uint32 cpus = 1;
+    // Memory in bytes the machine boots with from now on.
+    uint64 memory = 2;
+    // The machine is running with its previous size; the new one applies
+    // when it is next started.
+    bool restart_required = 3;
+    // Logical CPUs on the host, the ceiling for `cpus`.
+    uint32 host_cpus = 4;
+    // Physical memory on the host in bytes, the ceiling for `memory`.
+    uint64 host_memory = 5;
+}
+
+// Request to set or clear the default machine.
+message SetDefaultMachineRequest {
+    // Machine ID or name; empty clears the default.
+    string id = 1;
+}
+
+// Summary information about a machine.
+message MachineSummary {
+    // Machine ID.
+    string id = 1;
+    // Machine name.
+    string name = 2;
+    // State (running, stopped, etc.).
+    string state = 3;
+    // Number of CPUs.
+    uint32 cpus = 4;
+    // Memory in bytes.
+    uint64 memory = 5;
+    // Disk size in bytes.
+    uint64 disk_size = 6;
+    // IP address.
+    string ip_address = 7;
+    // Creation timestamp.
+    int64 created = 8;
+    // Distribution name (e.g., "ubuntu"); empty for plain VMs.
+    string distro = 9;
+    // Distribution release (e.g., "noble").
+    string distro_version = 10;
+}
+
+// Request to inspect a machine.
+message InspectMachineRequest {
+    // Machine ID or name.
+    string id = 1;
+}
+
+// Detailed machine information.
+message MachineInfo {
+    // Machine ID.
+    string id = 1;
+    // Machine name.
+    string name = 2;
+    // State.
+    string state = 3;
+    // Hardware configuration.
+    MachineHardware hardware = 4;
+    // Network configuration.
+    MachineNetwork network = 5;
+    // Storage configuration.
+    MachineStorage storage = 6;
+    // OS information.
+    MachineOS os = 7;
+    // Creation timestamp.
+    Timestamp created = 8;
+    // Last start timestamp.
+    Timestamp started_at = 9;
+    // Directory mounts.
+    repeated DirectoryMount mounts = 10;
+}
+
+// Machine hardware configuration.
+message MachineHardware {
+    // Number of CPUs.
+    uint32 cpus = 1;
+    // Memory in bytes.
+    uint64 memory = 2;
+    // Architecture.
+    string arch = 3;
+}
+
+// Machine network configuration.
+message MachineNetwork {
+    // IP address.
+    string ip_address = 1;
+    // Gateway.
+    string gateway = 2;
+    // MAC address.
+    string mac_address = 3;
+    // DNS servers.
+    repeated string dns_servers = 4;
+    // MAC address of the bridge NAT NIC used for host-side vmnet routing on macOS.
+    string bridge_mac_address = 5;
+    // IPv4 address of the bridge NIC: the address the Mac reaches directly
+    // and the one `<machine>.arcbox.local` resolves to. Empty until the
+    // machine has reported it.
+    string bridge_ip_address = 6;
+    // The name the host's DNS answers for this machine while it runs
+    // (`<machine>.<local domain>`). Empty when the machine has no bridge
+    // address to register.
+    string dns_name = 7;
+}
+
+// Machine storage configuration.
+message MachineStorage {
+    // Disk size in bytes.
+    uint64 disk_size = 1;
+    // Disk format.
+    string disk_format = 2;
+    // Disk path.
+    string disk_path = 3;
+}
+
+// Machine OS information.
+message MachineOS {
+    // Distribution name.
+    string distro = 1;
+    // Version.
+    string version = 2;
+    // Kernel version.
+    string kernel = 3;
+}
+
+// Request to execute a command in a machine.
+message MachineExecRequest {
+    // Machine ID or name.
+    string id = 1;
+    // Command to execute.
+    repeated string cmd = 2;
+    // Working directory.
+    string working_dir = 3;
+    // User to run as.
+    string user = 4;
+    // Environment variables.
+    map<string, string> env = 5;
+    // Allocate TTY.
+    bool tty = 6;
+    // Initial terminal size (interactive sessions).
+    TerminalSize tty_size = 7;
+    // Feed the process the session's stdin messages (ExecSession only):
+    // without a TTY, stdin is /dev/null unless this is set. A TTY session
+    // always reads stdin from its terminal.
+    bool attach_stdin = 8;
+    // Run as a login session of `user` (root when empty), the way sshd does:
+    // the environment starts empty and gets HOME, USER, LOGNAME, SHELL and
+    // PATH from the account before `env` is applied, the working directory
+    // defaults to HOME, and the process is the account's shell — a login
+    // shell when `cmd` is empty, otherwise `shell -c` over `cmd` joined with
+    // spaces.
+    bool login = 9;
+    // Flow control between the daemon and the guest agent, set by the
+    // daemon when it forwards the request (a client's value is ignored):
+    // the agent keeps at most this many bytes of MachineExecOutput frames
+    // (encoded payloads, the final frame excepted) unreturned, grants its
+    // own stdin window in its first frame, and each side returns window as
+    // it consumes (MachineExecWindow frames). 0 streams without flow
+    // control.
+    uint32 output_window = 10;
+    // Container-debug target (see the DebugExecRequest wire message): when
+    // set, the exec enters this container's PID, network, IPC and UTS
+    // namespaces instead of running in the machine root. Empty for a normal
+    // machine exec.
+    string container = 11;
+}
+
+// One client message on an interactive machine session.
+message MachineExecInput {
+    oneof payload {
+        // Must be the first message: what to run.
+        MachineExecRequest init = 1;
+        // Raw stdin bytes; empty means stdin EOF.
+        bytes stdin = 2;
+        // Terminal resize.
+        TerminalSize resize = 3;
+    }
+}
+
+// Exec output from a machine.
+message MachineExecOutput {
+    // Stream type: stdout or stderr.
+    string stream = 1;
+    // Output data.
+    bytes data = 2;
+    // Exit code (only set on completion).
+    int32 exit_code = 3;
+    // Is this the final message.
+    bool done = 4;
+    // Signal that terminated the process, without the SIG prefix ("KILL");
+    // empty when it exited on its own. Only set on completion, where
+    // `exit_code` is then -1.
+    string exit_signal = 5;
+    // The output has ended: the process closed its stdout and stderr (or
+    // the TCP peer of a machine connection stopped sending). Carries no
+    // data; the final frame still follows.
+    bool eof = 6;
+}
+
+// Request for SSH connection info.
+message SSHInfoRequest {
+    // Machine ID or name.
+    string id = 1;
+}
+
+// SSH connection information.
+message SSHInfoResponse {
+    // Host to connect to.
+    string host = 1;
+    // Port number.
+    uint32 port = 2;
+    // Username.
+    string user = 3;
+    // Private key path (if using key-based auth).
+    string identity_file = 4;
+    // SSH command string.
+    string command = 5;
+}
+
+// Request to subscribe to machine lifecycle events.
+message MachineEventsRequest {
+    // Filter by machine ID/name (empty = all machines).
+    string id = 1;
+    // Filter by event action (empty = all actions).
+    string action = 2;
+}
+
+// A machine lifecycle event.
+message MachineEvent {
+    // Machine name (empty for "resync").
+    string name = 1;
+    // Action:
+    //   "created" — machine record created
+    //   "started" — VM reached the running state
+    //   "idle"    — running VM entered the idle (reduced-resource) state
+    //   "stopped" — VM shut down
+    //   "removed" — machine deleted
+    //   "resync"  — events were dropped under load; re-list to recover
+    string action = 2;
+    // Unix nanoseconds.
+    int64 timestamp = 3;
+    // Additional context (reserved; e.g. error detail on future actions).
+    map<string, string> attributes = 4;
+}

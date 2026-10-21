@@ -1,0 +1,51 @@
+[package]
+name = "arcbox-hypervisor"
+description = "Cross-platform hypervisor abstraction layer for ArcBox"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+arcbox-error = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+libc = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+tracing-subscriber = { workspace = true }
+ctrlc = "3.4"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+arcbox-vz = { workspace = true }
+objc2 = "0.6"
+block2 = "0.6"
+
+# Link Virtualization.framework on macOS
+[target.'cfg(target_os = "macos")'.build-dependencies]
+# None needed - we use runtime linking
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# nix for ioctl macros
+nix = { version = "0.29", features = ["ioctl"] }
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[[bin]]
+name = "arcbox-boot"
+path = "src/bin/arcbox-boot.rs"
+
+[[bin]]
+name = "arcbox-perf"
+path = "src/bin/arcbox-perf.rs"
+
+[features]
+default = []
+
+[lints]
+workspace = true

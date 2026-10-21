@@ -1,0 +1,1175 @@
+// ArcBox API service protocol definitions.
+//
+// This file contains API-specific services and types that are used by
+// arcbox CLI and other high-level clients communicating with the host daemon.
+//
+// Design sources:
+// - internal-docs/architecture/cli-api.md
+// - containerd API patterns
+
+syntax = "proto3";
+
+package arcbox.v1;
+
+import "common.proto";
+
+// =============================================================================
+// Network Service
+// =============================================================================
+
+// NetworkService manages Docker networks.
+service NetworkService {
+    // Creates a new network.
+    rpc Create(CreateNetworkRequest) returns (CreateNetworkResponse);
+
+    // Removes a network.
+    rpc Remove(RemoveNetworkRequest) returns (Empty);
+
+    // Lists networks.
+    rpc List(ListNetworksRequest) returns (ListNetworksResponse);
+
+    // Inspects a network.
+    rpc Inspect(InspectNetworkRequest) returns (NetworkInfo);
+}
+
+// Request to create a network.
+message CreateNetworkRequest {
+    // Network name.
+    string name = 1;
+    // Driver (e.g., "bridge", "host", "none").
+    string driver = 2;
+    // Internal network (not connected to external network).
+    bool internal = 3;
+    // Labels.
+    map<string, string> labels = 4;
+    // Enable IPv6.
+    bool enable_ipv6 = 5;
+    // IPAM configuration.
+    IpamConfig ipam = 6;
+}
+
+// IPAM configuration.
+message IpamConfig {
+    // Driver name.
+    string driver = 1;
+    // IPAM options.
+    map<string, string> options = 2;
+    // Subnet configurations.
+    repeated IpamSubnet subnets = 3;
+}
+
+// IPAM subnet configuration.
+message IpamSubnet {
+    // Subnet in CIDR format.
+    string subnet = 1;
+    // Gateway address.
+    string gateway = 2;
+    // IP range for allocation.
+    string ip_range = 3;
+}
+
+// Response to create network.
+message CreateNetworkResponse {
+    // Network ID.
+    string id = 1;
+    // Warning messages.
+    repeated string warnings = 2;
+}
+
+// Request to remove a network.
+message RemoveNetworkRequest {
+    // Network ID or name.
+    string id = 1;
+}
+
+// Request to list networks.
+message ListNetworksRequest {
+    // Filter by labels.
+    map<string, string> filters = 1;
+}
+
+// Response to list networks.
+message ListNetworksResponse {
+    // List of networks.
+    repeated NetworkSummary networks = 1;
+}
+
+// Summary information about a network.
+message NetworkSummary {
+    // Network ID.
+    string id = 1;
+    // Network name.
+    string name = 2;
+    // Driver.
+    string driver = 3;
+    // Scope (local, global).
+    string scope = 4;
+    // Created timestamp (RFC3339).
+    string created = 5;
+    // Internal network.
+    bool internal = 6;
+    // Attachable.
+    bool attachable = 7;
+    // Labels.
+    map<string, string> labels = 8;
+}
+
+// Request to inspect a network.
+message InspectNetworkRequest {
+    // Network ID or name.
+    string id = 1;
+    // Verbose output.
+    bool verbose = 2;
+}
+
+// Detailed network information.
+message NetworkInfo {
+    // Network ID.
+    string id = 1;
+    // Network name.
+    string name = 2;
+    // Driver.
+    string driver = 3;
+    // Scope.
+    string scope = 4;
+    // Created timestamp (RFC3339).
+    string created = 5;
+    // Internal network.
+    bool internal = 6;
+    // Attachable.
+    bool attachable = 7;
+    // Labels.
+    map<string, string> labels = 8;
+    // IPAM configuration.
+    IpamConfig ipam = 9;
+    // Connected containers.
+    map<string, NetworkContainer> containers = 10;
+    // Driver options.
+    map<string, string> options = 11;
+}
+
+// Container connected to a network.
+message NetworkContainer {
+    // Container name.
+    string name = 1;
+    // Container endpoint ID.
+    string endpoint_id = 2;
+    // IPv4 address.
+    string ipv4_address = 3;
+    // IPv6 address.
+    string ipv6_address = 4;
+    // MAC address.
+    string mac_address = 5;
+}
+
+// =============================================================================
+// System Service
+// =============================================================================
+
+// SystemService provides system-level operations.
+service SystemService {
+    // Gets system information.
+    rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
+
+    // Gets version information.
+    rpc GetVersion(GetVersionRequest) returns (GetVersionResponse);
+
+    // Pings the server.
+    rpc Ping(SystemPingRequest) returns (SystemPingResponse);
+
+    // Gets system events.
+    rpc Events(EventsRequest) returns (stream Event);
+
+    // Prunes unused resources.
+    rpc Prune(PruneRequest) returns (PruneResponse);
+
+    // Gets current daemon setup status. Used by desktop app to show
+    // startup progress without managing the daemon lifecycle.
+    rpc GetSetupStatus(Empty) returns (SetupStatus);
+
+    // Streams setup status updates. The server pushes a new message
+    // each time the daemon phase changes (e.g. VM starting → ready).
+    rpc WatchSetupStatus(Empty) returns (stream SetupStatus);
+
+    // Stops the System VM, preserves its paired disks, and checks them offline.
+    // The operation continues if the client disconnects. WatchSetupStatus
+    // replays progress and the terminal result for the operation ID.
+    rpc RecoverStorage(RecoverStorageRequest) returns (stream StorageRecoveryProgress);
+
+    // Gets the System VM's current hypervisor backend.
+    rpc GetSystemVmBackend(Empty) returns (SystemVmBackendInfo);
+
+    // Switches the System VM's hypervisor backend (HV <-> VZ). The choice is
+    // persisted; the System VM is restarted so it takes effect, which stops
+    // running containers. Returns the resulting backend.
+    rpc SetSystemVmBackend(SetSystemVmBackendRequest) returns (SystemVmBackendInfo);
+
+    // Gets the System VM's CPU and memory limits, with the host's capacity
+    // for context.
+    rpc GetSystemVmResources(Empty) returns (SystemVmResources);
+
+    // Sets the System VM's CPU and memory limits. The choice is written to
+    // the user's config.toml so it survives daemon restarts; the System VM
+    // is recreated so it takes effect, which stops running containers.
+    // Returns the resulting limits.
+    rpc SetSystemVmResources(SetSystemVmResourcesRequest) returns (SystemVmResources);
+
+    // Dumps a diagnostic snapshot of the System VM's virtio devices:
+    // per-queue kick counters, live avail/used ring indices, EVENT_IDX
+    // slots, and pending interrupt state. Custom-VMM backends only —
+    // empty under VZ, where the devices belong to
+    // Virtualization.framework.
+    rpc GetVirtioDebug(Empty) returns (VirtioDebugInfo);
+
+    // Resolves a container's filesystem layer directories from containerd
+    // snapshot metadata in the guest. With dockerd's containerd image
+    // store `docker inspect` exposes no layer paths, so filesystem
+    // browsers call this and read the returned guest paths through the
+    // read-only ~/ArcBox NFS export.
+    rpc ResolveContainerFs(ResolveContainerFsRequest) returns (ResolveContainerFsResponse);
+
+    // Resolves an image's layer directories from containerd snapshot
+    // metadata in the guest, keyed by the image's top layer chain ID
+    // (computed from the image config's diff_ids). Same read path as
+    // ResolveContainerFs.
+    rpc ResolveImageFs(ResolveImageFsRequest) returns (ResolveImageFsResponse);
+}
+
+// Hypervisor backend for the single System VM.
+enum SystemVmBackend {
+    // Unset; rejected by SetSystemVmBackend.
+    SYSTEM_VM_BACKEND_UNSPECIFIED = 0;
+    // Hypervisor.framework — ArcBox's custom VMM (amd64 via FEX). macOS 15+.
+    SYSTEM_VM_BACKEND_HV = 1;
+    // Virtualization.framework — Apple-managed execution. The default.
+    SYSTEM_VM_BACKEND_VZ = 2;
+}
+
+// The System VM's hypervisor backend.
+message SystemVmBackendInfo {
+    SystemVmBackend backend = 1;
+}
+
+// Request to switch the System VM's hypervisor backend.
+message SetSystemVmBackendRequest {
+    SystemVmBackend backend = 1;
+}
+
+// The System VM's CPU and memory limits and the host's capacity.
+message SystemVmResources {
+    // vCPUs the System VM boots with.
+    uint32 cpus = 1;
+    // Memory the System VM boots with, in MiB.
+    uint64 memory_mb = 2;
+    // Logical CPUs on the host; the ceiling for `cpus`.
+    uint32 host_cpus = 3;
+    // Physical memory on the host in MiB; the ceiling for `memory_mb`.
+    uint64 host_memory_mb = 4;
+}
+
+// Request to change the System VM's CPU and memory limits. A zero field
+// keeps the current value.
+message SetSystemVmResourcesRequest {
+    // vCPUs, 1 through the host's logical CPU count.
+    uint32 cpus = 1;
+    // Memory in MiB, 512 through the host's physical memory.
+    uint64 memory_mb = 2;
+}
+
+// Request to resolve a container's filesystem layer directories.
+message ResolveContainerFsRequest {
+    // Full container ID.
+    string container_id = 1;
+}
+
+// A container's filesystem layer directories, as guest paths under the
+// containerd data mount.
+message ResolveContainerFsResponse {
+    // Writable layer directory. Empty for read-only snapshots.
+    string upper_dir = 1;
+    // Read-only layer directories, top-most first.
+    repeated string lower_dirs = 2;
+}
+
+// Request to resolve an image's layer directories.
+message ResolveImageFsRequest {
+    // Chain ID of the image's top layer (`sha256:<64 hex>`).
+    string top_chain_id = 1;
+}
+
+// An image's layer directories, as guest paths under the containerd data
+// mount.
+message ResolveImageFsResponse {
+    // Read-only layer directories, top-most first.
+    repeated string lower_dirs = 1;
+}
+
+// Diagnostic snapshot of the System VM's virtio devices and vCPUs.
+message VirtioDebugInfo {
+    repeated VirtioDeviceDebug devices = 1;
+    // Per-vCPU exit counters (custom-VMM backends; empty under VZ).
+    repeated VcpuDebug vcpus = 2;
+    // Times any component broadcast hv_vcpus_exit to ALL vCPUs.
+    uint64 kick_broadcasts = 3;
+    // Times the IRQ callback unparked ALL vCPU threads on an SPI assertion.
+    uint64 unpark_broadcasts = 4;
+}
+
+// Cumulative exit counters for one vCPU.
+message VcpuDebug {
+    uint32 vcpu = 1;
+    // MMIO read exits.
+    uint64 mmio_reads = 2;
+    // MMIO write exits (includes every virtio QUEUE_NOTIFY doorbell).
+    uint64 mmio_writes = 3;
+    // WFI exits — the guest going idle.
+    uint64 wfi = 4;
+    // HVC exits (PSCI + ArcBox hypercalls).
+    uint64 hvc = 5;
+    // SMC exits.
+    uint64 smc = 6;
+    // Virtual-timer activations.
+    uint64 vtimer = 7;
+    // Times this vCPU was kicked out of hv_vcpu_run by hv_vcpus_exit.
+    uint64 kicks_received = 8;
+    // Trapped system-register accesses (treated RAZ/WI).
+    uint64 sysreg = 9;
+    // Unhandled exception classes and unknown exits.
+    uint64 other = 10;
+}
+
+// Snapshot of one virtio MMIO device.
+message VirtioDeviceDebug {
+    // Device ID within the VMM's device manager.
+    uint32 id = 1;
+    // Device type, e.g. "VirtioNet".
+    string device_type = 2;
+    // Device name.
+    string name = 3;
+    // MMIO device status register bits.
+    uint32 status = 4;
+    // Pending interrupt reasons not yet acknowledged by the guest.
+    uint32 interrupt_status = 5;
+    // Whether VIRTIO_F_EVENT_IDX was negotiated.
+    bool event_idx = 6;
+    // Cumulative interrupts raised by the device.
+    uint64 interrupts = 7;
+    // Configured queues.
+    repeated VirtioQueueDebug queues = 8;
+}
+
+// Snapshot of one virtqueue. Ring fields are only present when the ring
+// address was configured and lies inside guest RAM.
+message VirtioQueueDebug {
+    // Queue index within the device.
+    uint32 index = 1;
+    // Ring size negotiated by the driver.
+    uint32 size = 2;
+    // QUEUE_READY state.
+    bool ready = 3;
+    // Cumulative guest kicks (QUEUE_NOTIFY writes).
+    uint64 kicks = 4;
+    // avail.idx — where the guest has published up to.
+    optional uint32 avail_idx = 5;
+    // used.idx — where the device has completed up to. A persistent gap
+    // behind avail_idx means the queue is wedged.
+    optional uint32 used_idx = 6;
+    // avail.flags (bit 0 = VRING_AVAIL_F_NO_INTERRUPT).
+    optional uint32 avail_flags = 7;
+    // used.flags (bit 0 = VRING_USED_F_NO_NOTIFY).
+    optional uint32 used_flags = 8;
+    // used_event slot (guest → device kick threshold; EVENT_IDX only).
+    optional uint32 used_event = 9;
+    // avail_event slot (device → guest interrupt threshold; EVENT_IDX only).
+    optional uint32 avail_event = 10;
+}
+
+// Request to get system info.
+message GetInfoRequest {}
+
+// Response to get system info.
+message GetInfoResponse {
+    // Number of containers.
+    int64 containers = 1;
+    // Running containers.
+    int64 containers_running = 2;
+    // Paused containers.
+    int64 containers_paused = 3;
+    // Stopped containers.
+    int64 containers_stopped = 4;
+    // Number of images.
+    int64 images = 5;
+    // Number of machines.
+    int64 machines = 6;
+    // Running machines.
+    int64 machines_running = 7;
+    // Server version.
+    string server_version = 8;
+    // Operating system.
+    string os = 9;
+    // Architecture.
+    string arch = 10;
+    // Total memory.
+    int64 mem_total = 11;
+    // Number of CPUs.
+    int32 ncpu = 12;
+    // Data directory.
+    string data_dir = 13;
+    // Kernel version.
+    string kernel_version = 14;
+    // Operating system type.
+    string os_type = 15;
+    // Logging driver.
+    string logging_driver = 16;
+    // Storage driver.
+    string storage_driver = 17;
+}
+
+// Request to get version.
+message GetVersionRequest {}
+
+// Response to get version.
+message GetVersionResponse {
+    // Version string.
+    string version = 1;
+    // API version.
+    string api_version = 2;
+    // Minimum API version.
+    string min_api_version = 3;
+    // Git commit.
+    string git_commit = 4;
+    // Build time.
+    string build_time = 5;
+    // OS.
+    string os = 6;
+    // Architecture.
+    string arch = 7;
+    // Go version (for compatibility).
+    string go_version = 8;
+}
+
+// Request to ping the server.
+message SystemPingRequest {}
+
+// Response to ping.
+message SystemPingResponse {
+    // API version.
+    string api_version = 1;
+    // Build version.
+    string build_version = 2;
+}
+
+// Request to get events.
+message EventsRequest {
+    // Only events since this timestamp (Unix seconds).
+    int64 since = 1;
+    // Only events until this timestamp (Unix seconds).
+    int64 until = 2;
+    // Filters.
+    map<string, string> filters = 3;
+}
+
+// System event.
+message Event {
+    // Event type (container, image, network, volume, daemon).
+    string type = 1;
+    // Action (create, start, stop, die, destroy, etc.).
+    string action = 2;
+    // Actor that generated the event.
+    EventActor actor = 3;
+    // Timestamp (Unix nanoseconds).
+    int64 time_nano = 4;
+}
+
+// Event actor.
+message EventActor {
+    // ID of the object.
+    string id = 1;
+    // Attributes.
+    map<string, string> attributes = 2;
+}
+
+// Request to prune resources.
+message PruneRequest {
+    // Types to prune: containers, images, networks, volumes, all.
+    repeated string types = 1;
+    // Remove all unused resources, not just dangling ones.
+    bool all = 2;
+    // Filters.
+    map<string, string> filters = 3;
+}
+
+// Response to prune.
+message PruneResponse {
+    // Space reclaimed in bytes.
+    uint64 space_reclaimed = 1;
+    // Deleted containers.
+    repeated string containers_deleted = 2;
+    // Deleted images.
+    repeated string images_deleted = 3;
+    // Deleted networks.
+    repeated string networks_deleted = 4;
+    // Deleted volumes.
+    repeated string volumes_deleted = 5;
+}
+
+// =============================================================================
+// Icon Service
+// =============================================================================
+
+// IconService provides container image icon lookups.
+service IconService {
+    // Gets the icon URL for a container image reference.
+    rpc GetImageIcon(GetImageIconRequest) returns (GetImageIconResponse);
+}
+
+// Request to get the icon URL for a container image.
+message GetImageIconRequest {
+    // Fully qualified image name (e.g., "nginx", "localstack/localstack", "ghcr.io/astral-sh/uv").
+    string fqin = 1;
+}
+
+// Response containing the icon URL.
+message GetImageIconResponse {
+    // Icon URL, empty if not found.
+    string url = 1;
+    // Icon source (e.g., "docker_hub_logo", "docker_official_image", "ghcr_avatar").
+    string source = 2;
+}
+
+// =============================================================================
+// Volume Service
+// =============================================================================
+
+// VolumeService manages Docker volumes.
+service VolumeService {
+    // Creates a volume.
+    rpc Create(CreateVolumeRequest) returns (CreateVolumeResponse);
+
+    // Removes a volume.
+    rpc Remove(RemoveVolumeRequest) returns (Empty);
+
+    // Lists volumes.
+    rpc List(ListVolumesRequest) returns (ListVolumesResponse);
+
+    // Inspects a volume.
+    rpc Inspect(InspectVolumeRequest) returns (VolumeInfo);
+}
+
+// Request to create a volume.
+message CreateVolumeRequest {
+    // Volume name.
+    string name = 1;
+    // Driver name.
+    string driver = 2;
+    // Driver options.
+    map<string, string> driver_opts = 3;
+    // Labels.
+    map<string, string> labels = 4;
+}
+
+// Response to create volume.
+message CreateVolumeResponse {
+    // Volume name.
+    string name = 1;
+    // Driver.
+    string driver = 2;
+    // Mountpoint.
+    string mountpoint = 3;
+}
+
+// Request to remove a volume.
+message RemoveVolumeRequest {
+    // Volume name.
+    string name = 1;
+    // Force removal.
+    bool force = 2;
+}
+
+// Request to list volumes.
+message ListVolumesRequest {
+    // Filters.
+    map<string, string> filters = 1;
+}
+
+// Response to list volumes.
+message ListVolumesResponse {
+    // List of volumes.
+    repeated VolumeInfo volumes = 1;
+    // Warnings.
+    repeated string warnings = 2;
+}
+
+// Request to inspect a volume.
+message InspectVolumeRequest {
+    // Volume name.
+    string name = 1;
+}
+
+// Volume information.
+message VolumeInfo {
+    // Volume name.
+    string name = 1;
+    // Driver.
+    string driver = 2;
+    // Mountpoint.
+    string mountpoint = 3;
+    // Created timestamp (RFC3339).
+    string created = 4;
+    // Status.
+    map<string, string> status = 5;
+    // Labels.
+    map<string, string> labels = 6;
+    // Scope (local, global).
+    string scope = 7;
+    // Driver options.
+    map<string, string> options = 8;
+    // Usage data.
+    VolumeUsage usage = 9;
+}
+
+// Volume usage data.
+message VolumeUsage {
+    // Size in bytes.
+    int64 size = 1;
+    // Reference count.
+    int64 ref_count = 2;
+}
+
+// =============================================================================
+// Migration Service
+// =============================================================================
+
+// MigrationService plans and runs host-side runtime migrations.
+service MigrationService {
+    // Prepares a migration plan for a supported external runtime.
+    rpc PrepareMigration(PrepareMigrationRequest) returns (PrepareMigrationResponse);
+
+    // Runs a prepared migration plan and streams execution progress. Repeating
+    // the same request attaches to the existing run and replays its latest
+    // progress or terminal result.
+    rpc RunMigration(RunMigrationRequest) returns (stream RunMigrationEvent);
+}
+
+// Request to prepare a migration.
+message PrepareMigrationRequest {
+    // Stable source runtime identifier (for example, "docker-desktop" or "orbstack").
+    string source_kind = 1;
+    // Optional override for the source Docker-compatible socket path.
+    string source_socket_path = 2;
+    // Allow prepare to include replace actions in the plan.
+    bool allow_replacements = 3;
+    // Compute and return the plan without storing it. No plan_id is issued, so
+    // the plan cannot subsequently be run.
+    bool dry_run = 4;
+}
+
+// Prepared migration summary.
+message PrepareMigrationResponse {
+    // Opaque identifier for the prepared plan.
+    string plan_id = 1;
+    // Source runtime identifier used for the plan.
+    string source_kind = 2;
+    // Resolved source socket path used for the plan.
+    string source_socket_path = 3;
+    // Number of images included in the plan.
+    uint32 image_count = 4;
+    // Number of volumes included in the plan.
+    uint32 volume_count = 5;
+    // Number of networks included in the plan.
+    uint32 network_count = 6;
+    // Number of containers included in the plan.
+    uint32 container_count = 7;
+    // Whether the plan would replace existing ArcBox resources (images, volumes,
+    // networks, or containers that already exist on the target). When true,
+    // RunMigrationRequest.allow_replacements must be set to confirm.
+    bool replacements_required = 8;
+    // Non-fatal warnings discovered during preparation (for example, volume
+    // blockers that will require stopping running source containers, or bind
+    // mount sources that do not exist on this host).
+    repeated string warnings = 9;
+    // The full migration plan, populated only when the request set `dry_run`.
+    // The plan carries each container's environment verbatim, so it is sent
+    // only when a caller explicitly asked to inspect it rather than on every
+    // prepare.
+    MigrationPlan plan = 10;
+    // Source resources this migration cannot reproduce. Unlike warnings these
+    // are blocking: RunMigration refuses to execute a plan that has any.
+    repeated string unsupported_resources = 11;
+    // Target resources the prepared plan would replace. Always populated, even
+    // when empty. For a runnable prepare, this describes the saved plan_id.
+    // Clients must compare these targets with the user's confirmation before
+    // RunMigration. An absent summary means the daemon cannot provide this check.
+    MigrationReplacementSummary replacements = 12;
+}
+
+// A fully resolved migration plan.
+//
+// This is the wire projection of the daemon's internal plan, not the plan
+// itself: the daemon's own model makes invalid states unrepresentable (a mount
+// is one of three shapes, a container always has a spec), which protobuf
+// cannot express. Fields here are therefore flatter and more permissive, and
+// the notes on each say which combinations the daemon actually emits.
+message MigrationPlan {
+    // Identity of the source runtime the plan was built from.
+    MigrationSourceInfo source = 1;
+    // Helper image reference used for temporary volume-mount containers.
+    string helper_image = 2;
+    // Images that will be imported into ArcBox.
+    repeated MigrationImagePlan images = 3;
+    // Volumes that will be imported into ArcBox.
+    repeated MigrationVolumePlan volumes = 4;
+    // Networks that will be recreated in ArcBox.
+    repeated MigrationNetworkPlan networks = 5;
+    // Containers that will be recreated in ArcBox, in creation order.
+    repeated MigrationContainerPlan containers = 6;
+    // Resources that are out of scope. Blocking: execution refuses to start
+    // while any are present. Mirrors PrepareMigrationResponse.
+    repeated string unsupported_resources = 7;
+    // Advisory problems that do not block execution.
+    repeated string warnings = 8;
+    // Replace actions that require confirmation.
+    MigrationReplacementSummary replacements = 9;
+    // Source volumes attached to running containers, which must be stopped.
+    repeated MigrationRunningVolumeBlocker blockers = 10;
+}
+
+// Identity of a migration source runtime.
+message MigrationSourceInfo {
+    // Stable source runtime identifier ("docker-desktop" or "orbstack").
+    string kind = 1;
+    // Resolved source Docker Engine socket path.
+    string socket_path = 2;
+    // Docker daemon name reported by the source.
+    string daemon_name = 3;
+    // Server version reported by the source.
+    string server_version = 4;
+    // Operating system reported by the source.
+    string operating_system = 5;
+    // Architecture reported by the source.
+    string architecture = 6;
+}
+
+// One image transfer.
+message MigrationImagePlan {
+    // Source image identifier.
+    string image_id = 1;
+    // Every reference passed to `docker save`. All tags are listed because
+    // `docker save` preserves an image's other tags only when the argument
+    // omits a tag, so exporting one repo:tag would drop the rest. Empty for an
+    // untagged image, which is exported by ID instead.
+    repeated string export_references = 2;
+    // Repo tags recorded by the source daemon.
+    repeated string repo_tags = 3;
+    // Subset of repo_tags that already exist on the target and will be
+    // overwritten.
+    repeated string replace_tags = 4;
+}
+
+// One volume transfer.
+message MigrationVolumePlan {
+    // Source volume name.
+    string name = 1;
+    // Volume driver. Only "local" is supported; anything else is reported as
+    // an unsupported resource.
+    string driver = 2;
+    // Volume labels preserved on recreate.
+    map<string, string> labels = 3;
+    // Driver options preserved on recreate.
+    map<string, string> options = 4;
+    // Whether an existing target volume will be replaced.
+    bool replace_existing = 5;
+    // Source containers referencing this volume.
+    repeated string attached_containers = 6;
+}
+
+// One network recreation.
+message MigrationNetworkPlan {
+    // Source network name.
+    string name = 1;
+    // Source network identifier.
+    string id = 2;
+    // Docker network driver. Only "bridge" is supported; anything else is
+    // reported as an unsupported resource.
+    string driver = 3;
+    // Whether the network is internal.
+    bool internal = 4;
+    // Whether IPv6 is enabled.
+    bool enable_ipv6 = 5;
+    // Whether the network is attachable.
+    bool attachable = 6;
+    // Network labels preserved on recreate.
+    map<string, string> labels = 7;
+    // Network options preserved on recreate.
+    map<string, string> options = 8;
+    // IPAM configuration preserved on recreate.
+    repeated MigrationNetworkIpam ipam = 9;
+    // Whether an existing target network will be replaced.
+    bool replace_existing = 10;
+}
+
+// One IPAM subnet configuration. Unset entries are empty strings.
+message MigrationNetworkIpam {
+    // Subnet CIDR.
+    string subnet = 1;
+    // Gateway address.
+    string gateway = 2;
+    // Allocation range.
+    string ip_range = 3;
+}
+
+// One container recreation.
+message MigrationContainerPlan {
+    // Source container name, without the leading slash.
+    string name = 1;
+    // Source container identifier.
+    string id = 2;
+    // Image reference used when recreating. For an untagged image this is the
+    // source image ID, which the daemon rewrites to the ID the target assigns
+    // on import.
+    string image_reference = 3;
+    // Normalized creation spec. Always set by the daemon.
+    MigrationContainerSpec spec = 4;
+    // Networks joined after create, beyond spec.network_mode. Always empty when
+    // network_mode is HOST, which Docker forbids combining with any attachment.
+    repeated MigrationContainerNetworkAttachment extra_networks = 5;
+    // Whether an existing target container will be replaced.
+    bool replace_existing = 6;
+    // Whether the container was running on the source. Such containers are
+    // started after the migration unless RunMigrationRequest.skip_start is set.
+    bool was_running = 7;
+    // Source creation timestamp, RFC 3339. Containers are ordered by it so the
+    // originals' creation order is reproduced.
+    string created = 8;
+}
+
+// A container creation spec translated from source inspect output.
+//
+// Optional scalars use the empty string or 0 to mean "not set", matching how
+// Docker reports them; the daemon omits the corresponding flag in that case.
+message MigrationContainerSpec {
+    // Hostname; empty when unset.
+    string hostname = 1;
+    // Domain name; empty when unset.
+    string domainname = 2;
+    // User; empty when unset.
+    string user = 3;
+    // Environment variables, verbatim from the source, as KEY=VALUE.
+    repeated string env = 4;
+    // Labels.
+    map<string, string> labels = 5;
+    // Exposed ports, as "port/proto".
+    repeated string exposed_ports = 6;
+    // Whether a TTY is allocated.
+    bool tty = 7;
+    // Whether stdin stays open.
+    bool open_stdin = 8;
+    // Working directory; empty when unset.
+    string working_dir = 9;
+    // Entrypoint argv; empty to inherit the image's.
+    repeated string entrypoint = 10;
+    // Command argv; empty to inherit the image's.
+    repeated string cmd = 11;
+    // Mounts.
+    repeated MigrationContainerMount mounts = 12;
+    // Host port publish rules.
+    repeated MigrationPortPublish publishes = 13;
+    // Restart policy; unset when the source had none.
+    MigrationRestartPolicy restart_policy = 14;
+    // Whether the container is privileged.
+    bool privileged = 15;
+    // Whether the root filesystem is read-only.
+    bool read_only_rootfs = 16;
+    // Extra /etc/hosts entries, as "host:ip".
+    repeated string extra_hosts = 17;
+    // Whether the container is removed on exit.
+    bool auto_remove = 18;
+    // Memory limit in bytes; 0 when unset.
+    int64 memory = 19;
+    // CPU quota in units of 10^-9 CPUs; 0 when unset.
+    int64 nano_cpus = 20;
+    // Added Linux capabilities.
+    repeated string cap_add = 21;
+    // Network joined at create time.
+    MigrationNetworkMode network_mode = 22;
+    // The network joined when network_mode is NAMED; unset for every other
+    // mode. The daemon only emits a network that is part of this migration.
+    MigrationContainerNetworkAttachment named_network = 23;
+}
+
+// The network a container joins at create time.
+//
+// `container:<name|id>` has no member: sharing another container's namespace is
+// rejected during planning rather than reproduced, and appears in
+// unsupported_resources instead.
+enum MigrationNetworkMode {
+    // The default bridge; no network is selected explicitly.
+    MIGRATION_NETWORK_MODE_DEFAULT = 0;
+    // Host networking.
+    MIGRATION_NETWORK_MODE_HOST = 1;
+    // No networking.
+    MIGRATION_NETWORK_MODE_NONE = 2;
+    // A user-defined network, named by
+    // MigrationContainerSpec.named_network.
+    MIGRATION_NETWORK_MODE_NAMED = 3;
+}
+
+// What a mount carries.
+enum MigrationMountType {
+    // Unset; never emitted by the daemon.
+    MIGRATION_MOUNT_TYPE_UNSPECIFIED = 0;
+    // A named volume, migrated with the plan.
+    MIGRATION_MOUNT_TYPE_VOLUME = 1;
+    // A host path, which must already exist on this host.
+    MIGRATION_MOUNT_TYPE_BIND = 2;
+    // A tmpfs.
+    MIGRATION_MOUNT_TYPE_TMPFS = 3;
+}
+
+// One mount. Which fields are meaningful depends on `type`; the daemon leaves
+// the rest at their zero values.
+message MigrationContainerMount {
+    // Mount kind, which selects the meaningful fields below.
+    MigrationMountType type = 1;
+    // Volume name for VOLUME, host path for BIND, empty for TMPFS.
+    string source = 2;
+    // Destination path inside the container. Always set.
+    string target = 3;
+    // Whether the mount is writable. VOLUME and BIND only.
+    bool rw = 4;
+    // Mount options string. TMPFS only, empty when it had none.
+    string options = 5;
+}
+
+// One host port publish rule.
+message MigrationPortPublish {
+    // Port and protocol inside the container, as "port/proto".
+    string container_port = 1;
+    // Host IP to bind; empty to bind every interface.
+    string host_ip = 2;
+    // Host port; empty to let Docker assign one.
+    string host_port = 3;
+}
+
+// A container restart policy.
+message MigrationRestartPolicy {
+    // Policy name, as Docker reports it ("always", "on-failure", ...).
+    string name = 1;
+    // Retry cap for "on-failure"; 0 when unset.
+    int64 maximum_retry_count = 2;
+}
+
+// A network a container joins, with its network-scoped aliases.
+message MigrationContainerNetworkAttachment {
+    // Network name.
+    string network = 1;
+    // Aliases resolvable on that network. The container's own name is excluded,
+    // since Docker registers it automatically.
+    repeated string aliases = 2;
+}
+
+// Existing target resources a plan would replace, all requiring confirmation
+// via RunMigrationRequest.allow_replacements.
+message MigrationReplacementSummary {
+    // Container names that will be removed and recreated.
+    repeated string containers = 1;
+    // Volume names that will be removed and recreated.
+    repeated string volumes = 2;
+    // Network names that will be removed and recreated.
+    repeated string networks = 3;
+    // Image tags that will be overwritten.
+    repeated string image_tags = 4;
+}
+
+// A source volume held open by running containers.
+message MigrationRunningVolumeBlocker {
+    // Source volume name.
+    string volume_name = 1;
+    // Running source containers using it, which the migration stops first.
+    repeated string containers = 2;
+}
+
+// Request to run a prepared migration.
+message RunMigrationRequest {
+    // Opaque identifier returned by PrepareMigration.
+    string plan_id = 1;
+    // Confirms that the caller accepts any replace actions in the plan.
+    bool allow_replacements = 2;
+    // Create containers but leave them stopped. By default containers that were
+    // running on the source are started after the migration completes.
+    bool skip_start = 3;
+}
+
+// Streaming migration progress event.
+message RunMigrationEvent {
+    // Opaque identifier of the plan being executed.
+    string plan_id = 1;
+    // High-level execution phase (for example, "prepare", "images", or "containers").
+    string phase = 2;
+    // Optional resource name currently being processed.
+    string resource = 3;
+    // Human-readable progress detail.
+    string message = 4;
+    // Number of completed work items in the current phase.
+    uint32 completed = 5;
+    // Total work items expected in the current phase.
+    uint32 total = 6;
+    // Indicates that no more events will follow for this run.
+    bool done = 7;
+    // Indicates whether the run completed successfully.
+    bool success = 8;
+    // Non-fatal problems encountered during the run, carried on the terminal
+    // event (for example, a container that migrated but did not start). These
+    // do not make the run a failure, so `success` stays true; clients should
+    // surface them alongside the result rather than in place of it.
+    repeated string warnings = 9;
+}
+
+// =============================================================================
+// Shell/Interactive Session Types
+// =============================================================================
+
+// Shell input for interactive sessions.
+message ShellInput {
+    // Input data.
+    bytes data = 1;
+    // Resize terminal.
+    TerminalSize resize = 2;
+}
+
+// Shell output for interactive sessions.
+message ShellOutput {
+    // Output data.
+    bytes data = 1;
+    // Exit code (only set when done).
+    int32 exit_code = 2;
+    // Is this the final message.
+    bool done = 3;
+}
+
+// Terminal size.
+message TerminalSize {
+    // Terminal width.
+    uint32 width = 1;
+    // Terminal height.
+    uint32 height = 2;
+}
+
+// =============================================================================
+// Setup Status
+// =============================================================================
+
+// Daemon startup progress and infrastructure health.
+// Allows the desktop app (or any gRPC client) to observe daemon readiness
+// without managing its lifecycle.
+message SetupStatus {
+    // Daemon startup phases.
+    //
+    // Numbers follow the order phases were introduced, NOT the order they
+    // occur in (DOWNLOADING_ASSETS = 8 precedes READY = 6), so match on the
+    // value and never compare ordinals. The happy path is:
+    //
+    //   INITIALIZING -> [CLEANING_UP -> INITIALIZING] -> [DOWNLOADING_ASSETS]
+    //   -> ASSETS_READY -> [VM_STARTING -> VM_READY] -> NETWORK_READY -> READY
+    //
+    // Bracketed steps are conditional: CLEANING_UP only when a displaced
+    // daemon's resources must be released, DOWNLOADING_ASSETS only when boot
+    // assets are missing, and the VM pair only when the Linux VM is enabled
+    // (a --no-linux-vm daemon boots no guest and publishes neither). FAILED
+    // can replace any of them. A phase already passed before a client
+    // subscribes is simply never seen, so treat an unobserved phase as
+    // unknown rather than waiting for it.
+    enum Phase {
+        PHASE_UNSPECIFIED = 0;
+        // Host directories, config, and sockets are being prepared.
+        INITIALIZING = 1;
+        // Kernel, rootfs, and guest binaries are present and verified.
+        ASSETS_READY = 2;
+        // The System VM is booting. Guest binaries are already staged by
+        // this point, so the phase covers the guest boot and nothing else.
+        VM_STARTING = 3;
+        // The System VM booted and its guest agent answered, so the VM
+        // accepts commands. Its container runtime may still be starting.
+        VM_READY = 4;
+        // The host services this daemon promises are up: DNS and, with a Linux
+        // VM, Docker plus any explicitly requested Kubernetes proxy are bound.
+        // The canonical best-effort 16443 proxy remains the exception: a port
+        // conflict leaves Kubernetes RPCs unavailable but does not fail startup.
+        NETWORK_READY = 5;
+        // Startup complete.
+        READY = 6;
+        // Reserved; never published.
+        DEGRADED = 7;
+        // Boot assets are being downloaded.
+        DOWNLOADING_ASSETS = 8;
+        // Waiting for a displaced daemon to release its disk images.
+        CLEANING_UP = 9;
+        // Startup failed fatally; the daemon exits shortly after
+        // publishing this phase. See the `error` field for the cause.
+        FAILED = 10;
+    }
+
+    // Current daemon phase.
+    Phase phase = 1;
+    // Whether the DNS resolver file is installed.
+    bool dns_resolver_installed = 2;
+    // Whether /var/run/docker.sock is symlinked to ArcBox.
+    bool docker_socket_linked = 3;
+    // Whether the container subnet route is installed.
+    bool route_installed = 4;
+    // Whether the System VM is up with its guest agent answering — the point
+    // at which RPCs against it succeed. Mirrors the VM's lifecycle state for
+    // the daemon's whole life, so it falls on a lifecycle-managed stop (idle
+    // stop, backend switch, shutdown) and rises again on the next boot. A
+    // guest that dies without the lifecycle noticing keeps it true: there is
+    // no crash detection yet, so treat it as "the daemon believes the VM is
+    // up", not as a liveness probe.
+    bool vm_running = 5;
+    // Human-readable status message.
+    string message = 6;
+    // Whether Docker CLI tools are installed.
+    bool docker_tools_installed = 7;
+    // Fatal startup error description. Set only when phase == FAILED,
+    // so streaming clients learn the cause instead of seeing a bare
+    // disconnect when the daemon exits.
+    string error = 8;
+    // Independent of startup phase and daemon liveness. Missing when the
+    // guest is stopped, observation disconnected, or the agent is too old.
+    StorageHealth storage_health = 9;
+    // Current or most recent recovery operation, including terminal results.
+    StorageRecoveryProgress storage_recovery = 10;
+}
+
+// Explicitly starts a storage check or recovery. Both actions stop workloads.
+message RecoverStorageRequest {
+    enum Action {
+        ACTION_UNSPECIFIED = 0;
+        // Preserve and check the disks. Leave the System VM stopped.
+        CHECK_ONLY = 1;
+        // Restart only after offline checks pass, then verify runtime writes.
+        RECOVER = 2;
+    }
+    Action action = 1;
+}
+
+// Progress of one daemon-owned recovery operation.
+message StorageRecoveryProgress {
+    enum Phase {
+        PHASE_UNSPECIFIED = 0;
+        STOPPING = 1;
+        PRESERVING = 2;
+        CHECKING = 3;
+        RESTARTING = 4;
+        VERIFYING = 5;
+        COMPLETE = 6;
+        FAILED = 7;
+    }
+    Phase phase = 1;
+    string message = 2;
+    // Host directory containing preserved disks and diagnostic reports.
+    string recovery_directory = 3;
+    // Stable across reconnects. A terminal result applies only to this ID.
+    string operation_id = 4;
+    // Remains true after CHECK_ONLY, failure, or interruption. Only verified recovery clears it.
+    bool storage_protected = 5;
+}

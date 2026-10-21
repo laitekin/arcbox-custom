@@ -1,0 +1,98 @@
+name: Release Please
+
+on:
+  push:
+    branches:
+      - master
+  # A release PR that goes stale has no other way back. release-please only
+  # rewrites a component's PR when that component gets new commits, so one
+  # release PR merging can leave a sibling conflicted on
+  # `.release-please-manifest.json` with nothing to un-stick it — the fix is
+  # to close the stale PR and have release-please rebuild it, which without
+  # this needs an unrelated push to master to happen first. `release.yml`
+  # carries the same escape hatch for the same reason.
+  workflow_dispatch:
+
+jobs:
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          token: ${{ steps.app-token.outputs.token }}
+
+      # uv, for the sdk/python lockfile refresh in the next step. Pinned so
+      # the job that pushes to release branches fetches nothing mutable.
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.1"
+
+      # Regenerate the lockfiles on every open release PR so its release tag
+      # can build with --locked. Two of them: Cargo.lock carries every
+      # workspace member's version, and sdk/python/uv.lock carries the root
+      # `arcbox` version that release-please bumps in pyproject.toml.
+      # Neither updater touches its own lockfile, so without this the tagged
+      # tree is rejected by --locked and the release never reaches publish.
+      # The release-please `prs` output only
+      # includes PRs created or updated during the current run. Discovery
+      # must use the REST list endpoint with client-side label filtering:
+      # a label-filtered `gh pr list` routes through the eventually
+      # consistent search API and misses PRs release-please created
+      # seconds earlier in this same run.
+      - name: Update lockfiles on release PRs
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git config --global user.name "arcbox-labs[bot]"
+          git config --global user.email "254083426+arcbox-labs[bot]@users.noreply.github.com"
+          # Filter on the default branch, not the ref this run started from.
+          # release-please takes no `target-branch`, so it always builds its
+          # PRs against the default branch — but a `workflow_dispatch` can run
+          # from any ref, and `GITHUB_REF_NAME` would then match no PR at all.
+          # The step would find nothing, skip silently, and leave the release
+          # PR with a stale lockfile that fails --locked at tag time.
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?base=${DEFAULT_BRANCH}&state=open&per_page=100" |
+          jq -c '.[]
+            | select(any(.labels[]; .name == "autorelease: pending"))
+            | {number, headRefName: .head.ref}' |
+          while read -r pr; do
+            PR_BRANCH=$(jq -r '.headRefName' <<< "$pr")
+            PR_NUMBER=$(jq -r '.number' <<< "$pr")
+            echo "::group::Update lockfiles for PR #${PR_NUMBER} (${PR_BRANCH})"
+            workdir=$(mktemp -d)
+            git clone --depth 1 --branch "$PR_BRANCH" \
+              "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" "$workdir"
+            (
+              cd "$workdir"
+              cargo update --workspace
+              # Plain `uv lock` (never --upgrade): with no dependency edits
+              # it rewrites only the root version line release-please moved.
+              (cd sdk/python && uv lock)
+              if git diff --quiet Cargo.lock sdk/python/uv.lock; then
+                echo "lockfiles already up to date"
+              else
+                git add Cargo.lock sdk/python/uv.lock
+                git commit -m "chore: update lockfiles for release"
+                git push
+              fi
+            )
+            rm -rf "$workdir"
+            echo "::endgroup::"
+          done
+
+  # The arcbox-desktop bump used to be dispatched from here, on release_created.
+  # It now lives in Release Build's `update-desktop`, which waits for the
+  # binaries to be attached — a tag alone is not something desktop can build
+  # against. See that job for why.

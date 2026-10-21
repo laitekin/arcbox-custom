@@ -1,0 +1,380 @@
+name: "Test: VM (Linux)"
+
+on:
+  push:
+    branches: [master, develop]
+    paths:
+      - "guest/arcbox-agent/**"
+      - "computer/arcbox-computer-runtime/**"
+      - "virt/arcbox-tap-net/**"
+      - "virt/arcbox-vm-proto/**"
+      - "virt/arcbox-vm-driver/**"
+      - "virt/arcbox-fc-driver/**"
+      - "virt/arcbox-vm-agent/**"
+      # The snapshot catalog and the device-mapper CoW manager moved out of
+      # arcbox-computer-runtime; this suite is still the only one that drives
+      # dmsetup and thin pools on real KVM, so it has to follow them.
+      - "engine/arcbox-snapshot/**"
+      - "common/arcbox-atomic-file/**"
+      - "common/arcbox-storage/**"
+      - "common/arcbox-constants/**"
+      - "rpc/arcbox-protocol/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/test-vm-linux.yml"
+  pull_request:
+    branches: [master, develop]
+    paths:
+      - "guest/arcbox-agent/**"
+      - "computer/arcbox-computer-runtime/**"
+      - "virt/arcbox-tap-net/**"
+      - "virt/arcbox-vm-proto/**"
+      - "virt/arcbox-vm-driver/**"
+      - "virt/arcbox-fc-driver/**"
+      - "virt/arcbox-vm-agent/**"
+      # The snapshot catalog and the device-mapper CoW manager moved out of
+      # arcbox-computer-runtime; this suite is still the only one that drives
+      # dmsetup and thin pools on real KVM, so it has to follow them.
+      - "engine/arcbox-snapshot/**"
+      - "common/arcbox-atomic-file/**"
+      - "common/arcbox-storage/**"
+      - "common/arcbox-constants/**"
+      - "rpc/arcbox-protocol/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/test-vm-linux.yml"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # Firecracker CI assets (S3 bucket: spec.ccfc.min)
+  FC_S3_BASE: https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci
+  FC_S3_DIR: v1.10
+  FC_VERSION: v1.10.1
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: unit tests — no KVM, no root required
+  # ---------------------------------------------------------------------------
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: linux-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: linux-cargo-
+
+      - name: Check formatting
+        run: cargo fmt -p arcbox-computer-runtime -p arcbox-vm-proto -p arcbox-vm-driver -p arcbox-fc-driver -p arcbox-tap-net -p arcbox-vm-agent -p arcbox-snapshot --check
+
+      - name: Clippy
+        run: cargo clippy -p arcbox-computer-runtime -p arcbox-vm-proto -p arcbox-vm-driver -p arcbox-fc-driver -p arcbox-tap-net -p arcbox-vm-agent -p arcbox-snapshot -p arcbox-storage -- -D warnings
+
+      - name: Check registry image feature
+        run: cargo check -p arcbox-computer-runtime --features remote-image --all-targets
+
+      - name: Unit tests
+        # --bins covers the vm-agent guest handlers, whose tests are
+        # target_os = "linux" and never run under the macOS workspace job.
+        #
+        # The macOS workspace job excludes arcbox-agent, and its guest
+        # implementation is Linux-only. --bins includes test modules
+        # declared only by main.rs; --lib alone cannot run those tests.
+        #
+        # The crate is deliberately NOT in the clippy step above: it
+        # carries a pre-existing pedantic backlog no gate has ever caught,
+        # and -D warnings on it would fail this job for reasons unrelated
+        # to the change under test (see guest/AGENTS.md).
+        run: cargo test --lib --bins -p arcbox-computer-runtime -p arcbox-vm-proto -p arcbox-vm-driver -p arcbox-fc-driver -p arcbox-tap-net -p arcbox-vm-agent -p arcbox-snapshot -p arcbox-storage -p arcbox-agent
+
+      - name: Manager lifecycle over the fakes
+        # The manager's own flows (create, boot, exec, files, pause, resume,
+        # checkpoint, restore, expiry, remove, adoption) over the driver,
+        # network and agent fakes: no KVM, no root, no Firecracker, so it
+        # belongs in this unprivileged job. Named because the target is new
+        # — `--lib --bins` above does not pick it up, and these tests used
+        # to run here as library tests.
+        run: cargo test -p arcbox-computer-runtime --test manager_over_fakes
+
+      - name: Container DNS aliases over the public API
+        # Compose-alias extraction, driven through `arcbox_agent::dns`
+        # rather than from inside the crate. Named for the same reason as
+        # the step above: `--lib --bins` selects no `--test` targets, so an
+        # integration target has to be asked for by name or it runs
+        # nowhere. Pure string handling — no KVM, no root, no Firecracker.
+        #
+        # The crate's other unprivileged `--test` target,
+        # port_forward_cleanup, re-includes
+        # src/agent/linux/port_forward.rs by #[path]. On Linux, `--bins`
+        # above already runs those tests. The remaining two (sandbox_manager_e2e,
+        # sandbox_service_manager) need root + KVM + Firecracker and belong
+        # to the jobs below.
+        run: cargo test -p arcbox-agent --test dns_aliases
+
+  # ---------------------------------------------------------------------------
+  # Job 2: integration tests — requires root (TAP interface creation)
+  # ---------------------------------------------------------------------------
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: linux-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: linux-cargo-
+
+      # BusyBox's losetup has no long options; the loop-attach code drives
+      # it as `losetup -f` then `losetup LOOPDEV FILE`, and the only honest
+      # check is a real busybox. Ubuntu's 1.30 has the same option surface
+      # as the System VM's, so it exercises the same path
+      # (block_tools::busybox_attach_report_and_detach). Its util-linux
+      # sibling needs no install: that is what ubuntu's own /usr/sbin is.
+      #
+      # nftables is the compute node's netfilter userland (PLAT-191) and is
+      # not in the runner image. ubuntu-22.04 ships nft 1.0.2, an older
+      # floor than Debian 12's 1.0.6, so the JSON listing the teardown reads
+      # is proven below the version the target platform has.
+      - name: Install busybox and nftables
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y busybox-static nftables
+
+      - name: Build test binary
+        run: cargo test --test integration -p arcbox-computer-runtime -p arcbox-tap-net --no-run
+
+      # ARCBOX_REQUIRE_BLOCK_TOOLS / ARCBOX_REQUIRE_NFT: this runner has
+      # busybox and nftables (installed above) and util-linux (stock
+      # ubuntu), so those tests must run rather than skip — otherwise a
+      # regression in a discovery probe silently takes its own coverage
+      # with it.
+      - name: Run integration tests (as root for TAP creation and loop devices)
+        run: sudo env PATH="$PATH" HOME="$HOME" ARCBOX_REQUIRE_BLOCK_TOOLS=1 ARCBOX_REQUIRE_NFT=1 cargo test --test integration -p arcbox-computer-runtime -p arcbox-tap-net
+
+  # ---------------------------------------------------------------------------
+  # Job 3: E2E tests — requires KVM + root + Firecracker assets
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: E2E tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: linux-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: linux-cargo-
+
+      - name: Enable KVM access
+        run: sudo chmod 666 /dev/kvm
+
+      - name: Check nested KVM support
+        run: |
+          echo "=== CPU virt flags ==="
+          grep -m1 -oE 'vmx|svm' /proc/cpuinfo || echo "no vmx/svm"
+          echo "=== Nested KVM param ==="
+          cat /sys/module/kvm_intel/parameters/nested 2>/dev/null \
+            || cat /sys/module/kvm_amd/parameters/nested 2>/dev/null \
+            || echo "nested param not found"
+          echo "=== Hypervisor type ==="
+          systemd-detect-virt || true
+
+      - name: Check vsock support
+        run: |
+          echo "=== /dev/vsock ==="
+          ls -l /dev/vsock 2>/dev/null || echo "/dev/vsock missing"
+          echo "=== vsock modules ==="
+          lsmod | grep -E '(^vsock|vhost_vsock|vmw_vsock_virtio_transport)' || echo "no vsock-related modules loaded"
+          sudo modprobe vsock || true
+          sudo modprobe vhost_vsock || true
+          sudo modprobe vmw_vsock_virtio_transport || true
+          echo "=== vsock modules after modprobe ==="
+          lsmod | grep -E '(^vsock|vhost_vsock|vmw_vsock_virtio_transport)' || echo "still no vsock-related modules"
+          echo "=== Python AF_VSOCK probe ==="
+          python3 - <<'PY'
+          import socket
+          if not hasattr(socket, "AF_VSOCK"):
+              print("AF_VSOCK not exposed by Python socket module")
+              raise SystemExit(0)
+          try:
+              s = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM)
+              s.close()
+              print("AF_VSOCK socket() succeeded")
+          except OSError as e:
+              print(f"AF_VSOCK socket() failed: {e}")
+          PY
+
+      - name: Install Firecracker and jailer via firecracker.sh
+        run: |
+          mkdir -p /tmp/fc-assets
+          if ! curl -fsSL https://arcbox.sh/firecracker.sh | bash -s -- install --version "${FC_VERSION}" --prefix /tmp/fc-assets; then
+            echo "Version ${FC_VERSION} unavailable, falling back to latest"
+            curl -fsSL https://arcbox.sh/firecracker.sh | bash -s -- install --prefix /tmp/fc-assets
+          fi
+
+          file /tmp/fc-assets/firecracker
+          /tmp/fc-assets/firecracker --version
+
+      - name: Download kernel/rootfs assets from S3
+        run: |
+          BASE="${FC_S3_BASE}/${FC_S3_DIR}/x86_64"
+          curl -sL "$BASE/vmlinux-6.1.102"              -o /tmp/fc-assets/vmlinux
+          curl -sL "$BASE/ubuntu-22.04.ext4"            -o /tmp/fc-assets/rootfs-base.ext4
+
+      - name: Build vm-agent (Linux x86_64)
+        run: cargo build -p arcbox-vm-agent --bin vm-agent --release
+
+      - name: Inject vm-agent into rootfs
+        run: |
+          cp /tmp/fc-assets/rootfs-base.ext4 /tmp/fc-assets/rootfs.ext4
+          sudo e2fsck -f -y /tmp/fc-assets/rootfs.ext4 || true
+          sudo resize2fs /tmp/fc-assets/rootfs.ext4 512M
+          mkdir -p /tmp/fc-mnt
+          sudo mount -o loop /tmp/fc-assets/rootfs.ext4 /tmp/fc-mnt
+          sudo cp target/release/vm-agent /tmp/fc-mnt/sbin/vm-agent
+          sudo chmod +x /tmp/fc-mnt/sbin/vm-agent
+          sudo umount /tmp/fc-mnt
+
+      # The suite lives in the composition root: it builds its manager
+      # through `arcbox_agent::sandbox::node_environment`, the same
+      # function the guest agent's SandboxService uses.
+      - name: Run E2E tests (as root, one at a time)
+        env:
+          FC_BINARY: /tmp/fc-assets/firecracker
+          FC_JAILER: /tmp/fc-assets/jailer
+          FC_KERNEL: /tmp/fc-assets/vmlinux
+          FC_ROOTFS: /tmp/fc-assets/rootfs.ext4
+        run: |
+          sudo env PATH="$PATH" HOME="$HOME" \
+            FC_BINARY="$FC_BINARY" FC_JAILER="$FC_JAILER" \
+            FC_KERNEL="$FC_KERNEL" FC_ROOTFS="$FC_ROOTFS" \
+            cargo test --test sandbox_manager_e2e -p arcbox-agent \
+            -- --include-ignored --test-threads=1
+
+      # The port's driver contract against the real Firecracker: directly,
+      # and under the jailer firecracker.sh installed next to it.
+      - name: Run the driver contract against Firecracker (direct and jailer)
+        env:
+          FC_BINARY: /tmp/fc-assets/firecracker
+          FC_JAILER: /tmp/fc-assets/jailer
+          FC_KERNEL: /tmp/fc-assets/vmlinux
+          FC_ROOTFS: /tmp/fc-assets/rootfs.ext4
+        run: |
+          sudo env PATH="$PATH" HOME="$HOME" \
+            FC_BINARY="$FC_BINARY" FC_JAILER="$FC_JAILER" \
+            FC_KERNEL="$FC_KERNEL" FC_ROOTFS="$FC_ROOTFS" \
+            cargo test --test contract -p arcbox-fc-driver \
+            -- --include-ignored --test-threads=1
+
+  # ---------------------------------------------------------------------------
+  # Job 4: agent smoke — SandboxService integration (requires KVM + root + Firecracker + protoc)
+  # ---------------------------------------------------------------------------
+  agent-smoke:
+    name: SandboxService -> SandboxManager integration
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: linux-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: linux-cargo-
+
+      - name: Enable KVM access
+        run: sudo chmod 666 /dev/kvm
+
+      - name: Install Firecracker and jailer via firecracker.sh
+        run: |
+          mkdir -p /tmp/fc-assets
+          if ! curl -fsSL https://arcbox.sh/firecracker.sh | bash -s -- install --version "${FC_VERSION}" --prefix /tmp/fc-assets; then
+            echo "Version ${FC_VERSION} unavailable, falling back to latest"
+            curl -fsSL https://arcbox.sh/firecracker.sh | bash -s -- install --prefix /tmp/fc-assets
+          fi
+
+          file /tmp/fc-assets/firecracker
+          /tmp/fc-assets/firecracker --version
+
+      - name: Download kernel/rootfs assets from S3
+        run: |
+          BASE="${FC_S3_BASE}/${FC_S3_DIR}/x86_64"
+          curl -sL "$BASE/vmlinux-6.1.102"              -o /tmp/fc-assets/vmlinux
+          curl -sL "$BASE/ubuntu-22.04.ext4"            -o /tmp/fc-assets/rootfs-base.ext4
+
+      - name: Build binaries
+        run: |
+          cargo build -p arcbox-vm-agent --bin vm-agent --release
+          cargo test -p arcbox-agent --test sandbox_service_manager --no-run
+
+      - name: Inject vm-agent into rootfs
+        run: |
+          cp /tmp/fc-assets/rootfs-base.ext4 /tmp/fc-assets/rootfs.ext4
+          sudo e2fsck -f -y /tmp/fc-assets/rootfs.ext4 || true
+          sudo resize2fs /tmp/fc-assets/rootfs.ext4 512M
+          mkdir -p /tmp/fc-mnt
+          sudo mount -o loop /tmp/fc-assets/rootfs.ext4 /tmp/fc-mnt
+          sudo cp target/release/vm-agent /tmp/fc-mnt/sbin/vm-agent
+          sudo chmod +x /tmp/fc-mnt/sbin/vm-agent
+          sudo umount /tmp/fc-mnt
+
+      - name: Run integration test (as root)
+        run: |
+          sudo env \
+            PATH="$PATH" \
+            HOME="$HOME" \
+            FC_BINARY=/tmp/fc-assets/firecracker \
+            FC_KERNEL=/tmp/fc-assets/vmlinux \
+            FC_ROOTFS=/tmp/fc-assets/rootfs.ext4 \
+            RUST_LOG=arcbox_agent=info \
+            cargo test -p arcbox-agent --test sandbox_service_manager -- --ignored --test-threads=1

@@ -1,0 +1,1092 @@
+//! System initialization for PID 1 agent.
+//!
+//! When the agent runs as PID 1 (EROFS boot path), the busybox trampoline has
+//! already mounted /proc, /sys, /dev (devtmpfs), and /arcbox (VirtioFS).
+//!
+//! This module sets up everything else: writable tmpfs layers over the read-only
+//! EROFS rootfs, populates /etc, mounts pseudo-filesystems, and configures networking.
+//!
+//! All operations are idempotent and best-effort — failures are logged but do not
+//! abort, since PID 1 must not exit.
+
+#[cfg(target_os = "linux")]
+mod platform {
+    use std::fs;
+    use std::os::unix::fs as unix_fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::CommandExt;
+    use std::path::Path;
+    use std::process::{Command, Stdio};
+    use std::time::Duration;
+
+    use arcbox_constants::cmdline::{AGENT_DHCP_ROUTE_PROTO, MACHINE_NAME_KEY};
+    use arcbox_constants::paths::JAILER_CHROOT_BASE;
+    use nix::mount::{MsFlags, mount};
+    use nix::sys::resource::{Resource, setrlimit};
+    use wait_timeout::ChildExt;
+
+    /// Prepares only volatile scratch space for the offline diagnostic agent.
+    pub fn init_recovery_system() {
+        for target in ["/tmp", "/run", "/var", "/etc"] {
+            mount_tmpfs(target);
+        }
+        mount_devpts();
+        mount_shm();
+        tracing::info!("storage recovery initialization complete; data devices remain unmounted");
+    }
+
+    /// Runs one-time system initialization after trampoline hands off to agent.
+    ///
+    /// Trampoline already mounted: /proc, /sys, /dev, /arcbox (VirtioFS).
+    /// EROFS rootfs is purely structural. All writable state goes on tmpfs.
+    pub fn init_system() {
+        // Raise file descriptor limits before spawning any children so that
+        // containerd, dockerd, and all containers inherit a high ceiling.
+        // Docker Desktop and OrbStack both set 1048576 in their guest VMs.
+        raise_fd_limits();
+
+        // Mount host /private for macOS symlink targets (/tmp, /var/folders).
+        // Must come before tmpfs mounts so /private is available as a VirtioFS
+        // target. Guest /tmp and /var remain isolated tmpfs.
+        mount_virtiofs_optional(
+            arcbox_constants::virtiofs::TAG_PRIVATE,
+            arcbox_constants::virtiofs::MOUNT_PRIVATE,
+        );
+
+        // Writable layers on top of read-only EROFS.
+        mount_tmpfs("/tmp");
+        mount_tmpfs("/run");
+        mount_tmpfs("/var");
+        mount_tmpfs("/etc");
+
+        // The Firecracker jailer mknods a block device for the rootfs
+        // inside its chroot under JAILER_CHROOT_BASE. That requires a
+        // filesystem mounted without `nodev`. Mount only the jailer
+        // subtree as a separate dev-allowing tmpfs to keep the rest of
+        // /var with the default safer flags. The base is the one the
+        // sandbox config names, so the two cannot drift: a jail staged
+        // somewhere this never mounted would fail its `mknod`, and one
+        // mounted where no jail is staged would waste the mount.
+        mkdir_p(JAILER_CHROOT_BASE);
+        mount_tmpfs_dev(JAILER_CHROOT_BASE);
+
+        // Populate /etc with files containerd/dockerd expect.
+        write_etc_resolv_conf();
+        write_etc_hosts();
+        write_etc_passwd();
+        write_etc_group();
+        write_docker_daemon_config();
+
+        // TLS CA certificates: EROFS has /cacerts/ca-certificates.crt.
+        // Symlink into tmpfs /etc so programs find it at the standard path.
+        mkdir_p("/etc/ssl/certs");
+        symlink_if_source_exists(
+            "/cacerts/ca-certificates.crt",
+            "/etc/ssl/certs/ca-certificates.crt",
+        );
+
+        // Writable subdirectories under /var.
+        mkdir_p("/var/lib/docker");
+        mkdir_p("/var/run/docker");
+        mkdir_p("/run/containerd");
+
+        // Pseudo-filesystems.
+        mount_cgroup2();
+        mount_devpts();
+        mount_shm();
+
+        // Virtualization.framework does not expose complete CPU cache topology
+        // in sysfs — `size`, `coherency_line_size`, and `number_of_sets` are
+        // missing. The Firecracker jailer reads these files before chrooting
+        // and panics when they are absent. Synthesise them via bind mounts so
+        // that jailer mode works inside this VM.
+        ensure_cpu_cache_topology();
+
+        // Network.
+        setup_networking();
+
+        // Optional host /Users share (non-fatal if not configured).
+        mount_virtiofs_optional(
+            arcbox_constants::virtiofs::TAG_USERS,
+            arcbox_constants::virtiofs::MOUNT_USERS,
+        );
+
+        // Optional DAX fixture share for the hv_e2e harness. Mounted under
+        // `/run/arcbox-dax` because `/` is read-only EROFS — mkdir_p on a
+        // top-level path fails with EROFS. `/run` is tmpfs, created above.
+        // `dax=always` makes FUSE_SETUPMAPPING fire on every read,
+        // exercising the stage-2 mmap fast path end-to-end.
+        // Production VMs never attach this tag; the mount is a debug-level
+        // no-op when the share is absent.
+        mount_virtiofs_optional_dax("arcbox-dax", "/run/arcbox-dax");
+
+        // Rosetta x86_64 translation (Apple Silicon only).
+        // The host attaches a VirtioFS share containing the Rosetta binary.
+        // We mount it and register via binfmt_misc so x86_64 ELF binaries
+        // are transparently translated at near-native speed.
+        setup_rosetta();
+
+        tracing::info!("PID 1 system initialization complete");
+    }
+
+    /// Raises process file descriptor limits so that containerd, dockerd, and
+    /// all containers inherit a sufficiently high ceiling.
+    ///
+    /// Without this, PID 1 inherits the kernel default (soft=1024, hard=4096)
+    /// and containers that need `ulimit -n` > 4096 fail with EINVAL.
+    fn raise_fd_limits() {
+        // Ensure the kernel ceiling (fs.nr_open) is at least the target.
+        // The default is already 1048576, but guard against custom kernels.
+        ensure_sysctl_at_least("/proc/sys/fs/nr_open", crate::docker_config::NOFILE_LIMIT);
+
+        // Only raise — never lower a previously higher inherited limit.
+        let target = crate::docker_config::NOFILE_LIMIT;
+        match nix::sys::resource::getrlimit(Resource::RLIMIT_NOFILE) {
+            Ok((soft, hard)) if soft >= target && hard >= target => {}
+            _ => {
+                if let Err(e) = setrlimit(Resource::RLIMIT_NOFILE, target, target) {
+                    tracing::warn!(error = %e, "failed to raise RLIMIT_NOFILE");
+                }
+            }
+        }
+    }
+
+    /// Writes `value` to a sysctl path only if the current value is lower.
+    fn ensure_sysctl_at_least(path: &str, target: u64) {
+        let current = fs::read_to_string(path)
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or(0);
+        if current < target {
+            if let Err(e) = fs::write(path, format!("{target}\n")) {
+                tracing::warn!(path, error = %e, "failed to raise sysctl");
+            }
+        }
+    }
+
+    fn mount_tmpfs(target: &str) {
+        if crate::mount::is_mounted(target) {
+            return;
+        }
+        // Ensure mount point exists — EROFS may not have /etc or /var.
+        mkdir_p(target);
+        if let Err(e) = mount(
+            Some("tmpfs"),
+            target,
+            Some("tmpfs"),
+            MsFlags::MS_NODEV | MsFlags::MS_NOSUID,
+            None::<&str>,
+        ) {
+            tracing::warn!(target, error = %e, "failed to mount tmpfs");
+        }
+    }
+
+    /// Like [`mount_tmpfs`] but without `nodev`, allowing device nodes to be
+    /// opened on this filesystem. Used for the Firecracker jailer subtree
+    /// where the jailer mknods a block device for the rootfs inside its
+    /// chroot.
+    fn mount_tmpfs_dev(target: &str) {
+        if crate::mount::is_mounted(target) {
+            return;
+        }
+        mkdir_p(target);
+        if let Err(e) = mount(
+            Some("tmpfs"),
+            target,
+            Some("tmpfs"),
+            MsFlags::MS_NOSUID,
+            None::<&str>,
+        ) {
+            tracing::warn!(target, error = %e, "failed to mount tmpfs (dev)");
+        }
+    }
+
+    fn mount_cgroup2() {
+        if Path::new("/sys/fs/cgroup/cgroup.controllers").exists() {
+            return;
+        }
+        mkdir_p("/sys/fs/cgroup");
+        if let Err(e) = mount(
+            Some("cgroup2"),
+            "/sys/fs/cgroup",
+            Some("cgroup2"),
+            MsFlags::empty(),
+            None::<&str>,
+        ) {
+            tracing::warn!(error = %e, "failed to mount cgroup2");
+        }
+    }
+
+    fn mount_devpts() {
+        if Path::new("/dev/pts/ptmx").exists() {
+            return;
+        }
+        mkdir_p("/dev/pts");
+        if let Err(e) = mount(
+            Some("devpts"),
+            "/dev/pts",
+            Some("devpts"),
+            MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID,
+            Some("gid=5,mode=0620"),
+        ) {
+            tracing::warn!(error = %e, "failed to mount devpts");
+        }
+    }
+
+    fn mount_shm() {
+        if crate::mount::is_mounted("/dev/shm") {
+            return;
+        }
+        mkdir_p("/dev/shm");
+        if let Err(e) = mount(
+            Some("shm"),
+            "/dev/shm",
+            Some("tmpfs"),
+            MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC,
+            None::<&str>,
+        ) {
+            tracing::warn!(error = %e, "failed to mount /dev/shm");
+        }
+    }
+
+    fn mount_virtiofs_optional(tag: &str, mountpoint: &str) {
+        if crate::mount::is_mounted(mountpoint) {
+            return;
+        }
+        mkdir_p(mountpoint);
+        if let Err(e) = mount(
+            Some(tag),
+            mountpoint,
+            Some("virtiofs"),
+            MsFlags::empty(),
+            None::<&str>,
+        ) {
+            // debug, not warn — this share is optional.
+            tracing::debug!(tag, mountpoint, error = %e, "virtiofs share not available");
+        }
+    }
+
+    /// Like `mount_virtiofs_optional` but passes `dax=always`.
+    ///
+    /// Required for shares whose consumer depends on the FUSE DAX fast path
+    /// firing (e.g. the hv_e2e harness, which asserts `FUSE_SETUPMAPPING`
+    /// counters increment). Still non-fatal when the share is absent, so
+    /// production VMs that don't attach the tag pay only a debug log.
+    ///
+    /// `cache=` is NOT passed here: the Linux 6.12 virtiofs parameter spec
+    /// only accepts `source` and `dax`, so `cache=always` triggers
+    /// `virtiofs: Unknown parameter 'cache'` and the mount fails outright.
+    /// Caching behaviour is inherited from FUSE defaults.
+    fn mount_virtiofs_optional_dax(tag: &str, mountpoint: &str) {
+        if crate::mount::is_mounted(mountpoint) {
+            return;
+        }
+        mkdir_p(mountpoint);
+        if let Err(e) = mount(
+            Some(tag),
+            mountpoint,
+            Some("virtiofs"),
+            MsFlags::empty(),
+            Some("dax=always"),
+        ) {
+            tracing::debug!(tag, mountpoint, error = %e, "virtiofs DAX share not available");
+        }
+    }
+
+    /// Mounts the Rosetta VirtioFS share and registers binfmt_misc for x86_64.
+    ///
+    /// This is a best-effort operation — if the host did not attach a Rosetta
+    /// share (Intel Mac, Rosetta not installed, or config disabled), the
+    /// VirtioFS mount fails silently and we skip registration.
+    fn setup_rosetta() {
+        const ROSETTA_MOUNT: &str = "/media/rosetta";
+        const ROSETTA_TAG: &str = "rosetta";
+        const ROSETTA_BINARY: &str = "/media/rosetta/rosetta";
+
+        // Mount the Rosetta VirtioFS share (skip if already mounted).
+        if !crate::mount::is_mounted(ROSETTA_MOUNT) {
+            mkdir_p(ROSETTA_MOUNT);
+            if let Err(e) = mount(
+                Some(ROSETTA_TAG),
+                ROSETTA_MOUNT,
+                Some("virtiofs"),
+                MsFlags::MS_RDONLY,
+                None::<&str>,
+            ) {
+                tracing::debug!(error = %e, "Rosetta VirtioFS share not available — x86_64 translation disabled");
+                return;
+            }
+        }
+
+        // Verify the Rosetta binary exists in the share.
+        if !Path::new(ROSETTA_BINARY).exists() {
+            tracing::warn!("Rosetta share mounted but binary not found at {ROSETTA_BINARY}");
+            return;
+        }
+
+        // Mount binfmt_misc if not already mounted.
+        if !Path::new("/proc/sys/fs/binfmt_misc/status").exists() {
+            mkdir_p("/proc/sys/fs/binfmt_misc");
+            if let Err(e) = mount(
+                Some("binfmt_misc"),
+                "/proc/sys/fs/binfmt_misc",
+                Some("binfmt_misc"),
+                MsFlags::empty(),
+                None::<&str>,
+            ) {
+                tracing::warn!(error = %e, "failed to mount binfmt_misc — Rosetta registration skipped");
+                return;
+            }
+        }
+
+        // Skip if already registered (idempotent re-entry).
+        if Path::new("/proc/sys/fs/binfmt_misc/rosetta").exists() {
+            tracing::debug!("Rosetta binfmt_misc handler already registered");
+            return;
+        }
+
+        // Register Rosetta as the x86_64 ELF interpreter.
+        //
+        // Magic: 20-byte x86_64 ELF header (EI_CLASS=64, e_machine=EM_X86_64).
+        // Mask: allows both ET_EXEC (0x02) and ET_DYN (0x03) via 0xfe on byte 16.
+        // Flags: C = credentials from binary, F = fix-binary (keep fd open across
+        //        mount namespaces so containers can use Rosetta without mounting it).
+        let registration = format!(
+            ":rosetta:M::\\x7fELF\\x02\\x01\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x02\\x00\\x3e\\x00:\\xff\\xff\\xff\\xff\\xff\\xfe\\xfe\\x00\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xfe\\xff\\xff\\xff:{ROSETTA_BINARY}:CF"
+        );
+
+        match fs::write("/proc/sys/fs/binfmt_misc/register", registration.as_bytes()) {
+            Ok(()) => {
+                tracing::info!("Rosetta x86_64 translation registered via binfmt_misc");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to register Rosetta binfmt_misc handler");
+            }
+        }
+    }
+
+    /// Synthesises missing CPU cache sysfs attributes via bind mounts.
+    ///
+    /// Virtualization.framework exposes `level`, `type`, and `shared_cpu_map`
+    /// for each cache index but omits `size`, `coherency_line_size`, and
+    /// `number_of_sets`. The Firecracker jailer hard-panics when these files
+    /// are absent, so we fill them in with placeholder values. Only the
+    /// jailer reads these files; the numbers are intentionally not accurate
+    /// (and will be wrong on x86_64 guests), but they're well-formed and
+    /// satisfy the existence/parse check the jailer performs before chroot.
+    fn ensure_cpu_cache_topology() {
+        const CACHE_BASE: &str = "/sys/devices/system/cpu/cpu0/cache";
+        const FIXUP_BASE: &str = "/run/arcbox/cache-fixup";
+        const REQUIRED: &[&str] = &["size", "coherency_line_size", "number_of_sets"];
+
+        // Placeholder values keyed by index — (size, coherency_line_size,
+        // number_of_sets). Any index not listed (e.g. index3 for L3) falls
+        // back to FALLBACK below.
+        const DEFAULTS: &[(&str, &str, &str)] = &[
+            ("64K", "64", "256"),    // index0: typically L1 Data
+            ("64K", "64", "256"),    // index1: typically L1 Instruction
+            ("1024K", "64", "2048"), // index2: typically L2 Unified
+        ];
+        const FALLBACK: (&str, &str, &str) = ("8192K", "64", "8192");
+
+        let entries = match fs::read_dir(CACHE_BASE) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        let mut indices: Vec<usize> = entries
+            .flatten()
+            .filter_map(|e| {
+                e.file_name()
+                    .to_str()
+                    .and_then(|n| n.strip_prefix("index"))
+                    .and_then(|s| s.parse::<usize>().ok())
+            })
+            .collect();
+        indices.sort_unstable();
+
+        let mut applied = 0_usize;
+        for idx in indices {
+            let sysfs_dir = format!("{CACHE_BASE}/index{idx}");
+            // Skip indices that already expose every required attribute.
+            if REQUIRED
+                .iter()
+                .all(|f| Path::new(&format!("{sysfs_dir}/{f}")).exists())
+            {
+                continue;
+            }
+
+            let (size, line_size, num_sets) = DEFAULTS.get(idx).copied().unwrap_or(FALLBACK);
+
+            let fixup_dir = format!("{FIXUP_BASE}/index{idx}");
+            mkdir_p(&fixup_dir);
+
+            // Copy existing files from sysfs into the fixup directory.
+            for name in &[
+                "level",
+                "type",
+                "shared_cpu_map",
+                "shared_cpu_list",
+                "uevent",
+            ] {
+                let src = format!("{sysfs_dir}/{name}");
+                if let Ok(content) = fs::read_to_string(&src) {
+                    let _ = fs::write(format!("{fixup_dir}/{name}"), content);
+                }
+            }
+
+            // Write the missing attributes.
+            let _ = fs::write(format!("{fixup_dir}/size"), format!("{size}\n"));
+            let _ = fs::write(
+                format!("{fixup_dir}/coherency_line_size"),
+                format!("{line_size}\n"),
+            );
+            let _ = fs::write(
+                format!("{fixup_dir}/number_of_sets"),
+                format!("{num_sets}\n"),
+            );
+
+            // Bind-mount the completed directory over the sysfs entry.
+            if let Err(e) = mount(
+                Some(&fixup_dir as &str),
+                sysfs_dir.as_str(),
+                None::<&str>,
+                MsFlags::MS_BIND,
+                None::<&str>,
+            ) {
+                tracing::warn!(index = idx, error = %e, "failed to bind-mount cache fixup");
+            } else {
+                applied += 1;
+            }
+        }
+
+        if applied > 0 {
+            tracing::info!(
+                count = applied,
+                "CPU cache topology fixup applied for Firecracker jailer"
+            );
+        }
+    }
+
+    fn setup_networking() {
+        // Enable IPv4 forwarding for Docker bridge networking.
+        if let Err(e) = std::fs::write("/proc/sys/net/ipv4/ip_forward", b"1\n") {
+            tracing::warn!(error = %e, "failed to enable ip_forward");
+        }
+        // Bring up loopback interface.
+        run_init_cmd(
+            "/bin/busybox",
+            &["ip", "link", "set", "lo", "up"],
+            "ip link lo up",
+            Duration::from_secs(5),
+        );
+
+        // Configure the primary interface via DHCP so the guest can reach
+        // gateway services (DNS/NAT at 10.0.2.1).
+        configure_primary_interface_dhcp();
+
+        // Configure the bridge NIC (eth1) via DHCP for inbound L3 routing.
+        // This NIC is connected to Apple's vmnet bridge (bridge100) and
+        // provides a real L2 path for host → container traffic.
+        // We only take an IP — no default route (outbound stays on eth0).
+        if let Some(bridge_iface) = detect_bridge_interface() {
+            configure_bridge_nic_address(&bridge_iface);
+            // Proxy ARP on the bridge NIC makes the guest answer ARP for
+            // container IPs (172.17.x.x) on behalf of docker0, so the host
+            // can route `-interface bridge100` without knowing the guest's
+            // bridge address as a gateway.
+            if let Err(e) = fs::write(
+                format!("/proc/sys/net/ipv4/conf/{bridge_iface}/proxy_arp"),
+                b"1\n",
+            ) {
+                tracing::warn!(interface = bridge_iface, error = %e, "failed to enable proxy_arp");
+            } else {
+                tracing::info!(interface = bridge_iface, "proxy ARP enabled");
+            }
+        } else {
+            tracing::debug!("no bridge NIC found");
+        }
+
+        // Allow forwarding between the primary interface and sandbox TAP
+        // interfaces. Docker/containerd sets the default FORWARD policy to
+        // DROP, so blanket ACCEPT rules are required for sandbox traffic.
+        setup_sandbox_forwarding();
+    }
+
+    /// One-shot init for distro machines (boot shim path).
+    ///
+    /// The overlay root is the distro's own filesystem: no tmpfs staging and
+    /// no `/etc` population — the distro init owns those. What is set up
+    /// here is what the distro cannot know on its own: its name (the
+    /// machine's, from the kernel cmdline), the uplink (mirrored images
+    /// ship without the incus network config, so nothing in the guest would
+    /// configure eth0 otherwise), the bridge NIC the Mac reaches it on, and
+    /// a resolver when the distro image left none.
+    pub fn machine_init() {
+        match machine_name() {
+            Some(name) => crate::machine_identity::set_hostname(&name),
+            None => tracing::warn!(
+                "no machine name on the kernel cmdline; keeping the image's hostname"
+            ),
+        }
+        run_init_cmd(
+            "/bin/busybox",
+            &["ip", "link", "set", "lo", "up"],
+            "ip link lo up",
+            Duration::from_secs(5),
+        );
+        let primary = configure_primary_interface_dhcp();
+        // The bridge NIC is ArcBox's whether or not its lease arrives: the
+        // distro's network manager is told so by MAC first, then the NIC
+        // gets its address and nothing else — egress stays on the uplink,
+        // and a manager that configured this NIC too would route out of it
+        // (`machine_identity`).
+        if let Some(bridge_iface) = detect_bridge_interface() {
+            match fs::read_to_string(format!("/sys/class/net/{bridge_iface}/address")) {
+                Ok(mac) => crate::machine_identity::claim_bridge_nic(mac.trim()),
+                Err(e) => {
+                    tracing::warn!(interface = bridge_iface, error = %e, "cannot read the bridge NIC's MAC");
+                }
+            }
+            configure_bridge_nic_address(&bridge_iface);
+        }
+        write_machine_resolv_conf();
+        // Installed last, and before the shim hands off to the distro's init:
+        // the hook this writes is what tells the host when that init has
+        // settled, so readiness does not return into the window where the
+        // distro reconfigures the interface configured just above (CORE-66).
+        // It also drops the provisional default route above once the distro
+        // has installed its own.
+        crate::boot_done::install(&crate::boot_done::Hook {
+            primary_interface: primary,
+        });
+    }
+
+    /// The machine's name, from the `arcbox.machine_name=` the host put on
+    /// the kernel cmdline.
+    fn machine_name() -> Option<String> {
+        let cmdline = fs::read_to_string("/proc/cmdline").ok()?;
+        cmdline
+            .split_whitespace()
+            .find_map(|token| token.strip_prefix(MACHINE_NAME_KEY))
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+    }
+
+    /// Points `/etc/resolv.conf` at the NAT gateway resolver (10.0.2.1), but
+    /// only when the distro has no usable resolver of its own — a
+    /// systemd-resolved symlink or a non-empty file is left alone.
+    fn write_machine_resolv_conf() {
+        let path = Path::new("/etc/resolv.conf");
+        if let Ok(meta) = fs::symlink_metadata(path) {
+            if meta.file_type().is_symlink() || meta.len() > 0 {
+                return;
+            }
+        }
+        if let Err(e) = fs::write(path, "nameserver 10.0.2.1\n") {
+            tracing::warn!(error = %e, "failed to write /etc/resolv.conf");
+        }
+    }
+
+    /// Configures the uplink by DHCP; returns the interface it configured.
+    ///
+    /// The default route it installs is tagged [`AGENT_DHCP_ROUTE_PROTO`]:
+    /// in a distro machine that is what lets the boot-done hook tell this
+    /// provisional route from the one the distro's own network manager adds
+    /// next to it (`boot_done`).
+    fn configure_primary_interface_dhcp() -> Option<String> {
+        let Some(interface) = detect_primary_interface() else {
+            tracing::warn!("no non-loopback network interface found for DHCP");
+            return None;
+        };
+
+        run_init_cmd(
+            "/bin/busybox",
+            &["ip", "link", "set", interface.as_str(), "up"],
+            "ip link primary up",
+            Duration::from_secs(5),
+        );
+
+        // BusyBox udhcpc requires a script to apply lease settings.
+        let udhcpc_script = "/run/udhcpc.script";
+        let script = format!(
+            r#"#!/bin/sh
+set -e
+case "$1" in
+  deconfig)
+    /bin/busybox ifconfig "$interface" 0.0.0.0 || true
+    ;;
+  renew|bound)
+    /bin/busybox ifconfig "$interface" "$ip" netmask "${{subnet:-255.255.255.0}}" broadcast "${{broadcast:-+}}" up
+    if [ -n "${{router:-}}" ]; then
+      for r in $router; do
+        /bin/busybox ip route replace default via "$r" dev "$interface" proto {AGENT_DHCP_ROUTE_PROTO} && break
+      done
+    fi
+    ;;
+esac
+exit 0
+"#
+        );
+
+        if let Err(e) = fs::write(udhcpc_script, script) {
+            tracing::warn!(error = %e, "failed to write udhcpc script");
+            return None;
+        }
+        if let Err(e) = fs::set_permissions(udhcpc_script, fs::Permissions::from_mode(0o755)) {
+            tracing::warn!(error = %e, "failed to chmod udhcpc script");
+            return None;
+        }
+
+        if run_init_cmd(
+            "/bin/busybox",
+            &[
+                "udhcpc",
+                "-i",
+                interface.as_str(),
+                "-n",
+                "-q",
+                "-t",
+                "3",
+                "-T",
+                "2",
+                "-s",
+                udhcpc_script,
+            ],
+            "udhcpc primary",
+            Duration::from_secs(15),
+        ) {
+            tracing::info!(interface, "DHCP lease acquired");
+        }
+        Some(interface)
+    }
+
+    /// Gives the bridge NIC an address by DHCP and nothing else.
+    ///
+    /// The udhcpc script only sets the IP address — no default route, no
+    /// DNS. Outbound traffic therefore still goes through the uplink, while
+    /// the bridge NIC is reachable from the host: for inbound container
+    /// traffic in the System VM, and as `<machine>.arcbox.local` in a distro
+    /// machine.
+    fn configure_bridge_nic_address(bridge_iface: &str) {
+        // Bring up the interface.
+        run_init_cmd(
+            "/bin/busybox",
+            &["ip", "link", "set", bridge_iface, "up"],
+            "ip link bridge up",
+            Duration::from_secs(5),
+        );
+
+        // DHCP script that only sets the IP, no default route.
+        let script = r#"#!/bin/sh
+case "$1" in
+  deconfig)
+    /bin/busybox ifconfig "$interface" 0.0.0.0 || true
+    ;;
+  renew|bound)
+    /bin/busybox ifconfig "$interface" "$ip" netmask "${subnet:-255.255.255.0}" up
+    # Intentionally no default route — outbound stays on eth0.
+    ;;
+esac
+exit 0
+"#;
+        let script_path = "/run/udhcpc-bridge.script";
+        if let Err(e) = fs::write(script_path, script) {
+            tracing::warn!(error = %e, "failed to write bridge DHCP script");
+            return;
+        }
+        let _ = fs::set_permissions(script_path, fs::Permissions::from_mode(0o755));
+
+        if run_init_cmd(
+            "/bin/busybox",
+            &[
+                "udhcpc",
+                "-i",
+                bridge_iface,
+                "-n",
+                "-q",
+                "-t",
+                "3",
+                "-T",
+                "2",
+                "-s",
+                script_path,
+            ],
+            "udhcpc bridge",
+            Duration::from_secs(15),
+        ) {
+            tracing::info!(interface = bridge_iface, "bridge NIC DHCP lease acquired");
+        }
+    }
+
+    /// Finds the bridge NIC: the non-loopback physical interface that is not
+    /// the primary 10.0.2.0/24 interface.
+    pub fn detect_bridge_interface() -> Option<String> {
+        let primary = detect_primary_interface();
+        let entries = fs::read_dir("/sys/class/net").ok()?;
+        let mut candidates = Vec::new();
+        for entry in entries.flatten() {
+            let Ok(name) = entry.file_name().into_string() else {
+                continue;
+            };
+            if !is_uplink_interface(&name) || primary.as_deref() == Some(&name) {
+                continue;
+            }
+            candidates.push(name);
+        }
+        candidates.sort();
+        candidates.into_iter().next()
+    }
+
+    /// Install iptables FORWARD rules for sandbox networking.
+    ///
+    /// Each sandbox has a point-to-point TAP — no bridge or MASQUERADE needed.
+    /// The host-side TcpBridge / SocketProxy terminates connections and
+    /// creates new host sockets, so the original sandbox src IP is irrelevant
+    /// for reply routing.
+    ///
+    /// The subnet is read from the VMM config (default `172.20.0.0/16`).
+    /// Uses `-I` (insert at chain top) so rules take effect even when
+    /// Docker sets the default FORWARD policy to DROP.
+    ///
+    /// Invariant-addressed sandboxes (CORE-81) traverse FORWARD with the
+    /// fixed guest IP on the sandbox side — DNAT to it happens in PREROUTING
+    /// (before the filter) and SNAT off it in POSTROUTING (after) — so that
+    /// address needs its own accept pair; the subnet rules keep covering
+    /// legacy sandboxes.
+    ///
+    /// The mangle pair makes the deliberate sandbox-to-sandbox isolation
+    /// explicit: traffic from any sandbox TAP toward the pool is dropped
+    /// before it can be marked or DNAT'd (the per-TAP invariant NAT would
+    /// otherwise misattribute it), except toward the pool gateway, which
+    /// legacy guests use for DNS. These run at System VM boot, so the
+    /// per-TAP `packet_filter::translation_rules` (appended with `-A`) always
+    /// sit below them. Expose companions (`port_forward.rs`) instead
+    /// PREPEND above these — safe because `MARK` is non-terminating, so a
+    /// marked packet still falls through to the DROP.
+    fn setup_sandbox_forwarding() {
+        let config = crate::config::load();
+        let subnet = &config.runtime.network.cidr;
+        let guest_ip = format!("{}/32", arcbox_tap_net::invariant::GUEST_IP);
+
+        run_iptables(
+            &["-I", "FORWARD", "-d", subnet, "-j", "ACCEPT"],
+            "FORWARD accept to sandbox subnet",
+        );
+        run_iptables(
+            &["-I", "FORWARD", "-s", subnet, "-j", "ACCEPT"],
+            "FORWARD accept from sandbox subnet",
+        );
+        run_iptables(
+            &["-I", "FORWARD", "-d", &guest_ip, "-j", "ACCEPT"],
+            "FORWARD accept to invariant sandbox address",
+        );
+        run_iptables(
+            &["-I", "FORWARD", "-s", &guest_ip, "-j", "ACCEPT"],
+            "FORWARD accept from invariant sandbox address",
+        );
+
+        // Insert DROP first so the gateway ACCEPT lands above it.
+        let gateway = format!("{}/32", config.runtime.network.gateway);
+        run_iptables(
+            &[
+                "-t",
+                "mangle",
+                "-I",
+                "PREROUTING",
+                "-i",
+                "vmtap+",
+                "-d",
+                subnet,
+                "-j",
+                "DROP",
+            ],
+            "isolate sandbox-to-sandbox pool traffic",
+        );
+        run_iptables(
+            &[
+                "-t",
+                "mangle",
+                "-I",
+                "PREROUTING",
+                "-i",
+                "vmtap+",
+                "-d",
+                &gateway,
+                "-j",
+                "ACCEPT",
+            ],
+            "allow sandbox traffic to the pool gateway",
+        );
+
+        tracing::info!(subnet, "sandbox forwarding rules installed");
+    }
+
+    /// Run an iptables command, logging on failure.
+    /// Runs an external command during one-shot init, isolated and bounded.
+    ///
+    /// Init shells out to busybox (`ip`, `udhcpc`) and `iptables`. A child that
+    /// hangs must never wedge init: readiness would never fire and the VM boot
+    /// would time out (observed as a flaky early-boot stall on a trivial
+    /// `ip link set lo up`). Three safeguards bound and isolate every child:
+    /// - [`ChildExt::wait_timeout`] — the load-bearing guarantee: a child
+    ///   exceeding `timeout` is killed and init continues, *whatever* the
+    ///   stall's root cause. (Still under investigation: the command hangs even
+    ///   with the isolation below, which points at an exec/page-in stall reading
+    ///   the busybox binary from erofs/virtio-blk rather than pure tty I/O.)
+    /// - stdio redirected to `/dev/null` + `process_group(0)` — defence in
+    ///   depth: the child never touches the console and leads its own group, so
+    ///   sharing `hvc0` with the always-on debug console cannot stop it via
+    ///   `SIGTTOU`/`SIGTTIN`.
+    ///
+    /// Returns whether the command exited successfully. Spawn, non-zero exit,
+    /// and timeout are logged against `desc` — degraded setup beats a boot that
+    /// never reaches readiness.
+    fn run_init_cmd(program: &str, args: &[&str], desc: &str, timeout: Duration) -> bool {
+        // Debug-level breadcrumb: the last one logged before a stall names the
+        // command that hung — the diagnostic that localizes the early-boot wedge.
+        tracing::debug!(desc, "running init command");
+        let mut child = match Command::new(program)
+            .args(args)
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(desc, error = %e, "failed to spawn init command");
+                return false;
+            }
+        };
+        match child.wait_timeout(timeout) {
+            Ok(Some(status)) if status.success() => true,
+            Ok(Some(status)) => {
+                tracing::warn!(
+                    desc,
+                    exit_code = status.code().unwrap_or(-1),
+                    "init command failed"
+                );
+                false
+            }
+            Ok(None) => {
+                tracing::warn!(
+                    desc,
+                    timeout_s = timeout.as_secs(),
+                    "init command timed out — killing"
+                );
+                let _ = child.kill();
+                let _ = child.wait();
+                false
+            }
+            Err(e) => {
+                tracing::warn!(desc, error = %e, "init command wait failed");
+                false
+            }
+        }
+    }
+
+    fn run_iptables(args: &[&str], desc: &str) {
+        run_init_cmd("/sbin/iptables", args, desc, Duration::from_secs(10));
+    }
+
+    /// The guest's uplink NIC — the interface the host relay's traffic arrives
+    /// on. The lowest-sorted `eth*`/`en*` name, matching what DHCP configures.
+    pub fn detect_primary_interface() -> Option<String> {
+        let entries = fs::read_dir("/sys/class/net").ok()?;
+        let mut candidates = Vec::new();
+        for entry in entries.flatten() {
+            let Ok(name) = entry.file_name().into_string() else {
+                continue;
+            };
+            if !is_uplink_interface(&name) {
+                continue;
+            }
+            candidates.push(name);
+        }
+        candidates.sort();
+        candidates.into_iter().next()
+    }
+
+    /// Physical NICs use the kernel's predictable Ethernet prefixes; virtual
+    /// interfaces such as docker0, cni0, flannel.1, and veth* do not.
+    fn is_uplink_interface(name: &str) -> bool {
+        name.starts_with("eth") || name.starts_with("en")
+    }
+
+    fn write_etc_resolv_conf() {
+        // Point to the local guest DNS server (dns_server.rs) which handles:
+        // - Container/sandbox name resolution from its registries
+        // - *.arcbox.local → authoritative NXDOMAIN if not registered
+        // - Everything else → forward to gateway (10.0.2.1)
+        let content = "nameserver 127.0.0.1\n";
+        if let Err(e) = std::fs::write("/etc/resolv.conf", content) {
+            tracing::warn!(error = %e, "failed to write /etc/resolv.conf");
+        }
+    }
+
+    /// Writes `/etc/docker/daemon.json`: the keys ArcBox manages plus the
+    /// operator's overrides from the host (see `crate::docker_config`).
+    ///
+    /// Containers get their DNS from the Docker daemon config, NOT from the
+    /// guest's /etc/resolv.conf. We point them to 10.0.2.1 (the gateway)
+    /// so container DNS queries go through the host-side forwarder which can
+    /// resolve *.arcbox.local names registered from the host.
+    fn write_docker_daemon_config() {
+        mkdir_p("/etc/docker");
+        let network = match crate::agent::container_network() {
+            Ok(network) => network,
+            Err(error) => {
+                tracing::error!(%error, "refusing to write Docker config for invalid container network");
+                return;
+            }
+        };
+        let overrides_path = crate::docker_config::overrides_path();
+        let overrides = match crate::docker_config::read_overrides(Path::new(&overrides_path)) {
+            Ok(overrides) => overrides,
+            Err(error) => {
+                // Booting with the managed keys alone beats not booting; the
+                // operator sees why their mirrors did not apply.
+                tracing::error!(%error, "ignoring unreadable dockerd overrides from the host");
+                Default::default()
+            }
+        };
+        let rendered = crate::docker_config::render(network, overrides);
+        if !rendered.refused.is_empty() {
+            tracing::warn!(
+                keys = ?rendered.refused,
+                "dropped dockerd overrides for keys ArcBox manages"
+            );
+        }
+        if let Err(e) = std::fs::write("/etc/docker/daemon.json", &rendered.content) {
+            tracing::warn!(error = %e, "failed to write /etc/docker/daemon.json");
+        }
+    }
+
+    fn write_etc_hosts() {
+        let hostname = hostname::get()
+            .ok()
+            .and_then(|h| h.into_string().ok())
+            .unwrap_or_else(|| "arcbox".to_string());
+        let content = format!("127.0.0.1\tlocalhost\n::1\t\tlocalhost\n127.0.1.1\t{hostname}\n");
+        if let Err(e) = std::fs::write("/etc/hosts", content) {
+            tracing::warn!(error = %e, "failed to write /etc/hosts");
+        }
+    }
+
+    fn write_etc_passwd() {
+        let content =
+            "root:x:0:0:root:/root:/bin/sh\nnobody:x:65534:65534:nobody:/:/sbin/nologin\n";
+        if let Err(e) = std::fs::write("/etc/passwd", content) {
+            tracing::warn!(error = %e, "failed to write /etc/passwd");
+        }
+    }
+
+    fn write_etc_group() {
+        let content = "root:x:0:\ntty:x:5:\nnobody:x:65534:\n";
+        if let Err(e) = std::fs::write("/etc/group", content) {
+            tracing::warn!(error = %e, "failed to write /etc/group");
+        }
+    }
+
+    fn mkdir_p(path: &str) {
+        if let Err(e) = std::fs::create_dir_all(path) {
+            tracing::warn!(path, error = %e, "failed to create directory");
+        }
+    }
+
+    fn symlink_if_source_exists(source: &str, link: &str) {
+        if !Path::new(source).exists() {
+            tracing::debug!(source, "symlink source does not exist, skipping");
+            return;
+        }
+        match unix_fs::symlink(source, link) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Idempotent: symlink already in place.
+            }
+            Err(e) => {
+                tracing::warn!(source, link, error = %e, "failed to create symlink");
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub use platform::{detect_bridge_interface, detect_primary_interface};
+#[cfg(target_os = "linux")]
+pub use platform::{init_recovery_system, init_system, machine_init};
+
+#[cfg(not(target_os = "linux"))]
+pub fn init_recovery_system() {
+    tracing::warn!("init_recovery_system is only functional on Linux");
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn init_system() {
+    tracing::warn!("init_system is only functional on Linux");
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn machine_init() {
+    tracing::warn!("machine_init is only functional on Linux");
+}
+
+/// The writable tmpfs layers the long-running agent cannot function without:
+/// `/etc` (resolv.conf, hosts, docker config), `/run` and `/var` (containerd and
+/// dockerd state), and `/tmp`.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const CRITICAL_MOUNTS: &[&str] = &["/etc", "/run", "/var", "/tmp"];
+
+/// Verifies the writable tmpfs layers the agent depends on actually mounted.
+///
+/// `init_system` is deliberately best-effort — it must never abort when it is
+/// PID 1. The one-shot `arcbox-agent init` step, however, is expected to exit, so
+/// it re-checks these post-conditions and treats a missing critical mount as
+/// fatal: otherwise the agent silently runs on the read-only EROFS rootfs (e.g.
+/// unable to write `/etc/resolv.conf`) and fails in obscure ways downstream.
+#[cfg(target_os = "linux")]
+pub fn verify_critical_mounts() -> Result<(), String> {
+    report_missing_mounts(CRITICAL_MOUNTS, crate::mount::is_mounted)
+}
+
+#[cfg(not(target_os = "linux"))]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "must match the fallible Linux signature"
+)]
+pub fn verify_critical_mounts() -> Result<(), String> {
+    Ok(())
+}
+
+/// Pure core of [`verify_critical_mounts`]: returns an error naming the targets
+/// for which `is_mounted` is false. Split out so it is testable without `/proc`.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn report_missing_mounts(
+    targets: &[&str],
+    is_mounted: impl Fn(&str) -> bool,
+) -> Result<(), String> {
+    let missing: Vec<&str> = targets.iter().copied().filter(|t| !is_mounted(t)).collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "critical writable tmpfs mounts missing (agent would run on read-only EROFS): {}",
+            missing.join(", ")
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn report_missing_mounts_flags_only_unmounted() {
+        // All mounted → Ok.
+        assert!(super::report_missing_mounts(super::CRITICAL_MOUNTS, |_| true).is_ok());
+
+        // /run not mounted → error names it but not the mounted /etc.
+        let err = super::report_missing_mounts(&["/etc", "/run"], |t| t == "/etc").unwrap_err();
+        assert!(err.contains("/run"));
+        assert!(!err.contains("/etc"));
+    }
+}

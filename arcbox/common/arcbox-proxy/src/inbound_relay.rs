@@ -1,0 +1,895 @@
+//! Inbound port forwarding via L2 frame injection.
+//!
+//! Instead of using utun + kernel routing, we inject crafted L2 Ethernet frames
+//! directly into the guest FD (socketpair) so that host-side TCP/UDP listeners
+//! can reach services inside the guest VM.
+//!
+//! # Architecture
+//!
+//! ```text
+//! External client (host:8080)
+//!     │
+//!     ▼
+//! InboundListenerManager (TcpListener / UdpSocket per rule)
+//!     │ accept / recv
+//!     ▼
+//! InboundCommand channel  ──►  NetworkDatapath select! arm
+//!     │
+//!     ▼
+//! InboundRelay
+//!     └─ UDP: inject datagram → guest reply → forward to client
+//!     │
+//!     ▼
+//! reply_tx ──► datapath ──► guest_fd (socketpair) ──► Guest VM
+//! ```
+
+use std::collections::HashMap;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::time::Instant;
+
+use std::sync::Arc;
+
+use socket2::SockRef;
+use tokio::net::{TcpListener, UdpSocket};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
+
+use arcbox_packet::ethernet::{ETH_HEADER_LEN, build_udp_ip_ethernet};
+
+/// Socket buffer size applied to accepted inbound TCP streams.
+///
+/// The OS default on macOS is ~128 KiB which forces TCP to shrink the window
+/// under high-throughput bulk transfers (e.g. iperf3). Raising to 4 MiB lets
+/// the window grow to match the BDP of localhost / high-speed paths.
+///
+/// Requires `kern.ipc.maxsockbuf` to allow at least this value (default 8 MiB
+/// on macOS; confirm with `sysctl kern.ipc.maxsockbuf`). setsockopt silently
+/// clamps to the maxsockbuf ceiling, so oversizing is harmless.
+const INBOUND_TCP_BUF_SIZE: usize = 4 * 1024 * 1024;
+
+// ---------------------------------------------------------------------------
+// Ephemeral port allocator
+// ---------------------------------------------------------------------------
+
+/// Start of the inbound ephemeral port range (guest kernel uses 32768-60999).
+const EPHEMERAL_START: u16 = 61000;
+/// End of the inbound ephemeral port range (inclusive).
+const EPHEMERAL_END: u16 = 65535;
+
+/// Wrapping ephemeral port allocator for inbound connections.
+pub(crate) struct EphemeralPorts {
+    next: u16,
+}
+
+impl EphemeralPorts {
+    pub(crate) fn new() -> Self {
+        Self {
+            next: EPHEMERAL_START,
+        }
+    }
+
+    /// Allocates the next ephemeral port, wrapping at the end of the range.
+    pub(crate) fn allocate(&mut self) -> u16 {
+        let port = self.next;
+        self.next = if self.next == EPHEMERAL_END {
+            EPHEMERAL_START
+        } else {
+            self.next + 1
+        };
+        port
+    }
+
+    /// Returns whether `port` falls within the inbound ephemeral range.
+    #[inline]
+    pub(crate) fn in_range(port: u16) -> bool {
+        (EPHEMERAL_START..=EPHEMERAL_END).contains(&port)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Inbound command (sent from listener tasks to the datapath)
+// ---------------------------------------------------------------------------
+
+/// Command sent from `InboundListenerManager` listener tasks to the datapath.
+pub enum InboundCommand {
+    /// A new TCP connection was accepted on a host listener.
+    TcpAccepted {
+        host_port: u16,
+        container_port: u16,
+        stream: tokio::net::TcpStream,
+    },
+    /// A UDP datagram was received on a host listener.
+    UdpReceived {
+        host_port: u16,
+        container_port: u16,
+        data: Vec<u8>,
+        /// Channel to send reply datagrams back to the host-side client.
+        reply_tx: mpsc::Sender<Vec<u8>>,
+        client_addr: SocketAddr,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// UDP flow state
+// ---------------------------------------------------------------------------
+
+/// Per-flow inbound UDP state.
+struct InboundUdpFlow {
+    /// Channel to send reply datagrams back to the host-side client.
+    client_tx: mpsc::Sender<Vec<u8>>,
+    /// Last time traffic was seen on this flow.
+    last_active: Instant,
+}
+
+// ---------------------------------------------------------------------------
+// InboundRelay
+// ---------------------------------------------------------------------------
+
+/// Handles inbound (host → guest) connections by injecting L2 Ethernet frames
+/// directly into the guest FD through the `reply_tx` channel.
+pub(crate) struct InboundRelay {
+    /// Active UDP flows keyed by (gateway_ip, ephemeral_port, guest_ip, container_port).
+    udp_flows: HashMap<(Ipv4Addr, u16, Ipv4Addr, u16), InboundUdpFlow>,
+    /// Channel to inject L2 frames towards the guest.
+    reply_tx: mpsc::Sender<Vec<u8>>,
+    gateway_mac: [u8; 6],
+    gateway_ip: Ipv4Addr,
+    guest_ip: Ipv4Addr,
+    /// Guest link MTU; injected datagrams above it are IPv4-fragmented.
+    mtu: usize,
+    ephemeral_ports: EphemeralPorts,
+}
+
+impl InboundRelay {
+    pub(crate) fn new(
+        reply_tx: mpsc::Sender<Vec<u8>>,
+        gateway_mac: [u8; 6],
+        gateway_ip: Ipv4Addr,
+        guest_ip: Ipv4Addr,
+        mtu: usize,
+    ) -> Self {
+        Self {
+            udp_flows: HashMap::new(),
+            reply_tx,
+            gateway_mac,
+            gateway_ip,
+            guest_ip,
+            mtu,
+            ephemeral_ports: EphemeralPorts::new(),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Frame matching — called on every outbound guest frame
+    // -----------------------------------------------------------------------
+
+    /// Attempts to match an outbound guest frame as a reply to an inbound
+    /// connection. Returns `true` if the frame was consumed.
+    ///
+    /// Fast-path: `EphemeralPorts::in_range(dst_port)` rejects 99%+ of
+    /// outbound frames before any `HashMap` lookup.
+    pub(crate) fn try_handle_reply(&mut self, frame: &[u8], _guest_mac: [u8; 6]) -> bool {
+        if frame.len() < ETH_HEADER_LEN + 20 {
+            return false;
+        }
+
+        let ip_start = ETH_HEADER_LEN;
+        let protocol = frame[ip_start + 9];
+
+        let ihl = ((frame[ip_start] & 0x0F) as usize) * 4;
+        let l4_start = ip_start + ihl;
+
+        match protocol {
+            6 => false, // TCP is handled by TcpBridge, not the inbound relay
+            17 => self.try_handle_udp_reply(frame, ip_start, l4_start),
+            _ => false,
+        }
+    }
+
+    /// Checks if a UDP frame is a reply to an inbound flow.
+    fn try_handle_udp_reply(&mut self, frame: &[u8], ip_start: usize, udp_start: usize) -> bool {
+        if frame.len() < udp_start + 8 {
+            return false;
+        }
+
+        let dst_port = u16::from_be_bytes([frame[udp_start + 2], frame[udp_start + 3]]);
+        if !EphemeralPorts::in_range(dst_port) {
+            return false;
+        }
+
+        let src_ip = Ipv4Addr::new(
+            frame[ip_start + 12],
+            frame[ip_start + 13],
+            frame[ip_start + 14],
+            frame[ip_start + 15],
+        );
+        let dst_ip = Ipv4Addr::new(
+            frame[ip_start + 16],
+            frame[ip_start + 17],
+            frame[ip_start + 18],
+            frame[ip_start + 19],
+        );
+        let src_port = u16::from_be_bytes([frame[udp_start], frame[udp_start + 1]]);
+
+        let key = (dst_ip, dst_port, src_ip, src_port);
+
+        if let Some(flow) = self.udp_flows.get_mut(&key) {
+            let udp_len = u16::from_be_bytes([frame[udp_start + 4], frame[udp_start + 5]]) as usize;
+            if udp_len >= 8 && udp_start + udp_len <= frame.len() {
+                let payload = frame[udp_start + 8..udp_start + udp_len].to_vec();
+                flow.last_active = Instant::now();
+                let _ = flow.client_tx.try_send(payload);
+            }
+            return true;
+        }
+
+        false
+    }
+
+    // -----------------------------------------------------------------------
+    // UDP: inject datagram to guest
+    // -----------------------------------------------------------------------
+
+    /// Injects a UDP datagram to the guest and sets up a flow for replies.
+    pub(crate) fn inject_udp(
+        &mut self,
+        container_port: u16,
+        data: &[u8],
+        client_tx: mpsc::Sender<Vec<u8>>,
+        guest_mac: [u8; 6],
+    ) {
+        let ephemeral_port = self.ephemeral_ports.allocate();
+        let key = (
+            self.gateway_ip,
+            ephemeral_port,
+            self.guest_ip,
+            container_port,
+        );
+
+        self.udp_flows.insert(
+            key,
+            InboundUdpFlow {
+                client_tx,
+                last_active: Instant::now(),
+            },
+        );
+
+        let frames = build_udp_ip_ethernet(
+            self.gateway_ip,
+            self.guest_ip,
+            ephemeral_port,
+            container_port,
+            data,
+            self.gateway_mac,
+            guest_mac,
+            self.mtu,
+        );
+
+        for frame in frames {
+            if self.reply_tx.try_send(frame).is_err() {
+                // Dropping a fragment kills the whole datagram; stop early.
+                break;
+            }
+        }
+
+        tracing::debug!(
+            "Inbound UDP: injected {} bytes  gw:{} → guest:{}",
+            data.len(),
+            ephemeral_port,
+            container_port,
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Maintenance
+    // -----------------------------------------------------------------------
+
+    /// Removes expired UDP flows.
+    pub(crate) fn cleanup(&mut self) {
+        let now = Instant::now();
+        self.udp_flows
+            .retain(|_, flow| now.duration_since(flow.last_active).as_secs() < 60);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// InboundListenerManager
+// ---------------------------------------------------------------------------
+
+/// Protocol for port forwarding rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InboundProtocol {
+    Tcp,
+    Udp,
+}
+
+/// Identifies a rule by the host address and the port the caller *asked* for.
+///
+/// Deliberately the requested port, not the bound one, so `remove_rule` can
+/// undo an `add_rule` with the same arguments the caller passed in.
+type ListenerKey = (Ipv4Addr, u16, InboundProtocol);
+
+/// A live listener: its task, its cancellation token, and the port it actually
+/// bound — which differs from the key's port only when the caller passed 0.
+type ListenerEntry = (JoinHandle<()>, CancellationToken, u16);
+
+/// Manages host-side listeners that accept incoming connections / datagrams
+/// and send `InboundCommand` messages to the datapath.
+pub struct InboundListenerManager {
+    cmd_tx: mpsc::Sender<InboundCommand>,
+    listeners: HashMap<ListenerKey, ListenerEntry>,
+}
+
+impl InboundListenerManager {
+    /// Creates a new listener manager.
+    #[must_use]
+    pub fn new(cmd_tx: mpsc::Sender<InboundCommand>) -> Self {
+        Self {
+            cmd_tx,
+            listeners: HashMap::new(),
+        }
+    }
+
+    /// Adds a forwarding rule and spawns a listener task.
+    ///
+    /// Returns the port actually bound. That equals `host_port` unless the
+    /// caller passed 0 to let the OS choose, in which case it is the only way
+    /// to learn where the listener ended up — binding 0 and then probing for
+    /// the port separately would race anything else on the machine.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the listener cannot bind.
+    pub async fn add_rule(
+        &mut self,
+        host_ip: Ipv4Addr,
+        host_port: u16,
+        container_port: u16,
+        protocol: InboundProtocol,
+    ) -> std::io::Result<u16> {
+        let key = (host_ip, host_port, protocol);
+        if self.listeners.contains_key(&key) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AddrInUse,
+                format!("inbound listener already exists on {host_ip}:{host_port}"),
+            ));
+        }
+
+        let cancel = CancellationToken::new();
+        let cmd_tx = self.cmd_tx.clone();
+
+        let (handle, bound_port) = match protocol {
+            InboundProtocol::Tcp => {
+                let listener =
+                    TcpListener::bind(SocketAddr::V4(SocketAddrV4::new(host_ip, host_port)))
+                        .await?;
+                let bound = listener.local_addr()?.port();
+                tracing::info!(
+                    "Inbound listener: TCP {}:{} → container :{}",
+                    host_ip,
+                    bound,
+                    container_port,
+                );
+                let cancel_clone = cancel.clone();
+                let handle = tokio::spawn(async move {
+                    tcp_listener_task(listener, container_port, cmd_tx, cancel_clone).await;
+                });
+                (handle, bound)
+            }
+            InboundProtocol::Udp => {
+                let socket =
+                    UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(host_ip, host_port))).await?;
+                let bound = socket.local_addr()?.port();
+                tracing::info!(
+                    "Inbound listener: UDP {}:{} → container :{}",
+                    host_ip,
+                    bound,
+                    container_port,
+                );
+                let cancel_clone = cancel.clone();
+                let handle = tokio::spawn(async move {
+                    udp_listener_task(socket, container_port, cmd_tx, cancel_clone).await;
+                });
+                (handle, bound)
+            }
+        };
+
+        self.listeners.insert(key, (handle, cancel, bound_port));
+        Ok(bound_port)
+    }
+
+    /// Removes a forwarding rule and waits until its listener has dropped the
+    /// bound socket.
+    pub async fn remove_rule(
+        &mut self,
+        host_ip: Ipv4Addr,
+        host_port: u16,
+        protocol: InboundProtocol,
+    ) {
+        let key = (host_ip, host_port, protocol);
+        if let Some((handle, cancel, bound)) = self.listeners.remove(&key) {
+            cancel.cancel();
+            handle.abort();
+            let _ = handle.await;
+            tracing::debug!(
+                "Inbound listener removed: {:?} {}:{}",
+                protocol,
+                host_ip,
+                bound
+            );
+        }
+    }
+
+    /// Stops all listeners.
+    pub async fn stop_all(&mut self) {
+        let keys: Vec<_> = self.listeners.keys().copied().collect();
+        for (ip, port, protocol) in keys {
+            self.remove_rule(ip, port, protocol).await;
+        }
+    }
+
+    /// How many listeners are live.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.listeners.len()
+    }
+
+    /// Whether no listener is live.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.listeners.is_empty()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Listener tasks
+// ---------------------------------------------------------------------------
+
+/// TCP listener task: accepts connections and sends `InboundCommand::TcpAccepted`.
+async fn tcp_listener_task(
+    listener: TcpListener,
+    container_port: u16,
+    cmd_tx: mpsc::Sender<InboundCommand>,
+    cancel: CancellationToken,
+) {
+    let host_port = listener.local_addr().map_or(0, |a| a.port());
+    loop {
+        tokio::select! {
+            biased;
+            () = cancel.cancelled() => break,
+            result = listener.accept() => {
+                match result {
+                    Ok((stream, peer)) => {
+                        tracing::debug!(
+                            "Inbound TCP accept: {} → host:{} → container:{}",
+                            peer, host_port, container_port,
+                        );
+                        // Raise send/recv buffers so the TCP window can grow to
+                        // localhost BDP. Failures here are non-fatal — the OS
+                        // default still works, just throttles throughput.
+                        let sock = SockRef::from(&stream);
+                        if let Err(e) = sock.set_recv_buffer_size(INBOUND_TCP_BUF_SIZE) {
+                            tracing::warn!("Failed to set SO_RCVBUF on inbound stream: {e}");
+                        }
+                        if let Err(e) = sock.set_send_buffer_size(INBOUND_TCP_BUF_SIZE) {
+                            tracing::warn!("Failed to set SO_SNDBUF on inbound stream: {e}");
+                        }
+                        let cmd = InboundCommand::TcpAccepted {
+                            host_port,
+                            container_port,
+                            stream,
+                        };
+                        if cmd_tx.send(cmd).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Inbound TCP accept error on :{}: {}", host_port, e);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// UDP listener task: receives datagrams and sends `InboundCommand::UdpReceived`.
+async fn udp_listener_task(
+    socket: UdpSocket,
+    container_port: u16,
+    cmd_tx: mpsc::Sender<InboundCommand>,
+    cancel: CancellationToken,
+) {
+    let host_port = socket.local_addr().map_or(0, |a| a.port());
+    let socket = Arc::new(socket);
+    let mut reply_flows: HashMap<SocketAddr, mpsc::Sender<Vec<u8>>> = HashMap::new();
+    let mut buf = vec![0u8; 65535];
+
+    loop {
+        tokio::select! {
+            biased;
+            () = cancel.cancelled() => break,
+            result = socket.recv_from(&mut buf) => {
+                match result {
+                    Ok((n, client_addr)) => {
+                        let reply_tx = if let Some(tx) = reply_flows.get(&client_addr) {
+                            if tx.is_closed() {
+                                reply_flows.remove(&client_addr);
+                                create_udp_reply_flow(client_addr, &socket, &cancel, &mut reply_flows)
+                            } else {
+                                tx.clone()
+                            }
+                        } else {
+                            create_udp_reply_flow(client_addr, &socket, &cancel, &mut reply_flows)
+                        };
+
+                        let cmd = InboundCommand::UdpReceived {
+                            host_port,
+                            container_port,
+                            data: buf[..n].to_vec(),
+                            reply_tx,
+                            client_addr,
+                        };
+                        if cmd_tx.send(cmd).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Inbound UDP recv error on :{}: {}", host_port, e);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn create_udp_reply_flow(
+    client_addr: SocketAddr,
+    socket: &Arc<UdpSocket>,
+    cancel: &CancellationToken,
+    reply_flows: &mut HashMap<SocketAddr, mpsc::Sender<Vec<u8>>>,
+) -> mpsc::Sender<Vec<u8>> {
+    let (reply_tx, mut reply_rx) = mpsc::channel::<Vec<u8>>(16);
+    let reply_sock = Arc::clone(socket);
+    let flow_cancel = cancel.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                biased;
+                () = flow_cancel.cancelled() => break,
+                maybe_data = reply_rx.recv() => {
+                    let Some(data) = maybe_data else {
+                        break;
+                    };
+                    let _ = reply_sock.send_to(&data, client_addr).await;
+                }
+            }
+        }
+    });
+    reply_flows.insert(client_addr, reply_tx.clone());
+    reply_tx
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    const GW_IP: Ipv4Addr = Ipv4Addr::new(192, 168, 64, 1);
+    const GUEST_IP: Ipv4Addr = Ipv4Addr::new(192, 168, 64, 2);
+    const GW_MAC: [u8; 6] = [0x02, 0xAB, 0xCD, 0x00, 0x00, 0x01];
+    const GUEST_MAC: [u8; 6] = [0x02, 0x00, 0x00, 0x00, 0x00, 0x99];
+
+    #[test]
+    fn ephemeral_ports_allocation() {
+        let mut ep = EphemeralPorts::new();
+        assert_eq!(ep.allocate(), 61000);
+        assert_eq!(ep.allocate(), 61001);
+    }
+
+    #[test]
+    fn ephemeral_ports_wrap_around() {
+        let mut ep = EphemeralPorts::new();
+        ep.next = EPHEMERAL_END;
+        assert_eq!(ep.allocate(), EPHEMERAL_END);
+        assert_eq!(ep.allocate(), EPHEMERAL_START);
+    }
+
+    #[test]
+    fn ephemeral_ports_in_range() {
+        assert!(EphemeralPorts::in_range(61000));
+        assert!(EphemeralPorts::in_range(65535));
+        assert!(EphemeralPorts::in_range(63000));
+        assert!(!EphemeralPorts::in_range(60999));
+        assert!(!EphemeralPorts::in_range(32768));
+        assert!(!EphemeralPorts::in_range(80));
+    }
+
+    #[test]
+    fn inbound_relay_rejects_non_ephemeral() {
+        let (tx, _rx) = mpsc::channel(16);
+        let mut relay = InboundRelay::new(tx, GW_MAC, GW_IP, GUEST_IP, 1500);
+
+        // Build a minimal TCP frame with dst_port=80 (not in ephemeral range).
+        let mut frame = vec![0u8; ETH_HEADER_LEN + 40];
+        frame[12..14].copy_from_slice(&0x0800u16.to_be_bytes());
+        let ip = &mut frame[ETH_HEADER_LEN..];
+        ip[0] = 0x45;
+        ip[9] = 6; // TCP
+        ip[12..16].copy_from_slice(&GUEST_IP.octets());
+        ip[16..20].copy_from_slice(&GW_IP.octets());
+        // TCP header: src_port=8080, dst_port=80
+        let tcp = &mut frame[ETH_HEADER_LEN + 20..];
+        tcp[0..2].copy_from_slice(&8080u16.to_be_bytes());
+        tcp[2..4].copy_from_slice(&80u16.to_be_bytes());
+        tcp[12] = 0x50; // data offset = 5
+
+        assert!(!relay.try_handle_reply(&frame, GUEST_MAC));
+    }
+
+    #[tokio::test]
+    async fn inject_udp_sends_frame_and_tracks_flow() {
+        let (tx, mut rx) = mpsc::channel(16);
+        let mut relay = InboundRelay::new(tx, GW_MAC, GW_IP, GUEST_IP, 1500);
+
+        let (client_tx, _client_rx) = mpsc::channel(16);
+        relay.inject_udp(53, b"dns query", client_tx, GUEST_MAC);
+
+        // Flow should be tracked.
+        let key = (GW_IP, EPHEMERAL_START, GUEST_IP, 53);
+        assert!(relay.udp_flows.contains_key(&key));
+
+        // A UDP frame should have been sent.
+        let frame = rx.recv().await.expect("should receive UDP frame");
+        assert!(frame.len() >= ETH_HEADER_LEN + 28, "UDP frame too short");
+
+        // Verify IP protocol = UDP (17).
+        assert_eq!(frame[ETH_HEADER_LEN + 9], 17);
+
+        // Verify ports.
+        let udp_start = ETH_HEADER_LEN + 20;
+        let src_port = u16::from_be_bytes([frame[udp_start], frame[udp_start + 1]]);
+        let dst_port = u16::from_be_bytes([frame[udp_start + 2], frame[udp_start + 3]]);
+        assert_eq!(src_port, EPHEMERAL_START);
+        assert_eq!(dst_port, 53);
+    }
+
+    #[test]
+    fn cleanup_removes_expired_udp_flows() {
+        let (tx, _rx) = mpsc::channel(16);
+        let mut relay = InboundRelay::new(tx, GW_MAC, GW_IP, GUEST_IP, 1500);
+
+        let (client_tx, _client_rx) = mpsc::channel(16);
+        let key = (GW_IP, 61000, GUEST_IP, 53);
+        relay.udp_flows.insert(
+            key,
+            InboundUdpFlow {
+                client_tx,
+                last_active: Instant::now()
+                    .checked_sub(std::time::Duration::from_secs(120))
+                    .unwrap(),
+            },
+        );
+        assert_eq!(relay.udp_flows.len(), 1);
+
+        relay.cleanup();
+        assert_eq!(
+            relay.udp_flows.len(),
+            0,
+            "expired UDP flow should be removed"
+        );
+    }
+
+    #[tokio::test]
+    async fn listener_manager_add_and_remove_rule() {
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(16);
+        let mut manager = InboundListenerManager::new(cmd_tx);
+
+        // Add a TCP rule on an ephemeral port.
+        manager
+            .add_rule(Ipv4Addr::LOCALHOST, 0, 80, InboundProtocol::Tcp)
+            .await
+            .expect("should bind to port 0 (OS-assigned)");
+
+        // Remove it.
+        manager
+            .remove_rule(Ipv4Addr::LOCALHOST, 0, InboundProtocol::Tcp)
+            .await;
+
+        // The cmd_rx channel should still be valid (no panic).
+        assert!(cmd_rx.try_recv().is_err(), "no commands expected yet");
+    }
+
+    /// A real host connection to a registered rule produces `TcpAccepted`
+    /// carrying the container port the rule was created with.
+    ///
+    /// `listener_manager_add_and_remove_rule` only exercises the manager's
+    /// bookkeeping — it never connects, so nothing proved the listener task
+    /// actually accepts and reports. The relay's job ends here: SYN
+    /// generation toward the guest belongs to `splicetcp`'s active open.
+    ///
+    /// Binds port 0 and uses the port `add_rule` reports. Probing for a free
+    /// port and then binding it would race anything else on the machine into
+    /// the gap.
+    #[tokio::test]
+    async fn host_connection_produces_a_tcp_accepted_command() {
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(16);
+        let mut manager = InboundListenerManager::new(cmd_tx);
+
+        let host_port = manager
+            .add_rule(Ipv4Addr::LOCALHOST, 0, 8080, InboundProtocol::Tcp)
+            .await
+            .expect("rule should bind an OS-assigned port");
+        assert_ne!(host_port, 0, "add_rule must report the port it bound");
+
+        let _client = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, host_port))
+            .await
+            .expect("host should be able to connect to a registered rule");
+
+        let cmd = tokio::time::timeout(Duration::from_secs(5), cmd_rx.recv())
+            .await
+            .expect("a TcpAccepted command should arrive within 5s")
+            .expect("command channel stayed open");
+
+        match cmd {
+            InboundCommand::TcpAccepted {
+                host_port: got_host,
+                container_port,
+                ..
+            } => {
+                assert_eq!(got_host, host_port, "command reports the wrong host port");
+                assert_eq!(
+                    container_port, 8080,
+                    "command must carry the container port the rule was created with"
+                );
+            }
+            // Named rather than `{:?}`-formatted: deriving Debug on the
+            // command type (it carries a TcpStream) to serve a panic message
+            // would widen production surface for a test's benefit.
+            InboundCommand::UdpReceived { .. } => {
+                panic!("a TCP rule produced UdpReceived instead of TcpAccepted")
+            }
+        }
+    }
+
+    /// Removing a rule closes its listener, so a later connect is refused
+    /// rather than hanging or silently succeeding against a stale listener.
+    #[tokio::test]
+    async fn removing_a_rule_closes_the_listener() {
+        let (cmd_tx, _cmd_rx) = mpsc::channel(16);
+        let mut manager = InboundListenerManager::new(cmd_tx);
+
+        let host_port = manager
+            .add_rule(Ipv4Addr::LOCALHOST, 0, 8080, InboundProtocol::Tcp)
+            .await
+            .expect("rule should bind an OS-assigned port");
+        tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, host_port))
+            .await
+            .expect("connect should succeed while the rule exists");
+
+        // Keyed by the port that was *requested*, hence 0 rather than the
+        // bound port — see the `listeners` field comment.
+        manager
+            .remove_rule(Ipv4Addr::LOCALHOST, 0, InboundProtocol::Tcp)
+            .await;
+
+        // `remove_rule` waits for the listener task to drop its socket.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            match tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, host_port)).await {
+                Err(_) => break,
+                Ok(_) if tokio::time::Instant::now() >= deadline => {
+                    panic!("port {host_port} still accepts connections after remove_rule")
+                }
+                Ok(_) => tokio::time::sleep(Duration::from_millis(50)).await,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn listener_manager_stop_all() {
+        let (cmd_tx, _cmd_rx) = mpsc::channel(16);
+        let mut manager = InboundListenerManager::new(cmd_tx);
+
+        manager
+            .add_rule(Ipv4Addr::LOCALHOST, 0, 80, InboundProtocol::Tcp)
+            .await
+            .unwrap();
+        manager
+            .add_rule(Ipv4Addr::LOCALHOST, 0, 53, InboundProtocol::Udp)
+            .await
+            .unwrap();
+
+        manager.stop_all().await;
+        // After stop_all, the internal map should be empty. Since we can't
+        // inspect it directly, adding the same rule again should succeed (no
+        // duplicate key).
+        manager
+            .add_rule(Ipv4Addr::LOCALHOST, 0, 80, InboundProtocol::Tcp)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn listener_manager_rejects_duplicate_host_endpoint() {
+        let (cmd_tx, _cmd_rx) = mpsc::channel(16);
+        let mut manager = InboundListenerManager::new(cmd_tx);
+        manager
+            .add_rule(Ipv4Addr::LOCALHOST, 0, 80, InboundProtocol::Tcp)
+            .await
+            .unwrap();
+
+        let error = manager
+            .add_rule(Ipv4Addr::LOCALHOST, 0, 81, InboundProtocol::Tcp)
+            .await
+            .expect_err("the existing listener must not be reused for another destination");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse);
+        assert_eq!(manager.listeners.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn listener_remove_waits_until_socket_is_reusable() {
+        let reservation = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = reservation.local_addr().unwrap().port();
+        drop(reservation);
+
+        let (cmd_tx, _cmd_rx) = mpsc::channel(16);
+        let mut manager = InboundListenerManager::new(cmd_tx);
+        manager
+            .add_rule(Ipv4Addr::LOCALHOST, port, 80, InboundProtocol::Tcp)
+            .await
+            .unwrap();
+        manager
+            .remove_rule(Ipv4Addr::LOCALHOST, port, InboundProtocol::Tcp)
+            .await;
+
+        std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port))
+            .expect("remove_rule must release the socket before returning");
+    }
+
+    #[tokio::test]
+    async fn same_port_different_ip_coexist() {
+        let (cmd_tx, _cmd_rx) = mpsc::channel(16);
+        let mut manager = InboundListenerManager::new(cmd_tx);
+
+        // Bind the same container port on two different host IPs (port 0 = OS-assigned).
+        manager
+            .add_rule(Ipv4Addr::LOCALHOST, 0, 80, InboundProtocol::Tcp)
+            .await
+            .unwrap();
+        manager
+            .add_rule(Ipv4Addr::UNSPECIFIED, 0, 80, InboundProtocol::Tcp)
+            .await
+            .unwrap();
+
+        // Remove only the localhost rule; re-adding it should succeed (not a dup).
+        manager
+            .remove_rule(Ipv4Addr::LOCALHOST, 0, InboundProtocol::Tcp)
+            .await;
+        manager
+            .add_rule(Ipv4Addr::LOCALHOST, 0, 80, InboundProtocol::Tcp)
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn invalid_host_ip_is_rejected() {
+        // Verify that HostIp parsing used by runtime rejects non-IPv4 strings.
+        // The runtime calls `host_ip_str.parse::<Ipv4Addr>()` and skips on Err.
+        assert!(
+            "::1".parse::<Ipv4Addr>().is_err(),
+            "IPv6 should fail Ipv4Addr parse"
+        );
+        assert!("not-an-ip".parse::<Ipv4Addr>().is_err());
+        assert!("".parse::<Ipv4Addr>().is_err());
+        // Valid cases the runtime accepts:
+        assert!("127.0.0.1".parse::<Ipv4Addr>().is_ok());
+        assert!("0.0.0.0".parse::<Ipv4Addr>().is_ok());
+    }
+}

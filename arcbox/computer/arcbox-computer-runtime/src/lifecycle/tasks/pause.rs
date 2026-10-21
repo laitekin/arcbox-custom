@@ -1,0 +1,365 @@
+//! The pause release: freeing a checkpointed computer's runtime while its
+//! disk survives.
+//!
+//! Moved here from `sandbox::pause` by R3 PR-F1d, unchanged: this is the body
+//! `Effect::SpawnRelease { KeepDisk }` names. `sandbox::pause` still drives
+//! it until R3 PR-F2 flips the manager onto the actor.
+//!
+//! The ordering mirrors a full release and is load-bearing for the same
+//! reasons: the VMM must be dead before the dm detach (EBUSY) and before the
+//! TAP goes. What differs is the disk — the overlay is detached with its COW
+//! file kept, or, in copy mode, the staged rootfs is taken back out of the
+//! VM's area and parked in `vm_dir` — and the renaming that leaves every
+//! retained resource keyed by the computer's own id.
+//!
+//! **The copy-mode disk comes out of the VM's area before the VMM is
+//! killed.** In copy mode the staged rootfs *is* the paused computer's
+//! disk, and it lives wherever the driver put it — an area a kill is
+//! entitled to take with it, and one nothing here can name. So the disk is
+//! taken back out through the port first, while a grip on that area is
+//! still held; only then is the VMM discarded. The other order reports a
+//! successful pause and leaves the resume that follows with no disk, which
+//! is why it is stated here rather than left to the reader of two
+//! statements twenty lines apart.
+//!
+//! The guest is quiesced by the checkpoint that precedes this, which is
+//! what makes taking its disk out safe while its VMM is still up.
+
+use std::sync::{Arc, Mutex};
+
+use arcbox_vm_driver::net::GuestNetwork;
+
+use crate::config::RuntimeConfig;
+use crate::error::{ComputerError, Result};
+use crate::lifecycle::runtime::ComputerRuntime;
+use crate::sandbox::pause::PAUSED_ROOTFS_FILE;
+use crate::sandbox::{self, ComputerId, ROOTFS_DISK_ID};
+use crate::snapshot_cow::CowManager;
+
+/// Free the VM and the network of a checkpointed sandbox while keeping its
+/// disk.
+///
+/// Ordering is load-bearing, mirroring full release: the VMM must be
+/// dead before the dm detach (EBUSY) and TAP destruction — and, ahead of
+/// both, a copy-mode disk must leave the VM's area before the kill that
+/// may take that area with it. The network allocation is quarantined —
+/// the daemon completes host-side forwarding cleanup through the same
+/// durable ticket flow Stop uses.
+///
+/// A sandbox that adopted a pre-warmed slot (CORE-78) has its slot-keyed
+/// overlay renamed onto the sandbox-id path, so `Paused` is always reached
+/// with every retained resource keyed by the sandbox id.
+pub async fn release_for_pause(
+    id: &ComputerId,
+    arc: &Arc<Mutex<ComputerRuntime>>,
+    config: &RuntimeConfig,
+    cow_manager: &CowManager,
+    network: &dyn GuestNetwork,
+) -> Result<()> {
+    // Copy mode: the staged rootfs IS this computer's disk. Take it out of
+    // the VM's area first — the guest is quiesced, a grip on the VM is
+    // still held, and after the kill neither is true.
+    let (prepared, handle, in_copy_mode, vm_dir) = {
+        let computer = arc.lock().unwrap();
+        (
+            computer.prepared.clone(),
+            computer.handle.clone(),
+            computer.cow_handle.is_none(),
+            computer.vm_dir.clone(),
+        )
+    };
+    if in_copy_mode {
+        // Either grip reaches the area, and both name the same one: a
+        // computer booted here holds the prepared VM, one this process
+        // adopted after an agent restart (CORE-135) holds only the handle.
+        let staging = prepared
+            .as_deref()
+            .map(|prepared| sandbox::staging_capability(prepared.staging()))
+            .or_else(|| {
+                handle
+                    .as_deref()
+                    .map(|handle| sandbox::staging_capability(handle.staging()))
+            });
+        // Nothing taken out is a refusal, not a skip: in copy mode the
+        // VM's area is where this computer's only writable disk lives, so
+        // `false` means there is no disk to pause — as does holding no grip
+        // on the VM to ask through, which the checkpoint this follows would
+        // already have refused. Discarding anyway would commit `Paused`
+        // with neither a preserved overlay nor a parked rootfs — the exact
+        // state resume refuses to start from, reached after the disk is
+        // already unrecoverable.
+        let parked = match staging {
+            Some(staging) => {
+                staging
+                    .unstage_disk(ROOTFS_DISK_ID, &vm_dir.join(PAUSED_ROOTFS_FILE))
+                    .await?
+            }
+            None => false,
+        };
+        if !parked {
+            return Err(ComputerError::Snapshot(format!(
+                "computer {id} runs on a copied rootfs but nothing could be taken out of its \
+                 vm's area; pausing it would leave nothing to resume from"
+            )));
+        }
+    }
+
+    super::release::kill_computer_process(id, arc).await?;
+    let owner = super::release::resource_owner(id, arc);
+
+    // Disk: detach the overlay but keep its COW file.
+    let cow_handle = arc.lock().unwrap().cow_handle.take();
+    if let Some(handle) = cow_handle {
+        if let Err(error) = cow_manager.detach_keep_cow(&handle).await {
+            arc.lock().unwrap().cow_handle = Some(handle);
+            return Err(error.into());
+        }
+        // A slot-keyed overlay must become sandbox-keyed: resume's
+        // `reattach`, the restart sweep's keep-list, and `Remove` all
+        // look the file up by sandbox id.
+        let retained = sandbox::preserved_cow_file(config, id);
+        let detached = sandbox::preserved_cow_file(config, &owner);
+        if detached != retained && detached.exists() {
+            tokio::fs::rename(&detached, &retained)
+                .await
+                .map_err(ComputerError::Io)?;
+        }
+    }
+
+    {
+        let lease = arc.lock().unwrap().network.take();
+        if let Some(lease) = lease
+            && let Err(error) = network.quarantine(lease.clone()).await
+        {
+            arc.lock().unwrap().network = Some(lease);
+            return Err(error.into());
+        }
+    }
+
+    // Nothing slot-keyed survives this point: the slot's VM is gone with
+    // the area it ran in, and its overlay was renamed above.
+    arc.lock().unwrap().pool_slot_id = None;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use arcbox_vm_driver::testkit::{FakeDriver, FakeNetwork};
+    use arcbox_vm_driver::{
+        BootSpec, ConsoleSpec, DiskSource, IsolationSpec, PreparedVm, ShutdownMode, VmDriver as _,
+        VmId, VmSpec,
+    };
+
+    use super::*;
+    use crate::sandbox::ComputerSpec;
+    use crate::snapshot_cow::CowOptions;
+
+    /// Which grip on its VM a computer holds.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Grip {
+        /// Booted by this process, so the prepared VM is still around.
+        Prepared,
+        /// Adopted after an agent restart (CORE-135): the prepared VM died
+        /// with the process that made it, and only the handle is left.
+        AdoptedHandle,
+    }
+
+    /// A copy-mode computer — no overlay, its disk staged into its VM's
+    /// area — with `staged` written there under the root disk's id when
+    /// asked for.
+    ///
+    /// Answers with the prepared VM whichever grip the computer ends up
+    /// holding, because the staging area is the same one either way and the
+    /// caller needs a way to look into it.
+    async fn copy_mode_computer(
+        data_dir: &std::path::Path,
+        driver: &FakeDriver,
+        staged: Option<&[u8]>,
+        grip: Grip,
+    ) -> (Arc<Mutex<ComputerRuntime>>, Arc<dyn PreparedVm>, PathBuf) {
+        let vm_dir = data_dir.join("sandboxes/job");
+        std::fs::create_dir_all(&vm_dir).unwrap();
+        let id = VmId::new("job").unwrap();
+        let prepared: Arc<dyn PreparedVm> = Arc::from(
+            driver
+                .prepare()
+                .unwrap()
+                .prepare(&id, &IsolationSpec::None, &vm_dir)
+                .await
+                .unwrap(),
+        );
+        if let Some(bytes) = staged {
+            let source = data_dir.join("template.ext4");
+            std::fs::write(&source, bytes).unwrap();
+            prepared
+                .staging()
+                .unwrap()
+                .stage_disk(ROOTFS_DISK_ID, DiskSource::Image(&source))
+                .await
+                .unwrap();
+        }
+        let mut computer = ComputerRuntime::new(
+            "job".to_owned(),
+            ComputerSpec::default(),
+            None,
+            vm_dir.clone(),
+        );
+        match grip {
+            Grip::Prepared => computer.prepared = Some(Arc::clone(&prepared)),
+            // The guest is running and nothing holds the process that
+            // spawned it, exactly as a sweep hands a computer back.
+            Grip::AdoptedHandle => {
+                computer.handle = Some(Arc::from(prepared.boot(vm_spec(&id)).await.unwrap()));
+            }
+        }
+        (Arc::new(Mutex::new(computer)), prepared, vm_dir)
+    }
+
+    /// The least a fake VM needs to boot.
+    fn vm_spec(id: &VmId) -> VmSpec {
+        VmSpec {
+            id: id.clone(),
+            cpus: 1,
+            memory_mib: 128,
+            boot: BootSpec::Kernel {
+                image: "/vmlinux".into(),
+                cmdline: String::new(),
+                initrd: None,
+            },
+            disks: vec![],
+            nics: vec![],
+            vsock: None,
+            shares: vec![],
+            console: ConsoleSpec::Off,
+            balloon: false,
+            entropy: false,
+            dirty_tracking: false,
+            isolation: IsolationSpec::None,
+        }
+    }
+
+    fn config(data_dir: &std::path::Path) -> RuntimeConfig {
+        let mut config = RuntimeConfig::default();
+        config.firecracker.data_dir = data_dir.to_string_lossy().into_owned();
+        config
+    }
+
+    /// A copy-mode computer's disk comes out of the VM's area and lands
+    /// where resume looks for it, and the VM is released.
+    ///
+    /// That the take-out *precedes* the discard is not observable through
+    /// the fake, whose staging area survives one; the ordering is held by
+    /// the comment at the site and proven by the `sandbox` e2e, where the
+    /// area really does go with the kill.
+    #[tokio::test]
+    async fn the_copy_mode_disk_is_parked_before_the_vm_is_discarded() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let driver = FakeDriver::new();
+        let (computer, prepared, vm_dir) = copy_mode_computer(
+            data_dir.path(),
+            &driver,
+            Some(b"the guest's disk"),
+            Grip::Prepared,
+        )
+        .await;
+        let config = config(data_dir.path());
+        let cow = CowManager::new(CowOptions::new(&config.firecracker.data_dir)).unwrap();
+
+        release_for_pause(
+            &"job".to_owned(),
+            &computer,
+            &config,
+            &cow,
+            &FakeNetwork::new(),
+        )
+        .await
+        .expect("a copy-mode pause parks the disk and releases the vm");
+
+        assert_eq!(
+            std::fs::read(vm_dir.join(PAUSED_ROOTFS_FILE)).unwrap(),
+            b"the guest's disk"
+        );
+        assert!(
+            !prepared.alive(),
+            "the vm is discarded after the disk is out"
+        );
+    }
+
+    /// Nothing to take out is a refusal, not a skip: continuing would
+    /// discard the VM, take its area with it, and record `Paused` for a
+    /// computer with no disk to resume from.
+    #[tokio::test]
+    async fn a_copy_mode_pause_with_no_staged_disk_is_refused_before_the_kill() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let driver = FakeDriver::new();
+        let (computer, prepared, vm_dir) =
+            copy_mode_computer(data_dir.path(), &driver, None, Grip::Prepared).await;
+        let config = config(data_dir.path());
+        let cow = CowManager::new(CowOptions::new(&config.firecracker.data_dir)).unwrap();
+
+        let refused = release_for_pause(
+            &"job".to_owned(),
+            &computer,
+            &config,
+            &cow,
+            &FakeNetwork::new(),
+        )
+        .await;
+
+        match refused {
+            Err(ComputerError::Snapshot(message)) => {
+                assert!(message.contains("nothing to resume from"), "{message}");
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+        assert!(prepared.alive(), "the vm is left running for a retry");
+        assert!(!vm_dir.join(PAUSED_ROOTFS_FILE).exists());
+    }
+
+    /// The regression CORE-135 left open: a copy-mode computer this process
+    /// adopted rather than booted holds no prepared VM, and pausing it used
+    /// to be refused outright — it could be stopped or removed, never
+    /// paused. Its disk is reachable through the handle, so it pauses like
+    /// any other, landing where resume looks for it.
+    #[tokio::test]
+    async fn an_adopted_copy_mode_computer_pauses_through_its_handle() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let driver = FakeDriver::new();
+        let (computer, _prepared, vm_dir) = copy_mode_computer(
+            data_dir.path(),
+            &driver,
+            Some(b"the guest's disk"),
+            Grip::AdoptedHandle,
+        )
+        .await;
+        assert!(
+            computer.lock().unwrap().prepared.is_none(),
+            "an adopted computer has only its handle"
+        );
+        let config = config(data_dir.path());
+        let cow = CowManager::new(CowOptions::new(&config.firecracker.data_dir)).unwrap();
+
+        release_for_pause(
+            &"job".to_owned(),
+            &computer,
+            &config,
+            &cow,
+            &FakeNetwork::new(),
+        )
+        .await
+        .expect("an adopted copy-mode computer pauses");
+
+        assert_eq!(
+            std::fs::read(vm_dir.join(PAUSED_ROOTFS_FILE)).unwrap(),
+            b"the guest's disk"
+        );
+        // Through the handle, since there is no prepared VM to discard —
+        // and asked to die rather than merely dropped.
+        assert_eq!(
+            driver.shutdowns(&VmId::new("job").unwrap()),
+            [ShutdownMode::Kill]
+        );
+    }
+}

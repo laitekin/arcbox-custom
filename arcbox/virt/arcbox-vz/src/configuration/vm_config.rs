@@ -1,0 +1,278 @@
+//! Virtual machine configuration.
+
+use crate::device::{
+    EntropyDeviceConfiguration, MacGraphicsDeviceConfiguration, MemoryBalloonDeviceConfiguration,
+    NetworkDeviceConfiguration, SerialPortConfiguration, SocketDeviceConfiguration,
+    StorageDeviceConfiguration, VirtioFileSystemDeviceConfiguration,
+};
+use crate::error::{VZError, VZResult};
+use crate::vm::VirtualMachine;
+use std::ffi::c_void;
+use std::ptr;
+
+use super::{BootLoader, Platform};
+
+/// Configuration for creating a virtual machine.
+///
+/// Use the builder methods to configure the VM, then call `build()` to
+/// create the `VirtualMachine` instance.
+pub struct VirtualMachineConfiguration {
+    inner: *mut c_void,
+    storage_devices: Vec<*mut c_void>,
+    network_devices: Vec<*mut c_void>,
+    serial_ports: Vec<*mut c_void>,
+    socket_devices: Vec<*mut c_void>,
+    entropy_devices: Vec<*mut c_void>,
+    directory_sharing_devices: Vec<*mut c_void>,
+    memory_balloon_devices: Vec<*mut c_void>,
+    graphics_devices: Vec<*mut c_void>,
+}
+
+// SAFETY: The inner pointer is an ObjC object handle created by the shim;
+// all access goes through the shim.
+unsafe impl Send for VirtualMachineConfiguration {}
+
+impl VirtualMachineConfiguration {
+    /// Creates a new VM configuration with default settings.
+    pub fn new() -> VZResult<Self> {
+        // SAFETY: shim allocates a VZVirtualMachineConfiguration and returns
+        // it at +1; released by Drop.
+        let obj = unsafe { crate::shim_ffi::abx_config_new() };
+        Ok(Self {
+            inner: obj,
+            storage_devices: Vec::new(),
+            network_devices: Vec::new(),
+            serial_ports: Vec::new(),
+            socket_devices: Vec::new(),
+            entropy_devices: Vec::new(),
+            directory_sharing_devices: Vec::new(),
+            memory_balloon_devices: Vec::new(),
+            graphics_devices: Vec::new(),
+        })
+    }
+
+    /// Sets the number of CPUs for the VM.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `count` is outside the allowed range.
+    /// Use `arcbox_vz::min_cpu_count()` and `arcbox_vz::max_cpu_count()`
+    /// to get the valid range.
+    pub fn set_cpu_count(&mut self, count: usize) -> &mut Self {
+        // SAFETY: self.inner is a valid configuration handle.
+        unsafe {
+            crate::shim_ffi::abx_config_set_cpu_count(self.inner.cast(), count as u64);
+        }
+        self
+    }
+
+    /// Gets the configured CPU count.
+    pub fn cpu_count(&self) -> u64 {
+        // SAFETY: self.inner is a valid configuration handle.
+        unsafe { crate::shim_ffi::abx_config_cpu_count(self.inner.cast()) }
+    }
+
+    /// Sets the memory size in bytes.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `bytes` is outside the allowed range.
+    /// Use `arcbox_vz::min_memory_size()` and `arcbox_vz::max_memory_size()`
+    /// to get the valid range.
+    pub fn set_memory_size(&mut self, bytes: u64) -> &mut Self {
+        // SAFETY: self.inner is a valid configuration handle.
+        unsafe {
+            crate::shim_ffi::abx_config_set_memory_size(self.inner.cast(), bytes);
+        }
+        self
+    }
+
+    /// Gets the configured memory size in bytes.
+    pub fn memory_size(&self) -> u64 {
+        // SAFETY: self.inner is a valid configuration handle.
+        unsafe { crate::shim_ffi::abx_config_memory_size(self.inner.cast()) }
+    }
+
+    /// Sets the boot loader for the VM.
+    pub fn set_boot_loader(&mut self, boot_loader: impl BootLoader) -> &mut Self {
+        // SAFETY: both arguments are valid handles; the config retains the
+        // boot loader (strong property), so dropping `boot_loader` is fine.
+        unsafe {
+            crate::shim_ffi::abx_config_set_boot_loader(
+                self.inner.cast(),
+                boot_loader.as_ptr().cast(),
+            );
+        }
+        self
+    }
+
+    /// Sets the platform configuration.
+    pub fn set_platform(&mut self, platform: impl Platform) -> &mut Self {
+        // SAFETY: both arguments are valid handles; the config retains the
+        // platform (strong property), so dropping `platform` is fine.
+        unsafe {
+            crate::shim_ffi::abx_config_set_platform(self.inner.cast(), platform.as_ptr().cast());
+        }
+        self
+    }
+
+    /// Adds a storage device to the VM.
+    pub fn add_storage_device(&mut self, device: StorageDeviceConfiguration) -> &mut Self {
+        self.storage_devices.push(device.into_ptr());
+        self
+    }
+
+    /// Adds a macOS graphics device to the VM.
+    ///
+    /// A macOS guest requires at least one graphics device to start.
+    pub fn add_graphics_device(&mut self, device: MacGraphicsDeviceConfiguration) -> &mut Self {
+        self.graphics_devices.push(device.into_ptr());
+        self
+    }
+
+    /// Adds a network device to the VM.
+    pub fn add_network_device(&mut self, device: NetworkDeviceConfiguration) -> &mut Self {
+        self.network_devices.push(device.into_ptr());
+        self
+    }
+
+    /// Adds a serial port to the VM.
+    pub fn add_serial_port(&mut self, port: SerialPortConfiguration) -> &mut Self {
+        self.serial_ports.push(port.into_ptr());
+        self
+    }
+
+    /// Adds a socket device (vsock) to the VM.
+    pub fn add_socket_device(&mut self, device: SocketDeviceConfiguration) -> &mut Self {
+        self.socket_devices.push(device.into_ptr());
+        self
+    }
+
+    /// Adds an entropy device to the VM.
+    pub fn add_entropy_device(&mut self, device: EntropyDeviceConfiguration) -> &mut Self {
+        self.entropy_devices.push(device.into_ptr());
+        self
+    }
+
+    /// Adds a `VirtioFS` directory sharing device to the VM.
+    ///
+    /// This allows sharing directories between the host and guest using
+    /// the `VirtIO` file system protocol.
+    pub fn add_directory_share(
+        &mut self,
+        device: VirtioFileSystemDeviceConfiguration,
+    ) -> &mut Self {
+        self.directory_sharing_devices.push(device.into_ptr());
+        self
+    }
+
+    /// Adds a memory balloon device to the VM.
+    ///
+    /// The balloon device allows the host to reclaim memory from the guest
+    /// or return memory to it dynamically.
+    ///
+    /// Typically only one balloon device is needed per VM.
+    pub fn add_memory_balloon_device(
+        &mut self,
+        device: MemoryBalloonDeviceConfiguration,
+    ) -> &mut Self {
+        self.memory_balloon_devices.push(device.into_ptr());
+        self
+    }
+
+    /// Validates the configuration.
+    ///
+    /// This is called automatically by `build()`, but can be called
+    /// manually to check for configuration errors early.
+    pub fn validate(&self) -> VZResult<()> {
+        // SAFETY: self.inner is a valid configuration handle; on failure the
+        // shim writes a strdup'd message that take_error_string frees.
+        unsafe {
+            let mut error: *mut std::ffi::c_char = ptr::null_mut();
+            if crate::shim_ffi::abx_config_validate(self.inner.cast(), &raw mut error) {
+                Ok(())
+            } else {
+                Err(VZError::InvalidConfiguration(
+                    crate::shim_ffi::take_error_string(error),
+                ))
+            }
+        }
+    }
+
+    /// Builds the virtual machine from this configuration.
+    ///
+    /// This finalizes all device configurations and creates the
+    /// `VirtualMachine` instance.
+    pub fn build(mut self) -> VZResult<VirtualMachine> {
+        self.apply_devices();
+        self.validate()?;
+
+        // SAFETY: self.inner is a validated configuration handle. The shim
+        // creates the VM on a fresh serial queue and returns a +1 box.
+        unsafe {
+            let vm_box = crate::shim_ffi::abx_vm_new(self.inner.cast());
+            Ok(VirtualMachine::from_box(vm_box))
+        }
+    }
+
+    /// Applies all device configurations to the VZ configuration.
+    ///
+    /// The shim borrows each handle (the configuration retains); ownership of
+    /// the +1s stays in the vectors, released by Drop.
+    fn apply_devices(&mut self) {
+        // Kind values mirror the shim's ABXDeviceKind.
+        let arrays: [(u32, &Vec<*mut c_void>); 8] = [
+            (0, &self.storage_devices),
+            (1, &self.network_devices),
+            (2, &self.serial_ports),
+            (3, &self.socket_devices),
+            (4, &self.entropy_devices),
+            (5, &self.directory_sharing_devices),
+            (6, &self.memory_balloon_devices),
+            (7, &self.graphics_devices),
+        ];
+        for (kind, handles) in arrays {
+            if !handles.is_empty() {
+                // SAFETY: every element is a valid +1 device handle produced
+                // by the shim; the slice is valid for the duration of the call.
+                unsafe {
+                    crate::shim_ffi::abx_config_set_devices(
+                        self.inner.cast(),
+                        kind,
+                        handles.as_ptr().cast(),
+                        handles.len(),
+                    );
+                }
+            }
+        }
+    }
+}
+
+impl Drop for VirtualMachineConfiguration {
+    fn drop(&mut self) {
+        // Release the stored device handles: the configuration (if built)
+        // holds its own retains, and unbuilt configurations would otherwise
+        // leak every added device.
+        for handles in [
+            &self.storage_devices,
+            &self.network_devices,
+            &self.serial_ports,
+            &self.socket_devices,
+            &self.entropy_devices,
+            &self.directory_sharing_devices,
+            &self.memory_balloon_devices,
+            &self.graphics_devices,
+        ] {
+            for &handle in handles {
+                if !handle.is_null() {
+                    // SAFETY: each entry is an unconsumed +1 shim handle.
+                    unsafe { crate::shim_ffi::abx_object_release(handle.cast()) };
+                }
+            }
+        }
+        if !self.inner.is_null() {
+            // SAFETY: releasing the +1 configuration handle from the shim.
+            unsafe { crate::shim_ffi::abx_object_release(self.inner.cast()) };
+        }
+    }
+}

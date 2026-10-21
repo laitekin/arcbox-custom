@@ -1,0 +1,180 @@
+# arcbox-computer-runtime
+
+Guest-side sandbox orchestration: runs **inside** the ArcBox System VM and
+manages nested microVMs — one per sandbox — through a `VmDriver`
+([`arcbox-vm-driver`](../../virt/arcbox-vm-driver)); the reference driver is
+[`arcbox-fc-driver`](../../virt/arcbox-fc-driver), Firecracker.
+
+Do not confuse it with `arcbox-vmm`, which is the **host** VMM that boots
+the System VM itself on Virtualization.framework or KVM. Different layer,
+different machine.
+
+```
+host (macOS)         System VM (Linux)              sandbox (microVM)
+arcbox-daemon  ──vsock──►  arcbox-agent        ──vsock──►  vm-agent (PID 1)
+  arcbox-vmm             arcbox-computer-runtime             workload
+                         arcbox-vm-driver                (arcbox-vm-agent)
+                         (arcbox-fc-driver)
+                                    └── arcbox-vm-proto ──┘
+```
+
+`arcbox-agent` owns the `sandbox.v1`
+surface and the vsock transport, and calls `ComputerManager` underneath.
+There are no service implementations, no tonic, and no daemon here. Node image builders can use `RootfsBuilder` independently.
+
+The **`vm-agent`** binary that becomes PID 1 *inside* each sandbox is a
+separate crate, [`arcbox-vm-agent`](../../virt/arcbox-vm-agent); the wire
+vocabulary both sides share — boot parameters, exec-channel and
+file-channel frames — is [`arcbox-vm-proto`](../../virt/arcbox-vm-proto). This
+crate and the agent each depend on the proto crate and never on each
+other, so the agent stays a small static musl binary no matter what the
+manager pulls in. `boot_proto` and `file_proto` stay reachable here as
+re-exports. `RootfsBuilder` (this crate) stages the binary into every
+sandbox rootfs at `/sbin/vm-agent` — OCI/overlay2 → ext4 conversion plus
+the default busybox image, with the agent binary source, the cache
+directory, and the busybox supplied by the composer as `RootfsPaths`. The
+rootfs convention the boot protocol relies on is therefore implemented
+once, here.
+
+`RootfsBuilder::inject_vm_agent(&image)` also injects the configured agent into an existing ext4 image. Injection requires Linux and loop-mount privileges. Resolver setup and resource cleanup failures return an error. An owned task completes injection and cleanup after caller cancellation. Converted images keep their distribution's `/sbin/init`; `RuntimeConfig` selects `VM_AGENT_PATH` with the default `init=` boot argument. Custom boot arguments must select the same path.
+
+`RootfsBuilder::build_rootfs(RootfsSpec { source, out, size })` builds an image at a caller-owned path and capacity. `RootfsSource` accepts an OCI layout, an overlay2 directory, or a resolved `oci2rootfs::ImageSource`. Capacity must be a positive multiple of `ROOTFS_CAPACITY_GRANULARITY` (128 MiB). Both the declared ext4 capacity and file length must equal the requested capacity; sources that make the formatter enlarge the image fail before agent injection. The builder injects the agent before atomically replacing the destination with a synchronous rename. Failed or cancelled builds preserve an existing destination. On cancellation, an owned task finishes conversion and injection before removing the temporary image. Cleanup failures return an error, or are logged when the caller has gone.
+
+`convert_layer_to_rootfs` starts cached templates at 512 MiB and lets the formatter grow the image to fit the source. Templates share agent injection, cancellation cleanup, and atomic publication with `build_rootfs`. Only `build_rootfs` enforces an exact caller-supplied capacity. Cache names remain `rootfs-<layer>-<agent>.ext4`; capacity does not change template identity.
+
+These cancellation guarantees require the Tokio runtime to keep running. Runtime shutdown or process termination can leave temporary images, mount directories, or loop devices behind. The default busybox rootfs builder uses a separate pipeline.
+
+Enable `remote-image` to resolve registry references with the re-exported `oci2rootfs::RemoteRef`. Keep the resolved source's config and manifest digest before passing `RootfsSource::Image(source)` to `build_rootfs`. Use fully qualified references: the current dependency misparses bare numeric tags such as `debian:12`. The opt-in registry integration test defaults to `docker.io/library/debian:12`, builds a 32 GiB sparse image, and reads the result through the Linux ext4 driver:
+
+```bash
+sudo -E env ARCBOX_REQUIRE_BLOCK_TOOLS=1 cargo test -p arcbox-computer-runtime --features remote-image --test integration \
+  a_registry_image_builds_at_sparse_computer_capacity -- --ignored --nocapture
+```
+
+## Usage
+
+```rust
+use std::sync::Arc;
+use arcbox_computer_runtime::{NodeEnvironment, RuntimeConfig, ComputerManager, ComputerSpec};
+
+// `environment` is the composer's; see below.
+let manager = Arc::new(ComputerManager::new(RuntimeConfig::default(), environment)?);
+
+let (id, ip) = manager
+    .create_computer(ComputerSpec {
+        vcpus: 1,
+        memory_mib: 512,
+        ..Default::default()
+    })
+    .await?;
+```
+
+`RuntimeConfig` loads from TOML (`RuntimeConfig::from_file`) or is built
+programmatically; `[firecracker]`, `[network]`, and `[defaults]` are the
+sections that matter, and `[firecracker.jailer]` opts into jailer mode.
+See `config/runtime.rs` for the fields.
+
+`[firecracker]` is named for the VMM a deployed `vmm.toml` has always run,
+not for anything this crate knows: the keys that configure a VMM adapter
+live in the same section and are read by whoever builds it (for the System
+VM, `arcbox_agent::config::AdapterConfig`). serde ignores unknown fields,
+so one section serves both halves.
+
+What the stack needs from its *environment* — the pieces that differ
+between the System VM's busybox userland and a stock distro — is a
+separate input, `NodeEnvironment`, and all four members are required.
+This crate builds none of them and names no VMM: whoever composes the node
+does. For the System VM that is `arcbox_agent::sandbox::node_environment`.
+
+- `driver` — the VMM behind `arcbox_vm_driver::VmDriver`. It must claim
+  `Prepare` and `Staging` and offer `vsock`, or `ComputerManager::new`
+  refuses it.
+- `network` — what the NICs attach to, behind
+  `arcbox_vm_driver::net::GuestNetwork`. It must offer `NetworkReconcile`.
+- `agent` — how the guest agent is reached, behind
+  `agent::GuestAgentFactory`. The reference is the `arcbox-vm-proto`
+  client over the driver's vsock, which also decides what the readiness
+  gate needs from the driver.
+- `cow_manager` — the copy-on-write rootfs manager
+  (`arcbox_snapshot::snapshot_cow::CowManager`), built over the composer's
+  own loop-device tooling: `BusyboxBlockTools` in the System VM,
+  `UtilLinuxBlockTools` on a stock distro, or a consumer's own few dozen
+  lines of ioctls.
+
+`testkit::fake_environment` (feature `testkit`) is those four over the
+port's fakes, for tests that must not need a VMM.
+
+The sandbox network itself — the IPv4 pool, the per-sandbox TAP, the
+invariant NAT (eBPF TCX or netfilter), and the quarantine ledger — is
+[`arcbox-tap-net`](../../virt/arcbox-tap-net), the Linux adapter of the
+`arcbox-vm-driver` `GuestNetwork` port; the composer builds it, and this
+crate does not depend on it at all. Rendering the invariant translation
+in the host's netfilter framework is that adapter's own seam
+(`arcbox_tap_net::PacketFilter`: `IptablesLegacy` in the System VM,
+`Nftables` on a stock distro — legacy and nft rulesets are mutually
+invisible), so it is an argument to the network, not a member here.
+
+## Build and test
+
+```bash
+cargo test -p arcbox-computer-runtime    # unit + integration, no Firecracker needed
+cargo clippy -p arcbox-computer-runtime -- -D warnings
+cargo test -p arcbox-tap-net             # the TAP network (root-only TAP tests skip)
+
+# vm-agent, as the release ships it (aarch64 musl; brew install FiloSottile/musl-cross/musl-cross)
+cargo build -p arcbox-vm-agent --bin vm-agent --target aarch64-unknown-linux-musl --release
+```
+
+`tests/manager_over_fakes.rs` drives the manager's own flows — create,
+boot, exec, files, pause, resume, checkpoint, restore, expiry, remove,
+adoption — over the driver port's `FakeDriver`/`FakeNetwork` and this
+crate's `FakeAgent`, so the whole lifecycle is testable with no KVM, no
+root and no Firecracker.
+
+Everything real — TAP creation (`arcbox-tap-net`), boot, checkpoint —
+needs Linux with `CAP_NET_ADMIN`, a `firecracker` binary, and (for jailer
+mode) root, and so belongs to whoever composes the driver and the network.
+That is `arcbox-agent`: its `tests/sandbox_manager_e2e.rs` and
+`examples/sandbox-manager-smoke.rs` boot real Firecracker through the
+environment its `SandboxService` composes.
+`.github/workflows/test-vm-linux.yml` runs the whole ladder on real KVM.
+
+## Jailer mode: every path the FC API sees is chroot-relative
+
+Firecracker `pivot_root`s before it processes any API request, so a
+host-absolute path handed to the API resolves inside the chroot and
+returns `ENOENT`. Kernel and rootfs are therefore *staged into* the
+chroot before boot (`{chroot}/vmlinux`, `{chroot}/rootfs.ext4`) and the
+API is given `/vmlinux` and `/rootfs.ext4`. Checkpoints write to
+`{chroot}/snapshots/{id}/` and are moved out to the catalog afterwards;
+restore copies them back into the *new* sandbox's chroot first.
+
+The same rule is what keeps vsock sockets from colliding: the vmstate
+records the UDS as `/run/firecracker.vsock`, which is a different host
+path in every sandbox's chroot.
+
+Durable sandbox records retain kernel and rootfs paths so an adopted sandbox can checkpoint, pause, and resume. The manager pins each record's source rootfs until the record is removed. Snapshots and templates also pin their source rootfs. Workload inputs and SSH keys are redacted when provisioning completes.
+
+Legacy records without kernel or rootfs paths remain adoptable. Their checkpoint requests return `FailedPrecondition` before capture and leave the guest running.
+
+Restore inherits the source snapshot's kernel, rootfs, vCPU count, and memory size. Snapshots without recorded geometry, or with a zero vCPU count or memory size, return `FailedPrecondition` before reserving resources. Re-checkpoint the source sandbox with the current agent to create a restorable snapshot.
+
+## Data layout
+
+```
+{data_dir}/                       # default /var/lib/firecracker-vmm
+├── kernels/vmlinux
+├── images/*.ext4
+├── sandboxes/{id}/               # firecracker.sock, .vsock, .log, .metrics
+├── sandbox-network-quarantine/   # arcbox-tap-net's ledger: {id}.json per quarantined address
+└── snapshots/{sandbox-id}/{snapshot-id}/
+                                  # vmstate, mem, meta.json
+```
+
+Under jailer mode the live files instead sit beneath
+`{chroot_base_dir}/firecracker/{sandbox-id}/root/` (default
+`/srv/jailer`), and the snapshot catalog above is still the durable home.
+
+## License
+
+MIT OR Apache-2.0, inherited from the workspace root.
