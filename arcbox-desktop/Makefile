@@ -27,6 +27,9 @@ SKIP_XCODE_EMBED ?= 0
 ARCBOX_STAGE_RESOURCES ?= 0
 XCODE_AD_HOC_SIGN ?= 1
 ARCBOX_PROFILE ?=
+# Optional manually started development helper with isolated arcbox-dev.local
+# DNS integration. The socket's parent must be owned by this user, mode 0700.
+ARCBOX_HELPER_SOCKET ?=
 ARCBOX_PRODUCT_BUNDLE_IDENTIFIER ?=
 ARCBOX_PRODUCT_NAME ?=
 ARCBOX_APP_DISPLAY_NAME ?=
@@ -162,6 +165,7 @@ XCODEBUILD_FLAGS = \
 	$(if $(ARCBOX_HOST_TARGET_DIR),ARCBOX_HOST_TARGET_DIR='$(ARCBOX_HOST_TARGET_DIR)') \
 	$(if $(ARCBOX_DIR),ARCBOX_DIR='$(ARCBOX_DIR)') \
 	$(if $(ARCBOX_PROFILE),ARCBOX_PROFILE='$(ARCBOX_PROFILE)') \
+	$(if $(ARCBOX_HELPER_SOCKET),ARCBOX_HELPER_SOCKET='$(ARCBOX_HELPER_SOCKET)') \
 	$(if $(ARCBOX_PRODUCT_BUNDLE_IDENTIFIER),ARCBOX_PRODUCT_BUNDLE_IDENTIFIER='$(ARCBOX_PRODUCT_BUNDLE_IDENTIFIER)') \
 	$(if $(ARCBOX_PRODUCT_NAME),ARCBOX_PRODUCT_NAME='$(ARCBOX_PRODUCT_NAME)') \
 	$(if $(ARCBOX_APP_DISPLAY_NAME),ARCBOX_APP_DISPLAY_NAME='$(ARCBOX_APP_DISPLAY_NAME)') \
@@ -179,6 +183,7 @@ RUNNABLE_BUILD_VARS = \
 	SKIP_RUST_BUILD=0 \
 	ARCBOX_STAGE_RESOURCES=1 \
 	XCODE_AD_HOC_SIGN=0 \
+	XCODE_SIGN_IDENTITY='$(SIGN_IDENTITY)' \
 	ARCBOX_PROFILE=development \
 	ARCBOX_PRODUCT_BUNDLE_IDENTIFIER=com.arcboxlabs.desktop.dev \
 	ARCBOX_PRODUCT_NAME=ArcBox \
@@ -313,7 +318,7 @@ build-runnable-rust:
 		echo "ERROR: Node.js is unavailable; it is required to build guest agents." >&2; \
 		exit 1; \
 	fi
-	$(HOST_RUST_ENV) cargo build \
+	cd "$(ARCBOX_DIR)" && $(HOST_RUST_ENV) cargo build \
 		--manifest-path "$(ARCBOX_DIR)/Cargo.toml" \
 		-p arcbox-cli -p arcbox-helper -p arcbox-daemon \
 		--release

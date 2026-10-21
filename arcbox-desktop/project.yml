@@ -158,12 +158,13 @@ targets:
         shell: /bin/bash
         basedOnDependencyAnalysis: false
         script: |
+          set -e
           if [ "$SKIP_RUST_BUILD" = "1" ]; then echo 'note: SKIP_RUST_BUILD=1, skipping binary embedding'; exit 0; fi
           export PATH="${PROJECT_DIR}/.devenv/profile/bin:${ARCBOX_CARGO_BIN_DIR:+${ARCBOX_CARGO_BIN_DIR}:}${ARCBOX_NODE_BIN_DIR:+${ARCBOX_NODE_BIN_DIR}:}$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
           cd "${PROJECT_DIR}"
           if [ "$ARCBOX_STAGE_RESOURCES" = "1" ]; then
             export ARCBOX_HOST_BIN_DIR="${ARCBOX_HOST_BIN_DIR:-${PROJECT_DIR}/.build/ArcBoxHost/release}"
-            make build-runnable-rust
+            make build-runnable-rust SIGN_IDENTITY="${DAEMON_SIGN_IDENTITY:-}"
           fi
           exec cargo xtask macos embed
     postBuildScripts:
@@ -173,8 +174,12 @@ targets:
         script: |
           if [ "$ARCBOX_STAGE_RESOURCES" != "1" ]; then echo 'note: ARCBOX_STAGE_RESOURCES is disabled'; exit 0; fi
           identity="${EXPANDED_CODE_SIGN_IDENTITY:-${CODE_SIGN_IDENTITY:-}}"
-          if [ -z "$identity" ] || [ "$identity" = "-" ]; then
+          if [ -z "$identity" ]; then
             echo 'error: a development signing identity is required to stage runnable resources'
+            exit 1
+          fi
+          if [ "$identity" = "-" ] && [ "$ARCBOX_PROFILE" != "development" ]; then
+            echo 'error: ad-hoc resource signing is only supported for the development profile'
             exit 1
           fi
           export PATH="${PROJECT_DIR}/.devenv/profile/bin:${ARCBOX_CARGO_BIN_DIR:+${ARCBOX_CARGO_BIN_DIR}:}${ARCBOX_NODE_BIN_DIR:+${ARCBOX_NODE_BIN_DIR}:}$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"

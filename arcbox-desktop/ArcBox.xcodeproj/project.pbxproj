@@ -1544,7 +1544,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "if [ \"$ARCBOX_STAGE_RESOURCES\" != \"1\" ]; then echo 'note: ARCBOX_STAGE_RESOURCES is disabled'; exit 0; fi\nidentity=\"${EXPANDED_CODE_SIGN_IDENTITY:-${CODE_SIGN_IDENTITY:-}}\"\nif [ -z \"$identity\" ] || [ \"$identity\" = \"-\" ]; then\n  echo 'error: a development signing identity is required to stage runnable resources'\n  exit 1\nfi\nexport PATH=\"${PROJECT_DIR}/.devenv/profile/bin:${ARCBOX_CARGO_BIN_DIR:+${ARCBOX_CARGO_BIN_DIR}:}${ARCBOX_NODE_BIN_DIR:+${ARCBOX_NODE_BIN_DIR}:}$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"\ncd \"${PROJECT_DIR}\"\nprofile=()\nif [ \"$ARCBOX_PROFILE\" = \"development\" ] || [ \"$ARCBOX_PROFILE\" = \"dev\" ]; then profile=(--dev); fi\nexec cargo xtask macos stage-resources \"${TARGET_BUILD_DIR}/${WRAPPER_NAME}\" \"${profile[@]}\" --sign \"$identity\"\n";
+			shellScript = "if [ \"$ARCBOX_STAGE_RESOURCES\" != \"1\" ]; then echo 'note: ARCBOX_STAGE_RESOURCES is disabled'; exit 0; fi\nidentity=\"${EXPANDED_CODE_SIGN_IDENTITY:-${CODE_SIGN_IDENTITY:-}}\"\nif [ -z \"$identity\" ]; then\n  echo 'error: a development signing identity is required to stage runnable resources'\n  exit 1\nfi\nif [ \"$identity\" = \"-\" ] && [ \"$ARCBOX_PROFILE\" != \"development\" ]; then\n  echo 'error: ad-hoc resource signing is only supported for the development profile'\n  exit 1\nfi\nexport PATH=\"${PROJECT_DIR}/.devenv/profile/bin:${ARCBOX_CARGO_BIN_DIR:+${ARCBOX_CARGO_BIN_DIR}:}${ARCBOX_NODE_BIN_DIR:+${ARCBOX_NODE_BIN_DIR}:}$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"\ncd \"${PROJECT_DIR}\"\nprofile=()\nif [ \"$ARCBOX_PROFILE\" = \"development\" ] || [ \"$ARCBOX_PROFILE\" = \"dev\" ]; then profile=(--dev); fi\nexec cargo xtask macos stage-resources \"${TARGET_BUILD_DIR}/${WRAPPER_NAME}\" \"${profile[@]}\" --sign \"$identity\"\n";
 		};
 		FEF8974E31AE2208909EA170 /* Embed Arcbox Binaries */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -1563,7 +1563,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "if [ \"$SKIP_RUST_BUILD\" = \"1\" ]; then echo 'note: SKIP_RUST_BUILD=1, skipping binary embedding'; exit 0; fi\nexport PATH=\"${PROJECT_DIR}/.devenv/profile/bin:${ARCBOX_CARGO_BIN_DIR:+${ARCBOX_CARGO_BIN_DIR}:}${ARCBOX_NODE_BIN_DIR:+${ARCBOX_NODE_BIN_DIR}:}$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"\ncd \"${PROJECT_DIR}\"\nif [ \"$ARCBOX_STAGE_RESOURCES\" = \"1\" ]; then\n  export ARCBOX_HOST_BIN_DIR=\"${ARCBOX_HOST_BIN_DIR:-${PROJECT_DIR}/.build/ArcBoxHost/release}\"\n  make build-runnable-rust\nfi\nexec cargo xtask macos embed\n";
+			shellScript = "set -e\nif [ \"$SKIP_RUST_BUILD\" = \"1\" ]; then echo 'note: SKIP_RUST_BUILD=1, skipping binary embedding'; exit 0; fi\nexport PATH=\"${PROJECT_DIR}/.devenv/profile/bin:${ARCBOX_CARGO_BIN_DIR:+${ARCBOX_CARGO_BIN_DIR}:}${ARCBOX_NODE_BIN_DIR:+${ARCBOX_NODE_BIN_DIR}:}$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"\ncd \"${PROJECT_DIR}\"\nif [ \"$ARCBOX_STAGE_RESOURCES\" = \"1\" ]; then\n  export ARCBOX_HOST_BIN_DIR=\"${ARCBOX_HOST_BIN_DIR:-${PROJECT_DIR}/.build/ArcBoxHost/release}\"\n  make build-runnable-rust SIGN_IDENTITY=\"${DAEMON_SIGN_IDENTITY:-}\"\nfi\nexec cargo xtask macos embed\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

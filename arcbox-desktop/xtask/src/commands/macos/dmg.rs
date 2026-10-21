@@ -26,6 +26,7 @@ use crate::{MacosDmgArgs, MacosPrepareResourcesArgs, MacosStageResourcesArgs};
 mod tests;
 
 const PRODUCTION_DAEMON_NAME: &str = "com.arcboxlabs.desktop.daemon";
+const HELPER_SOCKET_ENV: &str = "ARCBOX_HELPER_SOCKET";
 const DOCKER_TOOLS: [&str; 4] = [
     "docker",
     "docker-buildx",
@@ -1105,6 +1106,39 @@ fn create_dmg(app_bundle: &Path, dmg_path: &Path, profile: BundleProfile) -> Res
 }
 
 fn rewrite_launch_agent_plist(app_bundle: &Path, profile: BundleProfile) -> Result<()> {
+    let helper_socket = std::env::var_os(HELPER_SOCKET_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    rewrite_launch_agent_plist_with_helper(app_bundle, profile, helper_socket.as_deref())
+}
+
+fn rewrite_launch_agent_plist_with_helper(
+    app_bundle: &Path,
+    profile: BundleProfile,
+    helper_socket: Option<&Path>,
+) -> Result<()> {
+    if let Some(socket) = helper_socket {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        if profile != BundleProfile::Development {
+            bail!("{HELPER_SOCKET_ENV} is only supported for the development profile");
+        }
+        if !socket.is_absolute() {
+            bail!("{HELPER_SOCKET_ENV} must be an absolute path");
+        }
+        let parent = socket.parent().context("helper socket has no parent")?;
+        let metadata = std::fs::metadata(parent)
+            .with_context(|| format!("reading helper socket directory {}", parent.display()))?;
+        let owner = std::fs::metadata(home()).context("reading home directory owner")?;
+        if !metadata.is_dir()
+            || metadata.permissions().mode() & 0o777 != 0o700
+            || metadata.uid() != owner.uid()
+        {
+            bail!(
+                "development helper socket directory must be owned by the current user with mode 0700"
+            );
+        }
+    }
     let launch_agents = app_bundle
         .join("Contents")
         .join("Library")
@@ -1142,15 +1176,14 @@ fn rewrite_launch_agent_plist(app_bundle: &Path, profile: BundleProfile) -> Resu
         "BundleProgram".into(),
         format!("Contents/Frameworks/{daemon_name}.app/Contents/MacOS/{daemon_name}").into(),
     );
+    let mut arguments = profile.daemon_arguments();
+    if helper_socket.is_some() {
+        // Development must explicitly own a separate resolver domain.
+        arguments.extend(["--dns-domain", "arcbox-dev.local", "--install-dns-resolver"]);
+    }
     dict.insert(
         "ProgramArguments".into(),
-        plist::Value::Array(
-            profile
-                .daemon_arguments()
-                .into_iter()
-                .map(Into::into)
-                .collect(),
-        ),
+        plist::Value::Array(arguments.into_iter().map(Into::into).collect()),
     );
     dict.insert(
         "StandardOutPath".into(),
@@ -1160,6 +1193,28 @@ fn rewrite_launch_agent_plist(app_bundle: &Path, profile: BundleProfile) -> Resu
         "StandardErrorPath".into(),
         format!("/tmp/{daemon_name}.stderr.log").into(),
     );
+    if !dict.contains_key("EnvironmentVariables") {
+        dict.insert(
+            "EnvironmentVariables".into(),
+            plist::Value::Dictionary(plist::Dictionary::new()),
+        );
+    }
+    let environment = dict
+        .get_mut("EnvironmentVariables")
+        .context("LaunchAgent EnvironmentVariables is missing")?
+        .as_dictionary_mut()
+        .context("LaunchAgent EnvironmentVariables is not a dictionary")?;
+    if let Some(socket) = helper_socket {
+        environment.insert(
+            HELPER_SOCKET_ENV.into(),
+            socket
+                .to_str()
+                .context("helper socket path is not UTF-8")?
+                .into(),
+        );
+    } else {
+        environment.remove(HELPER_SOCKET_ENV);
+    }
     value
         .to_file_xml(plist_path)
         .with_context(|| format!("writing {}", plist_path.display()))?;

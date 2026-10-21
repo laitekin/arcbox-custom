@@ -1,6 +1,6 @@
 use super::{
     BundleProfile, boot_asset_files, boot_cache_ready, embed_boot_assets, local_boot_cache_ready,
-    prepare_strip_copy, rewrite_launch_agent_plist, should_reuse_local_boot_cache,
+    prepare_strip_copy, rewrite_launch_agent_plist_with_helper, should_reuse_local_boot_cache,
     write_binaries_fragment,
 };
 
@@ -20,7 +20,7 @@ fn launch_agent_fixture(profile: BundleProfile) -> tempfile::TempDir {
 fn development_launch_agent_excludes_global_docker_integration() {
     let dir = launch_agent_fixture(BundleProfile::Production);
 
-    rewrite_launch_agent_plist(dir.path(), BundleProfile::Development).unwrap();
+    rewrite_launch_agent_plist_with_helper(dir.path(), BundleProfile::Development, None).unwrap();
 
     let plist = plist::Value::from_file(
         dir.path()
@@ -45,7 +45,7 @@ fn development_launch_agent_excludes_global_docker_integration() {
 fn production_launch_agent_keeps_global_docker_integration() {
     let dir = launch_agent_fixture(BundleProfile::Production);
 
-    rewrite_launch_agent_plist(dir.path(), BundleProfile::Production).unwrap();
+    rewrite_launch_agent_plist_with_helper(dir.path(), BundleProfile::Production, None).unwrap();
 
     let plist = plist::Value::from_file(
         dir.path()
@@ -71,7 +71,7 @@ fn production_launch_agent_keeps_global_docker_integration() {
 fn development_launch_agent_updates_an_existing_profile_plist() {
     let dir = launch_agent_fixture(BundleProfile::Development);
 
-    rewrite_launch_agent_plist(dir.path(), BundleProfile::Development).unwrap();
+    rewrite_launch_agent_plist_with_helper(dir.path(), BundleProfile::Development, None).unwrap();
 
     let plist = plist::Value::from_file(
         dir.path()
@@ -90,6 +90,102 @@ fn development_launch_agent_updates_an_existing_profile_plist() {
             .into()
         )
     );
+}
+
+#[test]
+fn development_launch_agent_uses_private_helper_and_preserves_path() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = launch_agent_fixture(BundleProfile::Production);
+    let private = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(private.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let socket = private.path().join("helper-dev.sock");
+    rewrite_launch_agent_plist_with_helper(dir.path(), BundleProfile::Development, Some(&socket))
+        .unwrap();
+
+    let path = dir
+        .path()
+        .join("Contents/Library/LaunchAgents/com.arcboxlabs.desktop.dev.daemon.plist");
+    let plist = plist::Value::from_file(&path).unwrap();
+    assert_eq!(
+        plist.as_dictionary().unwrap()["ProgramArguments"],
+        plist::Value::Array(
+            [
+                "com.arcboxlabs.desktop.dev.daemon",
+                "--profile",
+                "development",
+                "--dns-domain",
+                "arcbox-dev.local",
+                "--install-dns-resolver",
+            ]
+            .map(Into::into)
+            .into()
+        )
+    );
+    let environment = plist.as_dictionary().unwrap()["EnvironmentVariables"]
+        .as_dictionary()
+        .unwrap();
+    assert_eq!(
+        environment["ARCBOX_HELPER_SOCKET"].as_string(),
+        socket.to_str()
+    );
+    assert_eq!(
+        environment["PATH"].as_string(),
+        Some("/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin")
+    );
+
+    rewrite_launch_agent_plist_with_helper(dir.path(), BundleProfile::Development, None).unwrap();
+    let plist = plist::Value::from_file(path).unwrap();
+    assert!(
+        !plist.as_dictionary().unwrap()["EnvironmentVariables"]
+            .as_dictionary()
+            .unwrap()
+            .contains_key("ARCBOX_HELPER_SOCKET")
+    );
+}
+
+#[test]
+fn production_launch_agent_rejects_development_helper_override() {
+    let dir = launch_agent_fixture(BundleProfile::Production);
+    let error = rewrite_launch_agent_plist_with_helper(
+        dir.path(),
+        BundleProfile::Production,
+        Some(std::path::Path::new("/var/run/arcbox-helper.sock")),
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("only supported for the development")
+    );
+}
+
+#[test]
+fn development_launch_agent_rejects_shared_helper_directory() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = launch_agent_fixture(BundleProfile::Production);
+    let public = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(public.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let error = rewrite_launch_agent_plist_with_helper(
+        dir.path(),
+        BundleProfile::Development,
+        Some(&public.path().join("helper.sock")),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("mode 0700"));
+}
+
+#[test]
+fn development_launch_agent_rejects_relative_helper_path() {
+    let dir = launch_agent_fixture(BundleProfile::Production);
+    let error = rewrite_launch_agent_plist_with_helper(
+        dir.path(),
+        BundleProfile::Development,
+        Some(std::path::Path::new("helper.sock")),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("absolute path"));
 }
 
 #[test]
