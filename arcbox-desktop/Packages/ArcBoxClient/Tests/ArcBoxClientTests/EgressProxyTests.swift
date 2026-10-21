@@ -141,3 +141,44 @@ import Testing
         #expect(MachineImageImportPhase(proto: event) == nil)
     }
 }
+
+@Suite struct EgressProxyQuickToggleTests {
+    private var custom: EgressProxySettings {
+        var settings = EgressProxySettings()
+        settings.mode = .custom
+        settings.proxyProtocol = .http
+        settings.host = "proxy.corp"
+        settings.port = "3128"
+        settings.username = "alice"
+        settings.udp = .block
+        return settings
+    }
+
+    @Test func offRemembersACustomProxyAndKeepsPolicies() throws {
+        let remembered = try #require(EgressProxyQuickToggle.remembered(custom))
+        #expect(remembered == "http://alice@proxy.corp:3128")
+        let off = EgressProxyQuickToggle.off(custom)
+        #expect(off.mode == .direct)
+        #expect(off.udp == .block)
+        #expect(EgressProxyQuickToggle.remembered(off) == nil)
+    }
+
+    @Test func onRestoresTheRememberedCustomProxy() {
+        let off = EgressProxyQuickToggle.off(custom)
+        let on = EgressProxyQuickToggle.on(off, remembered: EgressProxyQuickToggle.remembered(custom))
+        #expect(on.sameAccount(as: custom))
+        #expect(on.udp == .block)
+        #expect(on.setRequest(password: .keep).hasPassword == false)
+    }
+
+    @Test func onFollowsMacOSWithoutAUsableMemory() {
+        var direct = EgressProxySettings()
+        direct.mode = .direct
+        #expect(EgressProxyQuickToggle.on(direct, remembered: nil).mode == .system)
+        #expect(EgressProxyQuickToggle.on(direct, remembered: "system").mode == .system)
+        #expect(EgressProxyQuickToggle.on(direct, remembered: "socks5://:0").mode == .system)
+        var system = EgressProxySettings()
+        system.mode = .system
+        #expect(EgressProxyQuickToggle.remembered(system) == "system")
+    }
+}

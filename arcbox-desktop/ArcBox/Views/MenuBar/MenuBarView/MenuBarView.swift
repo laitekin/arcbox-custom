@@ -17,6 +17,7 @@ struct MenuBarView: View {
     /// Drives the live CPU/memory tiles while the menu-bar popover is open;
     /// the stream stops when the popover closes (`.task` cancellation).
     @State var activityVM = ActivityViewModel()
+    @State var proxyToggle = ProxyQuickToggleModel()
 
     var body: some View {
         mainPanel
@@ -33,6 +34,11 @@ struct MenuBarView: View {
             .task(id: daemonManager.state.isRunning ? client.map(ObjectIdentifier.init) : nil) {
                 guard let client, daemonManager.state.isRunning else { return }
                 await activityVM.run(client: client)
+            }
+            // Re-read on every popover open: Settings may have changed it.
+            .task(id: daemonManager.state.isRunning ? client.map(ObjectIdentifier.init) : nil) {
+                guard daemonManager.state.isRunning else { return }
+                await proxyToggle.load(client: client)
             }
             .onReceive(NotificationCenter.default.publisher(for: .dockerContainerChanged)) { _ in
                 guard daemonManager.setupPhase.isDockerReady, docker != nil else { return }

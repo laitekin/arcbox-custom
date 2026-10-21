@@ -7,6 +7,28 @@ extension MenuBarView {
 
     var actionSection: some View {
         VStack(alignment: .leading, spacing: 2) {
+            if let isOn = proxyToggle.isOn {
+                MenuBarHoverButton {
+                    Task { await proxyToggle.toggle(client: client) }
+                } label: {
+                    HStack {
+                        Label(
+                            isOn ? "Proxy: On" : "Proxy: Off",
+                            systemImage: isOn ? "network.badge.shield.half.filled" : "network.slash"
+                        )
+                        Spacer(minLength: 0)
+                        if proxyToggle.isSaving {
+                            ProgressView().controlSize(.mini)
+                        }
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 5)
+                }
+                .disabled(proxyToggle.isSaving)
+                .help(proxyToggle.lastError ?? (isOn ? "Switch the guest proxy off (direct)" : "Restore the previous proxy setting"))
+                .accessibilityLabel(isOn ? "Proxy on, switch off" : "Proxy off, switch on")
+            }
+
             MenuBarHoverButton(action: showArcBoxWindow) {
                 Label("Show ArcBox", systemImage: "macwindow")
                     .padding(.horizontal, 6)

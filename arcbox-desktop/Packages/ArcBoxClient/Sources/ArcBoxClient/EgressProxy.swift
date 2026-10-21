@@ -307,3 +307,44 @@ public struct EgressProxyTestStep: Identifiable, Equatable, Sendable {
             }
     }
 }
+
+/// The menu bar's proxy on/off switch. Off is direct; on restores the mode
+/// (and custom proxy) that was in use when it was switched off. The daemon
+/// forgets a custom proxy's address in direct mode, so the switch keeps it
+/// as a password-free string the app can store; the password stays in the
+/// daemon's store untouched.
+public enum EgressProxyQuickToggle {
+    /// What to remember when switching `current` off; nil when it is
+    /// already off.
+    public static func remembered(_ current: EgressProxySettings) -> String? {
+        switch current.mode {
+        case .direct: nil
+        case .system: EgressProxyMode.system.rawValue
+        case .custom: current.url
+        }
+    }
+
+    /// `current` switched off: direct, every other choice kept.
+    public static func off(_ current: EgressProxySettings) -> EgressProxySettings {
+        var settings = current
+        settings.mode = .direct
+        return settings
+    }
+
+    /// `current` switched back on from what `remembered` stored: that
+    /// custom proxy, or following macOS when nothing usable was stored.
+    public static func on(_ current: EgressProxySettings, remembered: String?) -> EgressProxySettings {
+        var settings = current
+        settings.mode = .system
+        guard let remembered, let parsed = EgressProxySettings.parse(url: remembered) else {
+            return settings
+        }
+        var custom = settings
+        custom.mode = .custom
+        custom.proxyProtocol = parsed.proxyProtocol
+        custom.host = parsed.host
+        custom.port = parsed.port
+        custom.username = parsed.username
+        return custom.validationError == nil ? custom : settings
+    }
+}

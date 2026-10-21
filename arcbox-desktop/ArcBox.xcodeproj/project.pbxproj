@@ -37,6 +37,7 @@
 		15FFC6590CB1CDFE38CFD3EA /* DockerEventMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DB22F8A7AA46286F186A73F /* DockerEventMonitor.swift */; };
 		172FA4919687A4616E0BC135 /* DaemonLoadingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E8FB9C9E3349126EF773522 /* DaemonLoadingView.swift */; };
 		17908606AF5BAB2C1CF57AE0 /* ContainerCrashDigest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7374C3209C972DE43E00DB60 /* ContainerCrashDigest.swift */; };
+		17A784DFEB98834F68D7552B /* ProxyQuickToggleModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFCFA4829701B49E3C25FD74 /* ProxyQuickToggleModel.swift */; };
 		17ED6FFFD9A61998178E38B9 /* VolumesListViewControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4BAE047B96D10B4716BA1A2 /* VolumesListViewControllerTests.swift */; };
 		1922467431B695CAC0E9584E /* EgressProxyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DB86FDBD42895BEB4925409 /* EgressProxyTests.swift */; };
 		1941A5EBBFB259911F7E9ADE /* SandboxesViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A764F03F9EA5C3149B777338 /* SandboxesViewModel.swift */; };
@@ -623,6 +624,7 @@
 		DE564AAFEC0EF6D094409728 /* SandboxRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SandboxRowView.swift; sourceTree = "<group>"; };
 		DE7E377F9D8C89E24989DE3D /* ContentViewColumnLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentViewColumnLayoutTests.swift; sourceTree = "<group>"; };
 		DF34CA0688377F7956F2FD3D /* NewSandboxSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewSandboxSheet.swift; sourceTree = "<group>"; };
+		DFCFA4829701B49E3C25FD74 /* ProxyQuickToggleModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyQuickToggleModel.swift; sourceTree = "<group>"; };
 		E06B22BB8B92AF78C2B87ADC /* AboutView+LinkButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AboutView+LinkButton.swift"; sourceTree = "<group>"; };
 		E18EB65626D97DF7604580DF /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		E1C6B2F85E39321931CEC3ED /* ContainerDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContainerDetailView.swift; sourceTree = "<group>"; };
@@ -1071,6 +1073,7 @@
 				6BA3F59E109F9836BD7D35B9 /* NetworkSettingsModel.swift */,
 				D4ED3EC883A488801DE03195 /* NetworksViewModel.swift */,
 				CDF5B0B3EC77FB12D8B4EA6A /* PodsViewModel.swift */,
+				DFCFA4829701B49E3C25FD74 /* ProxyQuickToggleModel.swift */,
 				94E61C4FDE50F5A6B45F06B5 /* RuntimeStorageRecoveryModel.swift */,
 				4009DCC81EA64B23A77FB0C4 /* ServicesViewModel.swift */,
 				C0BC46E06601AA9D330AF049 /* SystemVmBackendModel.swift */,
@@ -1734,6 +1737,7 @@
 				CCAF8E87C516B0ACE300BDCD /* PodsListView.swift in Sources */,
 				14D3EFEEF183BBA78A496DCF /* PodsListViewController.swift in Sources */,
 				DDF9F74BA0638A51322686DE /* PodsViewModel.swift in Sources */,
+				17A784DFEB98834F68D7552B /* ProxyQuickToggleModel.swift in Sources */,
 				0C6B829AD5010FDB0E749471 /* PullImageSheet.swift in Sources */,
 				3FA536EBD8D183064D0627E2 /* QuitWindowController.swift in Sources */,
 				A0AA341C4E3000ED0828F01B /* ResourceListRowView.swift in Sources */,
