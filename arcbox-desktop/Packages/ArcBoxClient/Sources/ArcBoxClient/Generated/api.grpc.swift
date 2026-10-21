@@ -6547,3 +6547,826 @@ extension Arcbox_V1_MigrationService.ClientProtocol {
         )
     }
 }
+
+// MARK: - arcbox.v1.EgressProxyService
+
+/// Namespace containing generated types for the "arcbox.v1.EgressProxyService" service.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+public enum Arcbox_V1_EgressProxyService {
+    /// Service descriptor for the "arcbox.v1.EgressProxyService" service.
+    public static let descriptor = GRPCCore.ServiceDescriptor(fullyQualifiedService: "arcbox.v1.EgressProxyService")
+    /// Namespace for method metadata.
+    public enum Method {
+        /// Namespace for "GetProxy" metadata.
+        public enum GetProxy {
+            /// Request type for "GetProxy".
+            public typealias Input = Arcbox_V1_Empty
+            /// Response type for "GetProxy".
+            public typealias Output = Arcbox_V1_EgressProxySettings
+            /// Descriptor for "GetProxy".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "arcbox.v1.EgressProxyService"),
+                method: "GetProxy"
+            )
+        }
+        /// Namespace for "SetProxy" metadata.
+        public enum SetProxy {
+            /// Request type for "SetProxy".
+            public typealias Input = Arcbox_V1_SetEgressProxyRequest
+            /// Response type for "SetProxy".
+            public typealias Output = Arcbox_V1_EgressProxySettings
+            /// Descriptor for "SetProxy".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "arcbox.v1.EgressProxyService"),
+                method: "SetProxy"
+            )
+        }
+        /// Namespace for "TestProxy" metadata.
+        public enum TestProxy {
+            /// Request type for "TestProxy".
+            public typealias Input = Arcbox_V1_TestEgressProxyRequest
+            /// Response type for "TestProxy".
+            public typealias Output = Arcbox_V1_EgressProxyTestStep
+            /// Descriptor for "TestProxy".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "arcbox.v1.EgressProxyService"),
+                method: "TestProxy"
+            )
+        }
+        /// Descriptors for all methods in the "arcbox.v1.EgressProxyService" service.
+        public static let descriptors: [GRPCCore.MethodDescriptor] = [
+            GetProxy.descriptor,
+            SetProxy.descriptor,
+            TestProxy.descriptor
+        ]
+    }
+}
+
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension GRPCCore.ServiceDescriptor {
+    /// Service descriptor for the "arcbox.v1.EgressProxyService" service.
+    public static let arcbox_v1_EgressProxyService = GRPCCore.ServiceDescriptor(fullyQualifiedService: "arcbox.v1.EgressProxyService")
+}
+
+// MARK: arcbox.v1.EgressProxyService (server)
+
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_EgressProxyService {
+    /// Streaming variant of the service protocol for the "arcbox.v1.EgressProxyService" service.
+    ///
+    /// This protocol is the lowest-level of the service protocols generated for this service
+    /// giving you the most flexibility over the implementation of your service. This comes at
+    /// the cost of more verbose and less strict APIs. Each RPC requires you to implement it in
+    /// terms of a request stream and response stream. Where only a single request or response
+    /// message is expected, you are responsible for enforcing this invariant is maintained.
+    ///
+    /// Where possible, prefer using the stricter, less-verbose ``ServiceProtocol``
+    /// or ``SimpleServiceProtocol`` instead.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > EgressProxyService manages where guest TCP and UDP egress is sent. A
+    /// > change is persisted to config.toml (and the password to the credential
+    /// > store) and applies to the next flow of every running VM; flows already
+    /// > open keep the proxy they started with.
+    public protocol StreamingServiceProtocol: GRPCCore.RegistrableRPCService {
+        /// Handle the "GetProxy" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Gets the current settings. Never returns a password.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Arcbox_V1_Empty` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Arcbox_V1_EgressProxySettings` messages.
+        func getProxy(
+            request: GRPCCore.StreamingServerRequest<Arcbox_V1_Empty>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_EgressProxySettings>
+
+        /// Handle the "SetProxy" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Validates, persists and applies new settings. Nothing changes when it
+        /// > fails. Returns the resulting settings.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Arcbox_V1_SetEgressProxyRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Arcbox_V1_EgressProxySettings` messages.
+        func setProxy(
+            request: GRPCCore.StreamingServerRequest<Arcbox_V1_SetEgressProxyRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_EgressProxySettings>
+
+        /// Handle the "TestProxy" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Walks the proxy path from the host step by step, streaming each step
+        /// > as it finishes and stopping at the first failure. Tests the saved
+        /// > settings, or a draft without saving it.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Arcbox_V1_TestEgressProxyRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Arcbox_V1_EgressProxyTestStep` messages.
+        func testProxy(
+            request: GRPCCore.StreamingServerRequest<Arcbox_V1_TestEgressProxyRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_EgressProxyTestStep>
+    }
+
+    /// Service protocol for the "arcbox.v1.EgressProxyService" service.
+    ///
+    /// This protocol is higher level than ``StreamingServiceProtocol`` but lower level than
+    /// the ``SimpleServiceProtocol``, it provides access to request and response metadata and
+    /// trailing response metadata. If you don't need these then consider using
+    /// the ``SimpleServiceProtocol``. If you need fine grained control over your RPCs then
+    /// use ``StreamingServiceProtocol``.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > EgressProxyService manages where guest TCP and UDP egress is sent. A
+    /// > change is persisted to config.toml (and the password to the credential
+    /// > store) and applies to the next flow of every running VM; flows already
+    /// > open keep the proxy they started with.
+    public protocol ServiceProtocol: Arcbox_V1_EgressProxyService.StreamingServiceProtocol {
+        /// Handle the "GetProxy" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Gets the current settings. Never returns a password.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_Empty` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Arcbox_V1_EgressProxySettings` message.
+        func getProxy(
+            request: GRPCCore.ServerRequest<Arcbox_V1_Empty>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_EgressProxySettings>
+
+        /// Handle the "SetProxy" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Validates, persists and applies new settings. Nothing changes when it
+        /// > fails. Returns the resulting settings.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_SetEgressProxyRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Arcbox_V1_EgressProxySettings` message.
+        func setProxy(
+            request: GRPCCore.ServerRequest<Arcbox_V1_SetEgressProxyRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_EgressProxySettings>
+
+        /// Handle the "TestProxy" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Walks the proxy path from the host step by step, streaming each step
+        /// > as it finishes and stopping at the first failure. Tests the saved
+        /// > settings, or a draft without saving it.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_TestEgressProxyRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Arcbox_V1_EgressProxyTestStep` messages.
+        func testProxy(
+            request: GRPCCore.ServerRequest<Arcbox_V1_TestEgressProxyRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_EgressProxyTestStep>
+    }
+
+    /// Simple service protocol for the "arcbox.v1.EgressProxyService" service.
+    ///
+    /// This is the highest level protocol for the service. The API is the easiest to use but
+    /// doesn't provide access to request or response metadata. If you need access to these
+    /// then use ``ServiceProtocol`` instead.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > EgressProxyService manages where guest TCP and UDP egress is sent. A
+    /// > change is persisted to config.toml (and the password to the credential
+    /// > store) and applies to the next flow of every running VM; flows already
+    /// > open keep the proxy they started with.
+    public protocol SimpleServiceProtocol: Arcbox_V1_EgressProxyService.ServiceProtocol {
+        /// Handle the "GetProxy" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Gets the current settings. Never returns a password.
+        ///
+        /// - Parameters:
+        ///   - request: A `Arcbox_V1_Empty` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Arcbox_V1_EgressProxySettings` to respond with.
+        func getProxy(
+            request: Arcbox_V1_Empty,
+            context: GRPCCore.ServerContext
+        ) async throws -> Arcbox_V1_EgressProxySettings
+
+        /// Handle the "SetProxy" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Validates, persists and applies new settings. Nothing changes when it
+        /// > fails. Returns the resulting settings.
+        ///
+        /// - Parameters:
+        ///   - request: A `Arcbox_V1_SetEgressProxyRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Arcbox_V1_EgressProxySettings` to respond with.
+        func setProxy(
+            request: Arcbox_V1_SetEgressProxyRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Arcbox_V1_EgressProxySettings
+
+        /// Handle the "TestProxy" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Walks the proxy path from the host step by step, streaming each step
+        /// > as it finishes and stopping at the first failure. Tests the saved
+        /// > settings, or a draft without saving it.
+        ///
+        /// - Parameters:
+        ///   - request: A `Arcbox_V1_TestEgressProxyRequest` message.
+        ///   - response: A response stream of `Arcbox_V1_EgressProxyTestStep` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        func testProxy(
+            request: Arcbox_V1_TestEgressProxyRequest,
+            response: GRPCCore.RPCWriter<Arcbox_V1_EgressProxyTestStep>,
+            context: GRPCCore.ServerContext
+        ) async throws
+    }
+}
+
+// Default implementation of 'registerMethods(with:)'.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_EgressProxyService.StreamingServiceProtocol {
+    public func registerMethods<Transport>(with router: inout GRPCCore.RPCRouter<Transport>) where Transport: GRPCCore.ServerTransport {
+        router.registerHandler(
+            forMethod: Arcbox_V1_EgressProxyService.Method.GetProxy.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_Empty>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_EgressProxySettings>(),
+            handler: { request, context in
+                try await self.getProxy(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Arcbox_V1_EgressProxyService.Method.SetProxy.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_SetEgressProxyRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_EgressProxySettings>(),
+            handler: { request, context in
+                try await self.setProxy(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Arcbox_V1_EgressProxyService.Method.TestProxy.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_TestEgressProxyRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_EgressProxyTestStep>(),
+            handler: { request, context in
+                try await self.testProxy(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+    }
+}
+
+// Default implementation of streaming methods from 'StreamingServiceProtocol'.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_EgressProxyService.ServiceProtocol {
+    public func getProxy(
+        request: GRPCCore.StreamingServerRequest<Arcbox_V1_Empty>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_EgressProxySettings> {
+        let response = try await self.getProxy(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func setProxy(
+        request: GRPCCore.StreamingServerRequest<Arcbox_V1_SetEgressProxyRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_EgressProxySettings> {
+        let response = try await self.setProxy(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func testProxy(
+        request: GRPCCore.StreamingServerRequest<Arcbox_V1_TestEgressProxyRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_EgressProxyTestStep> {
+        let response = try await self.testProxy(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return response
+    }
+}
+
+// Default implementation of methods from 'ServiceProtocol'.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_EgressProxyService.SimpleServiceProtocol {
+    public func getProxy(
+        request: GRPCCore.ServerRequest<Arcbox_V1_Empty>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_EgressProxySettings> {
+        return GRPCCore.ServerResponse<Arcbox_V1_EgressProxySettings>(
+            message: try await self.getProxy(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func setProxy(
+        request: GRPCCore.ServerRequest<Arcbox_V1_SetEgressProxyRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_EgressProxySettings> {
+        return GRPCCore.ServerResponse<Arcbox_V1_EgressProxySettings>(
+            message: try await self.setProxy(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func testProxy(
+        request: GRPCCore.ServerRequest<Arcbox_V1_TestEgressProxyRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_EgressProxyTestStep> {
+        return GRPCCore.StreamingServerResponse<Arcbox_V1_EgressProxyTestStep>(
+            metadata: [:],
+            producer: { writer in
+                try await self.testProxy(
+                    request: request.message,
+                    response: writer,
+                    context: context
+                )
+                return [:]
+            }
+        )
+    }
+}
+
+// MARK: arcbox.v1.EgressProxyService (client)
+
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_EgressProxyService {
+    /// Generated client protocol for the "arcbox.v1.EgressProxyService" service.
+    ///
+    /// You don't need to implement this protocol directly, use the generated
+    /// implementation, ``Client``.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > EgressProxyService manages where guest TCP and UDP egress is sent. A
+    /// > change is persisted to config.toml (and the password to the credential
+    /// > store) and applies to the next flow of every running VM; flows already
+    /// > open keep the proxy they started with.
+    public protocol ClientProtocol: Sendable {
+        /// Call the "GetProxy" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Gets the current settings. Never returns a password.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_Empty` message.
+        ///   - serializer: A serializer for `Arcbox_V1_Empty` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_EgressProxySettings` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func getProxy<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_Empty>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_Empty>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_EgressProxySettings>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_EgressProxySettings>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "SetProxy" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Validates, persists and applies new settings. Nothing changes when it
+        /// > fails. Returns the resulting settings.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_SetEgressProxyRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_SetEgressProxyRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_EgressProxySettings` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func setProxy<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_SetEgressProxyRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_SetEgressProxyRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_EgressProxySettings>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_EgressProxySettings>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "TestProxy" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Walks the proxy path from the host step by step, streaming each step
+        /// > as it finishes and stopping at the first failure. Tests the saved
+        /// > settings, or a draft without saving it.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_TestEgressProxyRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_TestEgressProxyRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_EgressProxyTestStep` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func testProxy<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_TestEgressProxyRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_TestEgressProxyRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_EgressProxyTestStep>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Arcbox_V1_EgressProxyTestStep>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+    }
+
+    /// Generated client for the "arcbox.v1.EgressProxyService" service.
+    ///
+    /// The ``Client`` provides an implementation of ``ClientProtocol`` which wraps
+    /// a `GRPCCore.GRPCCClient`. The underlying `GRPCClient` provides the long-lived
+    /// means of communication with the remote peer.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > EgressProxyService manages where guest TCP and UDP egress is sent. A
+    /// > change is persisted to config.toml (and the password to the credential
+    /// > store) and applies to the next flow of every running VM; flows already
+    /// > open keep the proxy they started with.
+    public struct Client<Transport>: ClientProtocol where Transport: GRPCCore.ClientTransport {
+        private let client: GRPCCore.GRPCClient<Transport>
+
+        /// Creates a new client wrapping the provided `GRPCCore.GRPCClient`.
+        ///
+        /// - Parameters:
+        ///   - client: A `GRPCCore.GRPCClient` providing a communication channel to the service.
+        public init(wrapping client: GRPCCore.GRPCClient<Transport>) {
+            self.client = client
+        }
+
+        /// Call the "GetProxy" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Gets the current settings. Never returns a password.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_Empty` message.
+        ///   - serializer: A serializer for `Arcbox_V1_Empty` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_EgressProxySettings` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func getProxy<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_Empty>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_Empty>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_EgressProxySettings>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_EgressProxySettings>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Arcbox_V1_EgressProxyService.Method.GetProxy.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "SetProxy" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Validates, persists and applies new settings. Nothing changes when it
+        /// > fails. Returns the resulting settings.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_SetEgressProxyRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_SetEgressProxyRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_EgressProxySettings` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func setProxy<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_SetEgressProxyRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_SetEgressProxyRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_EgressProxySettings>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_EgressProxySettings>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Arcbox_V1_EgressProxyService.Method.SetProxy.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "TestProxy" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Walks the proxy path from the host step by step, streaming each step
+        /// > as it finishes and stopping at the first failure. Tests the saved
+        /// > settings, or a draft without saving it.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_TestEgressProxyRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_TestEgressProxyRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_EgressProxyTestStep` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func testProxy<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_TestEgressProxyRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_TestEgressProxyRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_EgressProxyTestStep>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Arcbox_V1_EgressProxyTestStep>) async throws -> Result
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.serverStreaming(
+                request: request,
+                descriptor: Arcbox_V1_EgressProxyService.Method.TestProxy.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+    }
+}
+
+// Helpers providing default arguments to 'ClientProtocol' methods.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_EgressProxyService.ClientProtocol {
+    /// Call the "GetProxy" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Gets the current settings. Never returns a password.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Arcbox_V1_Empty` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func getProxy<Result>(
+        request: GRPCCore.ClientRequest<Arcbox_V1_Empty>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_EgressProxySettings>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.getProxy(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_Empty>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_EgressProxySettings>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SetProxy" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Validates, persists and applies new settings. Nothing changes when it
+    /// > fails. Returns the resulting settings.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Arcbox_V1_SetEgressProxyRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func setProxy<Result>(
+        request: GRPCCore.ClientRequest<Arcbox_V1_SetEgressProxyRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_EgressProxySettings>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.setProxy(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_SetEgressProxyRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_EgressProxySettings>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "TestProxy" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Walks the proxy path from the host step by step, streaming each step
+    /// > as it finishes and stopping at the first failure. Tests the saved
+    /// > settings, or a draft without saving it.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Arcbox_V1_TestEgressProxyRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func testProxy<Result>(
+        request: GRPCCore.ClientRequest<Arcbox_V1_TestEgressProxyRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Arcbox_V1_EgressProxyTestStep>) async throws -> Result
+    ) async throws -> Result where Result: Sendable {
+        try await self.testProxy(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_TestEgressProxyRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_EgressProxyTestStep>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+}
+
+// Helpers providing sugared APIs for 'ClientProtocol' methods.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_EgressProxyService.ClientProtocol {
+    /// Call the "GetProxy" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Gets the current settings. Never returns a password.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func getProxy<Result>(
+        _ message: Arcbox_V1_Empty,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_EgressProxySettings>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Arcbox_V1_Empty>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.getProxy(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SetProxy" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Validates, persists and applies new settings. Nothing changes when it
+    /// > fails. Returns the resulting settings.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func setProxy<Result>(
+        _ message: Arcbox_V1_SetEgressProxyRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_EgressProxySettings>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Arcbox_V1_SetEgressProxyRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.setProxy(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "TestProxy" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Walks the proxy path from the host step by step, streaming each step
+    /// > as it finishes and stopping at the first failure. Tests the saved
+    /// > settings, or a draft without saving it.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func testProxy<Result>(
+        _ message: Arcbox_V1_TestEgressProxyRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Arcbox_V1_EgressProxyTestStep>) async throws -> Result
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Arcbox_V1_TestEgressProxyRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.testProxy(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+}

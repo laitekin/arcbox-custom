@@ -30,6 +30,73 @@ fileprivate struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobuf.ProtobufAP
   typealias Version = _2
 }
 
+/// Import stages.
+public enum Arcbox_V1_ImportMachineImagePhase: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+
+  /// Exporting the Docker image's filesystem.
+  case exporting // = 1
+
+  /// Reading the root filesystem; `bytes` read so far.
+  case reading // = 2
+
+  /// Checking init, architecture and os-release.
+  case checking // = 3
+
+  /// Writing the squashfs.
+  case writing // = 4
+
+  /// Hashing and registering; `bytes` is the image size.
+  case registering // = 5
+
+  /// Finished; `image` and `warnings` are set.
+  case done // = 6
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .exporting
+    case 2: self = .reading
+    case 3: self = .checking
+    case 4: self = .writing
+    case 5: self = .registering
+    case 6: self = .done
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .exporting: return 1
+    case .reading: return 2
+    case .checking: return 3
+    case .writing: return 4
+    case .registering: return 5
+    case .done: return 6
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Arcbox_V1_ImportMachineImagePhase] = [
+    .unspecified,
+    .exporting,
+    .reading,
+    .checking,
+    .writing,
+    .registering,
+    .done,
+  ]
+
+}
+
 /// Request to create a machine.
 public struct Arcbox_V1_CreateMachineRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -68,6 +135,11 @@ public struct Arcbox_V1_CreateMachineRequest: Sendable {
 
   /// Kernel command line.
   public var cmdline: String = String()
+
+  /// A local machine image to boot, `name` or `name@version` (the newest
+  /// version when omitted). When set, distro/version/arch are ignored and
+  /// nothing is downloaded.
+  public var image: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -312,9 +384,23 @@ public struct Arcbox_V1_ExportMachineRequest: Sendable {
   /// Where to write the archive, on the daemon's host. Must not exist.
   public var path: String = String()
 
+  /// Carry the machine's image in the archive so a host without it can
+  /// import the machine. Absent: carry it when the image was imported on
+  /// this host (no CDN publishes it).
+  public var includeImage: Bool {
+    get {_includeImage ?? false}
+    set {_includeImage = newValue}
+  }
+  /// Returns true if `includeImage` has been explicitly set.
+  public var hasIncludeImage: Bool {self._includeImage != nil}
+  /// Clears the value of `includeImage`. Subsequent reads from it will return its default value.
+  public mutating func clearIncludeImage() {self._includeImage = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _includeImage: Bool? = nil
 }
 
 /// Response to export machine.
@@ -925,13 +1011,222 @@ public struct Arcbox_V1_MachineEvent: Sendable {
   public init() {}
 }
 
+/// A local machine image.
+public struct Arcbox_V1_MachineImageInfo: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Image name (the stream, e.g. `ubuntu-noble-arm64` or `my-ubuntu`).
+  public var name: String = String()
+
+  /// Version label.
+  public var version: String = String()
+
+  /// Distro id.
+  public var distro: String = String()
+
+  /// Distro release.
+  public var release: String = String()
+
+  /// Human-readable release title.
+  public var releaseTitle: String = String()
+
+  /// Image architecture (`arm64`).
+  public var arch: String = String()
+
+  /// Imported on this host rather than pulled from the image source.
+  public var imported: Bool = false
+
+  /// Provenance: the upstream product, or what the import read.
+  public var source: String = String()
+
+  /// Rootfs size in bytes.
+  public var size: UInt64 = 0
+
+  /// Rootfs SHA-256.
+  public var sha256: String = String()
+
+  /// Machines booting this image.
+  public var machines: [String] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Request to list local images.
+public struct Arcbox_V1_ListMachineImagesRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Local images.
+public struct Arcbox_V1_ListMachineImagesResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var images: [Arcbox_V1_MachineImageInfo] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Request to list published images.
+public struct Arcbox_V1_ListRemoteMachineImagesRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Architecture (`arm64`, `aarch64`); empty means this host's.
+  public var arch: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// One published image stream.
+public struct Arcbox_V1_RemoteMachineImage: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Stream name.
+  public var name: String = String()
+
+  /// Distro id.
+  public var distro: String = String()
+
+  /// Distro release.
+  public var release: String = String()
+
+  /// Human-readable release title.
+  public var releaseTitle: String = String()
+
+  /// Image architecture.
+  public var arch: String = String()
+
+  /// The version a pull resolves to.
+  public var latest: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Published images.
+public struct Arcbox_V1_ListRemoteMachineImagesResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var images: [Arcbox_V1_RemoteMachineImage] = []
+
+  /// The image source the list came from.
+  public var base: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Request to import a root filesystem. Exactly one of `path` and
+/// `docker_image` is set.
+public struct Arcbox_V1_ImportMachineImageRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Name for the image: 1-63 lowercase letters, digits, `.`, `-`, `_`.
+  public var name: String = String()
+
+  /// A rootfs archive (tar, tar.gz, tar.xz, tar.zst) or squashfs image, by
+  /// absolute path on the daemon's host.
+  public var path: String = String()
+
+  /// A Docker image in the System VM's engine, exported as the rootfs.
+  public var dockerImage: String = String()
+
+  /// Overrides the distro id read from os-release.
+  public var distro: String = String()
+
+  /// Overrides the release read from os-release.
+  public var release: String = String()
+
+  /// Refuses larger root filesystems; 0 means 20 GiB.
+  public var maxSize: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Import progress.
+public struct Arcbox_V1_ImportMachineImageEvent: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var phase: Arcbox_V1_ImportMachineImagePhase = .unspecified
+
+  public var bytes: UInt64 = 0
+
+  /// The registered image (DONE only).
+  public var image: Arcbox_V1_MachineImageInfo {
+    get {_image ?? Arcbox_V1_MachineImageInfo()}
+    set {_image = newValue}
+  }
+  /// Returns true if `image` has been explicitly set.
+  public var hasImage: Bool {self._image != nil}
+  /// Clears the value of `image`. Subsequent reads from it will return its default value.
+  public mutating func clearImage() {self._image = nil}
+
+  /// Non-fatal findings (DONE only).
+  public var warnings: [String] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _image: Arcbox_V1_MachineImageInfo? = nil
+}
+
+/// Request to remove a local image.
+public struct Arcbox_V1_RemoveMachineImageRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Image name.
+  public var name: String = String()
+
+  /// Version; empty when the name has a single version.
+  public var version: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate let _protobuf_package = "arcbox.v1"
 
+extension Arcbox_V1_ImportMachineImagePhase: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0IMPORT_MACHINE_IMAGE_PHASE_UNSPECIFIED\0\u{1}IMPORT_MACHINE_IMAGE_PHASE_EXPORTING\0\u{1}IMPORT_MACHINE_IMAGE_PHASE_READING\0\u{1}IMPORT_MACHINE_IMAGE_PHASE_CHECKING\0\u{1}IMPORT_MACHINE_IMAGE_PHASE_WRITING\0\u{1}IMPORT_MACHINE_IMAGE_PHASE_REGISTERING\0\u{1}IMPORT_MACHINE_IMAGE_PHASE_DONE\0")
+}
+
 extension Arcbox_V1_CreateMachineRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CreateMachineRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}cpus\0\u{1}memory\0\u{3}disk_size\0\u{1}distro\0\u{1}version\0\u{1}arch\0\u{1}mounts\0\u{3}ssh_public_key\0\u{1}kernel\0\u{2}\u{2}cmdline\0\u{c}\u{b}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}cpus\0\u{1}memory\0\u{3}disk_size\0\u{1}distro\0\u{1}version\0\u{1}arch\0\u{1}mounts\0\u{3}ssh_public_key\0\u{1}kernel\0\u{2}\u{2}cmdline\0\u{1}image\0\u{c}\u{b}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -950,6 +1245,7 @@ extension Arcbox_V1_CreateMachineRequest: SwiftProtobuf.Message, SwiftProtobuf._
       case 9: try { try decoder.decodeSingularStringField(value: &self.sshPublicKey) }()
       case 10: try { try decoder.decodeSingularStringField(value: &self.kernel) }()
       case 12: try { try decoder.decodeSingularStringField(value: &self.cmdline) }()
+      case 13: try { try decoder.decodeSingularStringField(value: &self.image) }()
       default: break
       }
     }
@@ -989,6 +1285,9 @@ extension Arcbox_V1_CreateMachineRequest: SwiftProtobuf.Message, SwiftProtobuf._
     if !self.cmdline.isEmpty {
       try visitor.visitSingularStringField(value: self.cmdline, fieldNumber: 12)
     }
+    if !self.image.isEmpty {
+      try visitor.visitSingularStringField(value: self.image, fieldNumber: 13)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1004,6 +1303,7 @@ extension Arcbox_V1_CreateMachineRequest: SwiftProtobuf.Message, SwiftProtobuf._
     if lhs.sshPublicKey != rhs.sshPublicKey {return false}
     if lhs.kernel != rhs.kernel {return false}
     if lhs.cmdline != rhs.cmdline {return false}
+    if lhs.image != rhs.image {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1466,7 +1766,7 @@ extension Arcbox_V1_CloneMachineResponse: SwiftProtobuf.Message, SwiftProtobuf._
 
 extension Arcbox_V1_ExportMachineRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ExportMachineRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}path\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}path\0\u{3}include_image\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1476,24 +1776,33 @@ extension Arcbox_V1_ExportMachineRequest: SwiftProtobuf.Message, SwiftProtobuf._
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.path) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self._includeImage) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if !self.id.isEmpty {
       try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
     }
     if !self.path.isEmpty {
       try visitor.visitSingularStringField(value: self.path, fieldNumber: 2)
     }
+    try { if let v = self._includeImage {
+      try visitor.visitSingularBoolField(value: v, fieldNumber: 3)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Arcbox_V1_ExportMachineRequest, rhs: Arcbox_V1_ExportMachineRequest) -> Bool {
     if lhs.id != rhs.id {return false}
     if lhs.path != rhs.path {return false}
+    if lhs._includeImage != rhs._includeImage {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2530,6 +2839,394 @@ extension Arcbox_V1_MachineEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageI
     if lhs.action != rhs.action {return false}
     if lhs.timestamp != rhs.timestamp {return false}
     if lhs.attributes != rhs.attributes {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_MachineImageInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".MachineImageInfo"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}version\0\u{1}distro\0\u{1}release\0\u{3}release_title\0\u{1}arch\0\u{1}imported\0\u{1}source\0\u{1}size\0\u{1}sha256\0\u{1}machines\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.version) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.distro) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.release) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.releaseTitle) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.arch) }()
+      case 7: try { try decoder.decodeSingularBoolField(value: &self.imported) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.source) }()
+      case 9: try { try decoder.decodeSingularUInt64Field(value: &self.size) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.sha256) }()
+      case 11: try { try decoder.decodeRepeatedStringField(value: &self.machines) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
+    }
+    if !self.version.isEmpty {
+      try visitor.visitSingularStringField(value: self.version, fieldNumber: 2)
+    }
+    if !self.distro.isEmpty {
+      try visitor.visitSingularStringField(value: self.distro, fieldNumber: 3)
+    }
+    if !self.release.isEmpty {
+      try visitor.visitSingularStringField(value: self.release, fieldNumber: 4)
+    }
+    if !self.releaseTitle.isEmpty {
+      try visitor.visitSingularStringField(value: self.releaseTitle, fieldNumber: 5)
+    }
+    if !self.arch.isEmpty {
+      try visitor.visitSingularStringField(value: self.arch, fieldNumber: 6)
+    }
+    if self.imported != false {
+      try visitor.visitSingularBoolField(value: self.imported, fieldNumber: 7)
+    }
+    if !self.source.isEmpty {
+      try visitor.visitSingularStringField(value: self.source, fieldNumber: 8)
+    }
+    if self.size != 0 {
+      try visitor.visitSingularUInt64Field(value: self.size, fieldNumber: 9)
+    }
+    if !self.sha256.isEmpty {
+      try visitor.visitSingularStringField(value: self.sha256, fieldNumber: 10)
+    }
+    if !self.machines.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.machines, fieldNumber: 11)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_MachineImageInfo, rhs: Arcbox_V1_MachineImageInfo) -> Bool {
+    if lhs.name != rhs.name {return false}
+    if lhs.version != rhs.version {return false}
+    if lhs.distro != rhs.distro {return false}
+    if lhs.release != rhs.release {return false}
+    if lhs.releaseTitle != rhs.releaseTitle {return false}
+    if lhs.arch != rhs.arch {return false}
+    if lhs.imported != rhs.imported {return false}
+    if lhs.source != rhs.source {return false}
+    if lhs.size != rhs.size {return false}
+    if lhs.sha256 != rhs.sha256 {return false}
+    if lhs.machines != rhs.machines {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_ListMachineImagesRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListMachineImagesRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_ListMachineImagesRequest, rhs: Arcbox_V1_ListMachineImagesRequest) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_ListMachineImagesResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListMachineImagesResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}images\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.images) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.images.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.images, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_ListMachineImagesResponse, rhs: Arcbox_V1_ListMachineImagesResponse) -> Bool {
+    if lhs.images != rhs.images {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_ListRemoteMachineImagesRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListRemoteMachineImagesRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}arch\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.arch) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.arch.isEmpty {
+      try visitor.visitSingularStringField(value: self.arch, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_ListRemoteMachineImagesRequest, rhs: Arcbox_V1_ListRemoteMachineImagesRequest) -> Bool {
+    if lhs.arch != rhs.arch {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_RemoteMachineImage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RemoteMachineImage"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}distro\0\u{1}release\0\u{3}release_title\0\u{1}arch\0\u{1}latest\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.distro) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.release) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.releaseTitle) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.arch) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.latest) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
+    }
+    if !self.distro.isEmpty {
+      try visitor.visitSingularStringField(value: self.distro, fieldNumber: 2)
+    }
+    if !self.release.isEmpty {
+      try visitor.visitSingularStringField(value: self.release, fieldNumber: 3)
+    }
+    if !self.releaseTitle.isEmpty {
+      try visitor.visitSingularStringField(value: self.releaseTitle, fieldNumber: 4)
+    }
+    if !self.arch.isEmpty {
+      try visitor.visitSingularStringField(value: self.arch, fieldNumber: 5)
+    }
+    if !self.latest.isEmpty {
+      try visitor.visitSingularStringField(value: self.latest, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_RemoteMachineImage, rhs: Arcbox_V1_RemoteMachineImage) -> Bool {
+    if lhs.name != rhs.name {return false}
+    if lhs.distro != rhs.distro {return false}
+    if lhs.release != rhs.release {return false}
+    if lhs.releaseTitle != rhs.releaseTitle {return false}
+    if lhs.arch != rhs.arch {return false}
+    if lhs.latest != rhs.latest {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_ListRemoteMachineImagesResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListRemoteMachineImagesResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}images\0\u{1}base\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.images) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.base) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.images.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.images, fieldNumber: 1)
+    }
+    if !self.base.isEmpty {
+      try visitor.visitSingularStringField(value: self.base, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_ListRemoteMachineImagesResponse, rhs: Arcbox_V1_ListRemoteMachineImagesResponse) -> Bool {
+    if lhs.images != rhs.images {return false}
+    if lhs.base != rhs.base {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_ImportMachineImageRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ImportMachineImageRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}path\0\u{3}docker_image\0\u{1}distro\0\u{1}release\0\u{3}max_size\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.path) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.dockerImage) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.distro) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.release) }()
+      case 6: try { try decoder.decodeSingularUInt64Field(value: &self.maxSize) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
+    }
+    if !self.path.isEmpty {
+      try visitor.visitSingularStringField(value: self.path, fieldNumber: 2)
+    }
+    if !self.dockerImage.isEmpty {
+      try visitor.visitSingularStringField(value: self.dockerImage, fieldNumber: 3)
+    }
+    if !self.distro.isEmpty {
+      try visitor.visitSingularStringField(value: self.distro, fieldNumber: 4)
+    }
+    if !self.release.isEmpty {
+      try visitor.visitSingularStringField(value: self.release, fieldNumber: 5)
+    }
+    if self.maxSize != 0 {
+      try visitor.visitSingularUInt64Field(value: self.maxSize, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_ImportMachineImageRequest, rhs: Arcbox_V1_ImportMachineImageRequest) -> Bool {
+    if lhs.name != rhs.name {return false}
+    if lhs.path != rhs.path {return false}
+    if lhs.dockerImage != rhs.dockerImage {return false}
+    if lhs.distro != rhs.distro {return false}
+    if lhs.release != rhs.release {return false}
+    if lhs.maxSize != rhs.maxSize {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_ImportMachineImageEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ImportMachineImageEvent"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}phase\0\u{1}bytes\0\u{1}image\0\u{1}warnings\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.phase) }()
+      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.bytes) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._image) }()
+      case 4: try { try decoder.decodeRepeatedStringField(value: &self.warnings) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if self.phase != .unspecified {
+      try visitor.visitSingularEnumField(value: self.phase, fieldNumber: 1)
+    }
+    if self.bytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.bytes, fieldNumber: 2)
+    }
+    try { if let v = self._image {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    } }()
+    if !self.warnings.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.warnings, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_ImportMachineImageEvent, rhs: Arcbox_V1_ImportMachineImageEvent) -> Bool {
+    if lhs.phase != rhs.phase {return false}
+    if lhs.bytes != rhs.bytes {return false}
+    if lhs._image != rhs._image {return false}
+    if lhs.warnings != rhs.warnings {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_RemoveMachineImageRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RemoveMachineImageRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}version\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.version) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
+    }
+    if !self.version.isEmpty {
+      try visitor.visitSingularStringField(value: self.version, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_RemoveMachineImageRequest, rhs: Arcbox_V1_RemoveMachineImageRequest) -> Bool {
+    if lhs.name != rhs.name {return false}
+    if lhs.version != rhs.version {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

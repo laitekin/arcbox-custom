@@ -4471,3 +4471,1035 @@ extension Arcbox_V1_MachineService.ClientProtocol {
         )
     }
 }
+
+// MARK: - arcbox.v1.MachineImageService
+
+/// Namespace containing generated types for the "arcbox.v1.MachineImageService" service.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+public enum Arcbox_V1_MachineImageService {
+    /// Service descriptor for the "arcbox.v1.MachineImageService" service.
+    public static let descriptor = GRPCCore.ServiceDescriptor(fullyQualifiedService: "arcbox.v1.MachineImageService")
+    /// Namespace for method metadata.
+    public enum Method {
+        /// Namespace for "List" metadata.
+        public enum List {
+            /// Request type for "List".
+            public typealias Input = Arcbox_V1_ListMachineImagesRequest
+            /// Response type for "List".
+            public typealias Output = Arcbox_V1_ListMachineImagesResponse
+            /// Descriptor for "List".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "arcbox.v1.MachineImageService"),
+                method: "List"
+            )
+        }
+        /// Namespace for "ListRemote" metadata.
+        public enum ListRemote {
+            /// Request type for "ListRemote".
+            public typealias Input = Arcbox_V1_ListRemoteMachineImagesRequest
+            /// Response type for "ListRemote".
+            public typealias Output = Arcbox_V1_ListRemoteMachineImagesResponse
+            /// Descriptor for "ListRemote".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "arcbox.v1.MachineImageService"),
+                method: "ListRemote"
+            )
+        }
+        /// Namespace for "Import" metadata.
+        public enum Import {
+            /// Request type for "Import".
+            public typealias Input = Arcbox_V1_ImportMachineImageRequest
+            /// Response type for "Import".
+            public typealias Output = Arcbox_V1_ImportMachineImageEvent
+            /// Descriptor for "Import".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "arcbox.v1.MachineImageService"),
+                method: "Import"
+            )
+        }
+        /// Namespace for "Remove" metadata.
+        public enum Remove {
+            /// Request type for "Remove".
+            public typealias Input = Arcbox_V1_RemoveMachineImageRequest
+            /// Response type for "Remove".
+            public typealias Output = Arcbox_V1_Empty
+            /// Descriptor for "Remove".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "arcbox.v1.MachineImageService"),
+                method: "Remove"
+            )
+        }
+        /// Descriptors for all methods in the "arcbox.v1.MachineImageService" service.
+        public static let descriptors: [GRPCCore.MethodDescriptor] = [
+            List.descriptor,
+            ListRemote.descriptor,
+            Import.descriptor,
+            Remove.descriptor
+        ]
+    }
+}
+
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension GRPCCore.ServiceDescriptor {
+    /// Service descriptor for the "arcbox.v1.MachineImageService" service.
+    public static let arcbox_v1_MachineImageService = GRPCCore.ServiceDescriptor(fullyQualifiedService: "arcbox.v1.MachineImageService")
+}
+
+// MARK: arcbox.v1.MachineImageService (server)
+
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_MachineImageService {
+    /// Streaming variant of the service protocol for the "arcbox.v1.MachineImageService" service.
+    ///
+    /// This protocol is the lowest-level of the service protocols generated for this service
+    /// giving you the most flexibility over the implementation of your service. This comes at
+    /// the cost of more verbose and less strict APIs. Each RPC requires you to implement it in
+    /// terms of a request stream and response stream. Where only a single request or response
+    /// message is expected, you are responsible for enforcing this invariant is maintained.
+    ///
+    /// Where possible, prefer using the stricter, less-verbose ``ServiceProtocol``
+    /// or ``SimpleServiceProtocol`` instead.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > MachineImageService manages the local Linux machine image registry:
+    /// > published images pulled by machine creation, and root filesystems the
+    /// > user imports.
+    public protocol StreamingServiceProtocol: GRPCCore.RegistrableRPCService {
+        /// Handle the "List" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Lists local images, with the machines that boot each.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Arcbox_V1_ListMachineImagesRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Arcbox_V1_ListMachineImagesResponse` messages.
+        func list(
+            request: GRPCCore.StreamingServerRequest<Arcbox_V1_ListMachineImagesRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_ListMachineImagesResponse>
+
+        /// Handle the "ListRemote" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Lists the images the configured image source publishes, fetched by
+        /// > the daemon through the egress proxy.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Arcbox_V1_ListRemoteMachineImagesRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Arcbox_V1_ListRemoteMachineImagesResponse` messages.
+        func listRemote(
+            request: GRPCCore.StreamingServerRequest<Arcbox_V1_ListRemoteMachineImagesRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_ListRemoteMachineImagesResponse>
+
+        /// Handle the "Import" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Imports a root filesystem as a local image, streaming progress. The
+        /// > last event carries the image.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Arcbox_V1_ImportMachineImageRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Arcbox_V1_ImportMachineImageEvent` messages.
+        func `import`(
+            request: GRPCCore.StreamingServerRequest<Arcbox_V1_ImportMachineImageRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_ImportMachineImageEvent>
+
+        /// Handle the "Remove" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Removes a local image; refused while a machine boots from it.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Arcbox_V1_RemoveMachineImageRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Arcbox_V1_Empty` messages.
+        func remove(
+            request: GRPCCore.StreamingServerRequest<Arcbox_V1_RemoveMachineImageRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_Empty>
+    }
+
+    /// Service protocol for the "arcbox.v1.MachineImageService" service.
+    ///
+    /// This protocol is higher level than ``StreamingServiceProtocol`` but lower level than
+    /// the ``SimpleServiceProtocol``, it provides access to request and response metadata and
+    /// trailing response metadata. If you don't need these then consider using
+    /// the ``SimpleServiceProtocol``. If you need fine grained control over your RPCs then
+    /// use ``StreamingServiceProtocol``.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > MachineImageService manages the local Linux machine image registry:
+    /// > published images pulled by machine creation, and root filesystems the
+    /// > user imports.
+    public protocol ServiceProtocol: Arcbox_V1_MachineImageService.StreamingServiceProtocol {
+        /// Handle the "List" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Lists local images, with the machines that boot each.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_ListMachineImagesRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Arcbox_V1_ListMachineImagesResponse` message.
+        func list(
+            request: GRPCCore.ServerRequest<Arcbox_V1_ListMachineImagesRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_ListMachineImagesResponse>
+
+        /// Handle the "ListRemote" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Lists the images the configured image source publishes, fetched by
+        /// > the daemon through the egress proxy.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_ListRemoteMachineImagesRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Arcbox_V1_ListRemoteMachineImagesResponse` message.
+        func listRemote(
+            request: GRPCCore.ServerRequest<Arcbox_V1_ListRemoteMachineImagesRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_ListRemoteMachineImagesResponse>
+
+        /// Handle the "Import" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Imports a root filesystem as a local image, streaming progress. The
+        /// > last event carries the image.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_ImportMachineImageRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Arcbox_V1_ImportMachineImageEvent` messages.
+        func `import`(
+            request: GRPCCore.ServerRequest<Arcbox_V1_ImportMachineImageRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_ImportMachineImageEvent>
+
+        /// Handle the "Remove" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Removes a local image; refused while a machine boots from it.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_RemoveMachineImageRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Arcbox_V1_Empty` message.
+        func remove(
+            request: GRPCCore.ServerRequest<Arcbox_V1_RemoveMachineImageRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_Empty>
+    }
+
+    /// Simple service protocol for the "arcbox.v1.MachineImageService" service.
+    ///
+    /// This is the highest level protocol for the service. The API is the easiest to use but
+    /// doesn't provide access to request or response metadata. If you need access to these
+    /// then use ``ServiceProtocol`` instead.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > MachineImageService manages the local Linux machine image registry:
+    /// > published images pulled by machine creation, and root filesystems the
+    /// > user imports.
+    public protocol SimpleServiceProtocol: Arcbox_V1_MachineImageService.ServiceProtocol {
+        /// Handle the "List" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Lists local images, with the machines that boot each.
+        ///
+        /// - Parameters:
+        ///   - request: A `Arcbox_V1_ListMachineImagesRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Arcbox_V1_ListMachineImagesResponse` to respond with.
+        func list(
+            request: Arcbox_V1_ListMachineImagesRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Arcbox_V1_ListMachineImagesResponse
+
+        /// Handle the "ListRemote" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Lists the images the configured image source publishes, fetched by
+        /// > the daemon through the egress proxy.
+        ///
+        /// - Parameters:
+        ///   - request: A `Arcbox_V1_ListRemoteMachineImagesRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Arcbox_V1_ListRemoteMachineImagesResponse` to respond with.
+        func listRemote(
+            request: Arcbox_V1_ListRemoteMachineImagesRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Arcbox_V1_ListRemoteMachineImagesResponse
+
+        /// Handle the "Import" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Imports a root filesystem as a local image, streaming progress. The
+        /// > last event carries the image.
+        ///
+        /// - Parameters:
+        ///   - request: A `Arcbox_V1_ImportMachineImageRequest` message.
+        ///   - response: A response stream of `Arcbox_V1_ImportMachineImageEvent` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        func `import`(
+            request: Arcbox_V1_ImportMachineImageRequest,
+            response: GRPCCore.RPCWriter<Arcbox_V1_ImportMachineImageEvent>,
+            context: GRPCCore.ServerContext
+        ) async throws
+
+        /// Handle the "Remove" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Removes a local image; refused while a machine boots from it.
+        ///
+        /// - Parameters:
+        ///   - request: A `Arcbox_V1_RemoveMachineImageRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Arcbox_V1_Empty` to respond with.
+        func remove(
+            request: Arcbox_V1_RemoveMachineImageRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Arcbox_V1_Empty
+    }
+}
+
+// Default implementation of 'registerMethods(with:)'.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_MachineImageService.StreamingServiceProtocol {
+    public func registerMethods<Transport>(with router: inout GRPCCore.RPCRouter<Transport>) where Transport: GRPCCore.ServerTransport {
+        router.registerHandler(
+            forMethod: Arcbox_V1_MachineImageService.Method.List.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_ListMachineImagesRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_ListMachineImagesResponse>(),
+            handler: { request, context in
+                try await self.list(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Arcbox_V1_MachineImageService.Method.ListRemote.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_ListRemoteMachineImagesRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_ListRemoteMachineImagesResponse>(),
+            handler: { request, context in
+                try await self.listRemote(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Arcbox_V1_MachineImageService.Method.Import.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_ImportMachineImageRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_ImportMachineImageEvent>(),
+            handler: { request, context in
+                try await self.`import`(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Arcbox_V1_MachineImageService.Method.Remove.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_RemoveMachineImageRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_Empty>(),
+            handler: { request, context in
+                try await self.remove(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+    }
+}
+
+// Default implementation of streaming methods from 'StreamingServiceProtocol'.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_MachineImageService.ServiceProtocol {
+    public func list(
+        request: GRPCCore.StreamingServerRequest<Arcbox_V1_ListMachineImagesRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_ListMachineImagesResponse> {
+        let response = try await self.list(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func listRemote(
+        request: GRPCCore.StreamingServerRequest<Arcbox_V1_ListRemoteMachineImagesRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_ListRemoteMachineImagesResponse> {
+        let response = try await self.listRemote(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func `import`(
+        request: GRPCCore.StreamingServerRequest<Arcbox_V1_ImportMachineImageRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_ImportMachineImageEvent> {
+        let response = try await self.`import`(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return response
+    }
+
+    public func remove(
+        request: GRPCCore.StreamingServerRequest<Arcbox_V1_RemoveMachineImageRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_Empty> {
+        let response = try await self.remove(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+}
+
+// Default implementation of methods from 'ServiceProtocol'.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_MachineImageService.SimpleServiceProtocol {
+    public func list(
+        request: GRPCCore.ServerRequest<Arcbox_V1_ListMachineImagesRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_ListMachineImagesResponse> {
+        return GRPCCore.ServerResponse<Arcbox_V1_ListMachineImagesResponse>(
+            message: try await self.list(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func listRemote(
+        request: GRPCCore.ServerRequest<Arcbox_V1_ListRemoteMachineImagesRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_ListRemoteMachineImagesResponse> {
+        return GRPCCore.ServerResponse<Arcbox_V1_ListRemoteMachineImagesResponse>(
+            message: try await self.listRemote(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func `import`(
+        request: GRPCCore.ServerRequest<Arcbox_V1_ImportMachineImageRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_ImportMachineImageEvent> {
+        return GRPCCore.StreamingServerResponse<Arcbox_V1_ImportMachineImageEvent>(
+            metadata: [:],
+            producer: { writer in
+                try await self.`import`(
+                    request: request.message,
+                    response: writer,
+                    context: context
+                )
+                return [:]
+            }
+        )
+    }
+
+    public func remove(
+        request: GRPCCore.ServerRequest<Arcbox_V1_RemoveMachineImageRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_Empty> {
+        return GRPCCore.ServerResponse<Arcbox_V1_Empty>(
+            message: try await self.remove(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+}
+
+// MARK: arcbox.v1.MachineImageService (client)
+
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_MachineImageService {
+    /// Generated client protocol for the "arcbox.v1.MachineImageService" service.
+    ///
+    /// You don't need to implement this protocol directly, use the generated
+    /// implementation, ``Client``.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > MachineImageService manages the local Linux machine image registry:
+    /// > published images pulled by machine creation, and root filesystems the
+    /// > user imports.
+    public protocol ClientProtocol: Sendable {
+        /// Call the "List" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Lists local images, with the machines that boot each.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_ListMachineImagesRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_ListMachineImagesRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_ListMachineImagesResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func list<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_ListMachineImagesRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_ListMachineImagesRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_ListMachineImagesResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_ListMachineImagesResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "ListRemote" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Lists the images the configured image source publishes, fetched by
+        /// > the daemon through the egress proxy.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_ListRemoteMachineImagesRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_ListRemoteMachineImagesRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_ListRemoteMachineImagesResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func listRemote<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_ListRemoteMachineImagesRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_ListRemoteMachineImagesRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_ListRemoteMachineImagesResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_ListRemoteMachineImagesResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "Import" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Imports a root filesystem as a local image, streaming progress. The
+        /// > last event carries the image.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_ImportMachineImageRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_ImportMachineImageRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_ImportMachineImageEvent` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func `import`<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_ImportMachineImageRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_ImportMachineImageRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_ImportMachineImageEvent>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Arcbox_V1_ImportMachineImageEvent>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "Remove" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Removes a local image; refused while a machine boots from it.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_RemoveMachineImageRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_RemoveMachineImageRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_Empty` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func remove<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_RemoveMachineImageRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_RemoveMachineImageRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_Empty>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_Empty>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+    }
+
+    /// Generated client for the "arcbox.v1.MachineImageService" service.
+    ///
+    /// The ``Client`` provides an implementation of ``ClientProtocol`` which wraps
+    /// a `GRPCCore.GRPCCClient`. The underlying `GRPCClient` provides the long-lived
+    /// means of communication with the remote peer.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > MachineImageService manages the local Linux machine image registry:
+    /// > published images pulled by machine creation, and root filesystems the
+    /// > user imports.
+    public struct Client<Transport>: ClientProtocol where Transport: GRPCCore.ClientTransport {
+        private let client: GRPCCore.GRPCClient<Transport>
+
+        /// Creates a new client wrapping the provided `GRPCCore.GRPCClient`.
+        ///
+        /// - Parameters:
+        ///   - client: A `GRPCCore.GRPCClient` providing a communication channel to the service.
+        public init(wrapping client: GRPCCore.GRPCClient<Transport>) {
+            self.client = client
+        }
+
+        /// Call the "List" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Lists local images, with the machines that boot each.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_ListMachineImagesRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_ListMachineImagesRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_ListMachineImagesResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func list<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_ListMachineImagesRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_ListMachineImagesRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_ListMachineImagesResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_ListMachineImagesResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Arcbox_V1_MachineImageService.Method.List.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "ListRemote" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Lists the images the configured image source publishes, fetched by
+        /// > the daemon through the egress proxy.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_ListRemoteMachineImagesRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_ListRemoteMachineImagesRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_ListRemoteMachineImagesResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func listRemote<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_ListRemoteMachineImagesRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_ListRemoteMachineImagesRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_ListRemoteMachineImagesResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_ListRemoteMachineImagesResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Arcbox_V1_MachineImageService.Method.ListRemote.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "Import" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Imports a root filesystem as a local image, streaming progress. The
+        /// > last event carries the image.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_ImportMachineImageRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_ImportMachineImageRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_ImportMachineImageEvent` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func `import`<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_ImportMachineImageRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_ImportMachineImageRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_ImportMachineImageEvent>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Arcbox_V1_ImportMachineImageEvent>) async throws -> Result
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.serverStreaming(
+                request: request,
+                descriptor: Arcbox_V1_MachineImageService.Method.Import.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "Remove" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Removes a local image; refused while a machine boots from it.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_RemoveMachineImageRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_RemoveMachineImageRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_Empty` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func remove<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_RemoveMachineImageRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_RemoveMachineImageRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_Empty>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_Empty>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Arcbox_V1_MachineImageService.Method.Remove.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+    }
+}
+
+// Helpers providing default arguments to 'ClientProtocol' methods.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_MachineImageService.ClientProtocol {
+    /// Call the "List" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Lists local images, with the machines that boot each.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Arcbox_V1_ListMachineImagesRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func list<Result>(
+        request: GRPCCore.ClientRequest<Arcbox_V1_ListMachineImagesRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_ListMachineImagesResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.list(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_ListMachineImagesRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_ListMachineImagesResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "ListRemote" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Lists the images the configured image source publishes, fetched by
+    /// > the daemon through the egress proxy.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Arcbox_V1_ListRemoteMachineImagesRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func listRemote<Result>(
+        request: GRPCCore.ClientRequest<Arcbox_V1_ListRemoteMachineImagesRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_ListRemoteMachineImagesResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.listRemote(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_ListRemoteMachineImagesRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_ListRemoteMachineImagesResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Import" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Imports a root filesystem as a local image, streaming progress. The
+    /// > last event carries the image.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Arcbox_V1_ImportMachineImageRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func `import`<Result>(
+        request: GRPCCore.ClientRequest<Arcbox_V1_ImportMachineImageRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Arcbox_V1_ImportMachineImageEvent>) async throws -> Result
+    ) async throws -> Result where Result: Sendable {
+        try await self.`import`(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_ImportMachineImageRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_ImportMachineImageEvent>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Remove" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Removes a local image; refused while a machine boots from it.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Arcbox_V1_RemoveMachineImageRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func remove<Result>(
+        request: GRPCCore.ClientRequest<Arcbox_V1_RemoveMachineImageRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_Empty>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.remove(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_RemoveMachineImageRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_Empty>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+}
+
+// Helpers providing sugared APIs for 'ClientProtocol' methods.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_MachineImageService.ClientProtocol {
+    /// Call the "List" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Lists local images, with the machines that boot each.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func list<Result>(
+        _ message: Arcbox_V1_ListMachineImagesRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_ListMachineImagesResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Arcbox_V1_ListMachineImagesRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.list(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "ListRemote" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Lists the images the configured image source publishes, fetched by
+    /// > the daemon through the egress proxy.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func listRemote<Result>(
+        _ message: Arcbox_V1_ListRemoteMachineImagesRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_ListRemoteMachineImagesResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Arcbox_V1_ListRemoteMachineImagesRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.listRemote(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Import" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Imports a root filesystem as a local image, streaming progress. The
+    /// > last event carries the image.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func `import`<Result>(
+        _ message: Arcbox_V1_ImportMachineImageRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Arcbox_V1_ImportMachineImageEvent>) async throws -> Result
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Arcbox_V1_ImportMachineImageRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.`import`(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Remove" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Removes a local image; refused while a machine boots from it.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func remove<Result>(
+        _ message: Arcbox_V1_RemoveMachineImageRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_Empty>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Arcbox_V1_RemoveMachineImageRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.remove(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+}

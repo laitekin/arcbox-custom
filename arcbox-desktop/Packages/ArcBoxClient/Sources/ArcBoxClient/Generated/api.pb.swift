@@ -182,6 +182,285 @@ public enum Arcbox_V1_MigrationMountType: SwiftProtobuf.Enum, Swift.CaseIterable
 
 }
 
+/// Where guest egress goes.
+public enum Arcbox_V1_EgressProxyMode: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+
+  /// Unset; rejected by SetProxy.
+  case unspecified // = 0
+
+  /// Follow the Mac's proxy settings and their exclusions.
+  case system // = 1
+
+  /// Always connect directly.
+  case none // = 2
+
+  /// Use the proxy in `url`.
+  case custom // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .system
+    case 2: self = .none
+    case 3: self = .custom
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .system: return 1
+    case .none: return 2
+    case .custom: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Arcbox_V1_EgressProxyMode] = [
+    .unspecified,
+    .system,
+    .none,
+    .custom,
+  ]
+
+}
+
+/// What happens to guest UDP. Gateway-local UDP (the built-in DNS) is never
+/// affected.
+public enum Arcbox_V1_EgressUdpPolicy: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+
+  /// Unset; treated as PROXY.
+  case unspecified // = 0
+
+  /// SOCKS5 UDP ASSOCIATE; dropped when only an HTTP proxy is configured.
+  case proxy // = 1
+
+  /// Always direct.
+  case direct // = 2
+
+  /// Always dropped; applications fall back to TCP.
+  case block // = 3
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .proxy
+    case 2: self = .direct
+    case 3: self = .block
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .proxy: return 1
+    case .direct: return 2
+    case .block: return 3
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Arcbox_V1_EgressUdpPolicy] = [
+    .unspecified,
+    .proxy,
+    .direct,
+    .block,
+  ]
+
+}
+
+/// What happens to guest ICMP echo, which no proxy can carry.
+public enum Arcbox_V1_EgressIcmpPolicy: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+
+  /// Unset; treated as DIRECT.
+  case unspecified // = 0
+
+  /// Sent from the host directly.
+  case direct // = 1
+
+  /// Dropped.
+  case block // = 2
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .direct
+    case 2: self = .block
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .direct: return 1
+    case .block: return 2
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Arcbox_V1_EgressIcmpPolicy] = [
+    .unspecified,
+    .direct,
+    .block,
+  ]
+
+}
+
+/// A stage of the proxy test.
+public enum Arcbox_V1_EgressProxyTestStepKind: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+
+  /// Which proxy the target's flows use (skipped when direct).
+  case select // = 1
+
+  /// TCP connection to the proxy.
+  case reach // = 2
+
+  /// SOCKS5 method negotiation and username/password authentication.
+  case authenticate // = 3
+
+  /// CONNECT to the target (HTTP proxies authenticate here).
+  case tunnel // = 4
+
+  /// UDP ASSOCIATE plus one relayed DNS query (SOCKS5 only).
+  case udp // = 5
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .select
+    case 2: self = .reach
+    case 3: self = .authenticate
+    case 4: self = .tunnel
+    case 5: self = .udp
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .select: return 1
+    case .reach: return 2
+    case .authenticate: return 3
+    case .tunnel: return 4
+    case .udp: return 5
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Arcbox_V1_EgressProxyTestStepKind] = [
+    .unspecified,
+    .select,
+    .reach,
+    .authenticate,
+    .tunnel,
+    .udp,
+  ]
+
+}
+
+/// Why a proxy test step failed.
+public enum Arcbox_V1_EgressProxyTestFailure: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case unreachable // = 1
+  case timeout // = 2
+  case authRejected // = 3
+  case noAcceptableMethod // = 4
+  case missingPassword // = 5
+  case targetRefused // = 6
+  case udpUnsupported // = 7
+  case `protocol` // = 8
+
+  /// The draft settings could not be resolved (for example, a user with no
+  /// password anywhere).
+  case config // = 9
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .unreachable
+    case 2: self = .timeout
+    case 3: self = .authRejected
+    case 4: self = .noAcceptableMethod
+    case 5: self = .missingPassword
+    case 6: self = .targetRefused
+    case 7: self = .udpUnsupported
+    case 8: self = .protocol
+    case 9: self = .config
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .unreachable: return 1
+    case .timeout: return 2
+    case .authRejected: return 3
+    case .noAcceptableMethod: return 4
+    case .missingPassword: return 5
+    case .targetRefused: return 6
+    case .udpUnsupported: return 7
+    case .protocol: return 8
+    case .config: return 9
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Arcbox_V1_EgressProxyTestFailure] = [
+    .unspecified,
+    .unreachable,
+    .timeout,
+    .authRejected,
+    .noAcceptableMethod,
+    .missingPassword,
+    .targetRefused,
+    .udpUnsupported,
+    .protocol,
+    .config,
+  ]
+
+}
+
 /// Request to create a network.
 public struct Arcbox_V1_CreateNetworkRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -2395,6 +2674,144 @@ public struct Arcbox_V1_StorageRecoveryProgress: Sendable {
   public init() {}
 }
 
+/// The egress proxy settings. Never carries a password.
+public struct Arcbox_V1_EgressProxySettings: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var mode: Arcbox_V1_EgressProxyMode = .unspecified
+
+  /// CUSTOM only: `socks5://[user@]host:port`, `http://...` or
+  /// `https://...`. Any password in a URL sent to SetProxy is moved to the
+  /// credential store and never echoed back.
+  public var url: String = String()
+
+  /// Output only: a password is stored for the custom proxy's user.
+  public var hasPassword_p: Bool = false
+
+  /// Hosts that bypass the proxy, `NO_PROXY` form (`example.com`,
+  /// `.example.com`, `*.example.com`).
+  public var exclude: [String] = []
+
+  public var udp: Arcbox_V1_EgressUdpPolicy = .unspecified
+
+  public var icmp: Arcbox_V1_EgressIcmpPolicy = .unspecified
+
+  /// Output only: the proxies flows are sent to right now, password-free,
+  /// in the order the egress prefers them; empty when everything is
+  /// direct. Under SYSTEM this is the last probe of the Mac's settings.
+  public var effective: [String] = []
+
+  /// Output only: where the password is stored (`keychain`, `file`).
+  public var credentialStore: String = String()
+
+  /// Output only: bumps every time the applied settings change.
+  public var revision: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Request to change the egress proxy settings.
+public struct Arcbox_V1_SetEgressProxyRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The new settings; output-only fields are ignored.
+  public var settings: Arcbox_V1_EgressProxySettings {
+    get {_settings ?? Arcbox_V1_EgressProxySettings()}
+    set {_settings = newValue}
+  }
+  /// Returns true if `settings` has been explicitly set.
+  public var hasSettings: Bool {self._settings != nil}
+  /// Clears the value of `settings`. Subsequent reads from it will return its default value.
+  public mutating func clearSettings() {self._settings = nil}
+
+  /// Absent: keep the stored password. Empty: remove it. Otherwise:
+  /// store it for the custom proxy's user.
+  public var password: String {
+    get {_password ?? String()}
+    set {_password = newValue}
+  }
+  /// Returns true if `password` has been explicitly set.
+  public var hasPassword: Bool {self._password != nil}
+  /// Clears the value of `password`. Subsequent reads from it will return its default value.
+  public mutating func clearPassword() {self._password = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _settings: Arcbox_V1_EgressProxySettings? = nil
+  fileprivate var _password: String? = nil
+}
+
+/// Request to test a proxy path.
+public struct Arcbox_V1_TestEgressProxyRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Draft settings to test instead of the saved ones.
+  public var settings: Arcbox_V1_EgressProxySettings {
+    get {_settings ?? Arcbox_V1_EgressProxySettings()}
+    set {_settings = newValue}
+  }
+  /// Returns true if `settings` has been explicitly set.
+  public var hasSettings: Bool {self._settings != nil}
+  /// Clears the value of `settings`. Subsequent reads from it will return its default value.
+  public mutating func clearSettings() {self._settings = nil}
+
+  /// Draft password; absent uses the stored one. Ignored without
+  /// `settings`.
+  public var password: String {
+    get {_password ?? String()}
+    set {_password = newValue}
+  }
+  /// Returns true if `password` has been explicitly set.
+  public var hasPassword: Bool {self._password != nil}
+  /// Clears the value of `password`. Subsequent reads from it will return its default value.
+  public mutating func clearPassword() {self._password = nil}
+
+  /// Target `host:port` to tunnel to; empty means www.gstatic.com:443.
+  public var target: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _settings: Arcbox_V1_EgressProxySettings? = nil
+  fileprivate var _password: String? = nil
+}
+
+/// One finished step of a proxy test.
+public struct Arcbox_V1_EgressProxyTestStep: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var step: Arcbox_V1_EgressProxyTestStepKind = .unspecified
+
+  public var ok: Bool = false
+
+  /// Not applicable (direct egress; UDP behind an HTTP proxy).
+  public var skipped: Bool = false
+
+  public var latencyMs: UInt64 = 0
+
+  public var failure: Arcbox_V1_EgressProxyTestFailure = .unspecified
+
+  /// Human-readable detail; never contains a password.
+  public var message: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate let _protobuf_package = "arcbox.v1"
@@ -2409,6 +2826,26 @@ extension Arcbox_V1_MigrationNetworkMode: SwiftProtobuf._ProtoNameProviding {
 
 extension Arcbox_V1_MigrationMountType: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MIGRATION_MOUNT_TYPE_UNSPECIFIED\0\u{1}MIGRATION_MOUNT_TYPE_VOLUME\0\u{1}MIGRATION_MOUNT_TYPE_BIND\0\u{1}MIGRATION_MOUNT_TYPE_TMPFS\0")
+}
+
+extension Arcbox_V1_EgressProxyMode: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0EGRESS_PROXY_MODE_UNSPECIFIED\0\u{1}EGRESS_PROXY_MODE_SYSTEM\0\u{1}EGRESS_PROXY_MODE_NONE\0\u{1}EGRESS_PROXY_MODE_CUSTOM\0")
+}
+
+extension Arcbox_V1_EgressUdpPolicy: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0EGRESS_UDP_POLICY_UNSPECIFIED\0\u{1}EGRESS_UDP_POLICY_PROXY\0\u{1}EGRESS_UDP_POLICY_DIRECT\0\u{1}EGRESS_UDP_POLICY_BLOCK\0")
+}
+
+extension Arcbox_V1_EgressIcmpPolicy: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0EGRESS_ICMP_POLICY_UNSPECIFIED\0\u{1}EGRESS_ICMP_POLICY_DIRECT\0\u{1}EGRESS_ICMP_POLICY_BLOCK\0")
+}
+
+extension Arcbox_V1_EgressProxyTestStepKind: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0EGRESS_PROXY_TEST_STEP_KIND_UNSPECIFIED\0\u{1}EGRESS_PROXY_TEST_STEP_KIND_SELECT\0\u{1}EGRESS_PROXY_TEST_STEP_KIND_REACH\0\u{1}EGRESS_PROXY_TEST_STEP_KIND_AUTHENTICATE\0\u{1}EGRESS_PROXY_TEST_STEP_KIND_TUNNEL\0\u{1}EGRESS_PROXY_TEST_STEP_KIND_UDP\0")
+}
+
+extension Arcbox_V1_EgressProxyTestFailure: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0EGRESS_PROXY_TEST_FAILURE_UNSPECIFIED\0\u{1}EGRESS_PROXY_TEST_FAILURE_UNREACHABLE\0\u{1}EGRESS_PROXY_TEST_FAILURE_TIMEOUT\0\u{1}EGRESS_PROXY_TEST_FAILURE_AUTH_REJECTED\0\u{1}EGRESS_PROXY_TEST_FAILURE_NO_ACCEPTABLE_METHOD\0\u{1}EGRESS_PROXY_TEST_FAILURE_MISSING_PASSWORD\0\u{1}EGRESS_PROXY_TEST_FAILURE_TARGET_REFUSED\0\u{1}EGRESS_PROXY_TEST_FAILURE_UDP_UNSUPPORTED\0\u{1}EGRESS_PROXY_TEST_FAILURE_PROTOCOL\0\u{1}EGRESS_PROXY_TEST_FAILURE_CONFIG\0")
 }
 
 extension Arcbox_V1_CreateNetworkRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
@@ -5839,4 +6276,212 @@ extension Arcbox_V1_StorageRecoveryProgress: SwiftProtobuf.Message, SwiftProtobu
 
 extension Arcbox_V1_StorageRecoveryProgress.Phase: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0PHASE_UNSPECIFIED\0\u{1}STOPPING\0\u{1}PRESERVING\0\u{1}CHECKING\0\u{1}RESTARTING\0\u{1}VERIFYING\0\u{1}COMPLETE\0\u{1}FAILED\0")
+}
+
+extension Arcbox_V1_EgressProxySettings: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".EgressProxySettings"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}mode\0\u{1}url\0\u{3}has_password\0\u{1}exclude\0\u{1}udp\0\u{1}icmp\0\u{1}effective\0\u{3}credential_store\0\u{1}revision\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.mode) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.url) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.hasPassword_p) }()
+      case 4: try { try decoder.decodeRepeatedStringField(value: &self.exclude) }()
+      case 5: try { try decoder.decodeSingularEnumField(value: &self.udp) }()
+      case 6: try { try decoder.decodeSingularEnumField(value: &self.icmp) }()
+      case 7: try { try decoder.decodeRepeatedStringField(value: &self.effective) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.credentialStore) }()
+      case 9: try { try decoder.decodeSingularUInt64Field(value: &self.revision) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.mode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.mode, fieldNumber: 1)
+    }
+    if !self.url.isEmpty {
+      try visitor.visitSingularStringField(value: self.url, fieldNumber: 2)
+    }
+    if self.hasPassword_p != false {
+      try visitor.visitSingularBoolField(value: self.hasPassword_p, fieldNumber: 3)
+    }
+    if !self.exclude.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.exclude, fieldNumber: 4)
+    }
+    if self.udp != .unspecified {
+      try visitor.visitSingularEnumField(value: self.udp, fieldNumber: 5)
+    }
+    if self.icmp != .unspecified {
+      try visitor.visitSingularEnumField(value: self.icmp, fieldNumber: 6)
+    }
+    if !self.effective.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.effective, fieldNumber: 7)
+    }
+    if !self.credentialStore.isEmpty {
+      try visitor.visitSingularStringField(value: self.credentialStore, fieldNumber: 8)
+    }
+    if self.revision != 0 {
+      try visitor.visitSingularUInt64Field(value: self.revision, fieldNumber: 9)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_EgressProxySettings, rhs: Arcbox_V1_EgressProxySettings) -> Bool {
+    if lhs.mode != rhs.mode {return false}
+    if lhs.url != rhs.url {return false}
+    if lhs.hasPassword_p != rhs.hasPassword_p {return false}
+    if lhs.exclude != rhs.exclude {return false}
+    if lhs.udp != rhs.udp {return false}
+    if lhs.icmp != rhs.icmp {return false}
+    if lhs.effective != rhs.effective {return false}
+    if lhs.credentialStore != rhs.credentialStore {return false}
+    if lhs.revision != rhs.revision {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_SetEgressProxyRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetEgressProxyRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}settings\0\u{1}password\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._settings) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self._password) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._settings {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try { if let v = self._password {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 2)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_SetEgressProxyRequest, rhs: Arcbox_V1_SetEgressProxyRequest) -> Bool {
+    if lhs._settings != rhs._settings {return false}
+    if lhs._password != rhs._password {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_TestEgressProxyRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".TestEgressProxyRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}settings\0\u{1}password\0\u{1}target\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._settings) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self._password) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.target) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._settings {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try { if let v = self._password {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 2)
+    } }()
+    if !self.target.isEmpty {
+      try visitor.visitSingularStringField(value: self.target, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_TestEgressProxyRequest, rhs: Arcbox_V1_TestEgressProxyRequest) -> Bool {
+    if lhs._settings != rhs._settings {return false}
+    if lhs._password != rhs._password {return false}
+    if lhs.target != rhs.target {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_EgressProxyTestStep: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".EgressProxyTestStep"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}step\0\u{1}ok\0\u{1}skipped\0\u{3}latency_ms\0\u{1}failure\0\u{1}message\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.step) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.ok) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.skipped) }()
+      case 4: try { try decoder.decodeSingularUInt64Field(value: &self.latencyMs) }()
+      case 5: try { try decoder.decodeSingularEnumField(value: &self.failure) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.message) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.step != .unspecified {
+      try visitor.visitSingularEnumField(value: self.step, fieldNumber: 1)
+    }
+    if self.ok != false {
+      try visitor.visitSingularBoolField(value: self.ok, fieldNumber: 2)
+    }
+    if self.skipped != false {
+      try visitor.visitSingularBoolField(value: self.skipped, fieldNumber: 3)
+    }
+    if self.latencyMs != 0 {
+      try visitor.visitSingularUInt64Field(value: self.latencyMs, fieldNumber: 4)
+    }
+    if self.failure != .unspecified {
+      try visitor.visitSingularEnumField(value: self.failure, fieldNumber: 5)
+    }
+    if !self.message.isEmpty {
+      try visitor.visitSingularStringField(value: self.message, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_EgressProxyTestStep, rhs: Arcbox_V1_EgressProxyTestStep) -> Bool {
+    if lhs.step != rhs.step {return false}
+    if lhs.ok != rhs.ok {return false}
+    if lhs.skipped != rhs.skipped {return false}
+    if lhs.latencyMs != rhs.latencyMs {return false}
+    if lhs.failure != rhs.failure {return false}
+    if lhs.message != rhs.message {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
 }
