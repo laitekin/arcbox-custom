@@ -15,6 +15,7 @@
 
 ARCBOX_DIR ?= $(shell cd ../arcbox 2>/dev/null && pwd)
 ARCBOX_VERSION := $(strip $(shell /bin/cat arcbox.version))
+ARCBOX_USE_LOCAL_RUNTIME ?= 0
 SIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null \
 	| grep -o '"Developer ID Application: ArcBox, Inc\.[^"]*"' \
 	| head -1 | tr -d '"')
@@ -205,7 +206,11 @@ audit-accessibility: check-runnable-prerequisites
 	$(MAKE) test SCHEME=ArcBoxUITests $(RUNNABLE_BUILD_VARS)
 
 check-runnable-prerequisites:
-	@actual_commit=$$(/usr/bin/git -C "$(ARCBOX_DIR)" rev-parse HEAD) || exit 1; \
+	@if [ "$(ARCBOX_USE_LOCAL_RUNTIME)" = "1" ]; then \
+		test -f "$(ARCBOX_DIR)/Cargo.toml" || exit 1; \
+		echo "Using explicitly selected local runtime: $(ARCBOX_DIR)"; \
+	else \
+	actual_commit=$$(/usr/bin/git -C "$(ARCBOX_DIR)" rev-parse HEAD) || exit 1; \
 	expected_commit=$$(/usr/bin/git -C "$(ARCBOX_DIR)" rev-parse "$(ARCBOX_VERSION)^{commit}") || exit 1; \
 	if [ "$$actual_commit" != "$$expected_commit" ]; then \
 		echo "ERROR: ARCBOX_DIR must be checked out at $(ARCBOX_VERSION)." >&2; \
@@ -215,6 +220,7 @@ check-runnable-prerequisites:
 	if [ -n "$$(/usr/bin/git -C "$(ARCBOX_DIR)" status --porcelain --untracked-files=normal)" ]; then \
 		echo "ERROR: ARCBOX_DIR has tracked or untracked source changes." >&2; \
 		exit 1; \
+	fi; \
 	fi
 	@if [ -z "$(SIGN_IDENTITY)" ]; then \
 		echo "ERROR: No ArcBox Developer ID signing identity found." >&2; \

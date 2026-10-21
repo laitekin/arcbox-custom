@@ -29,6 +29,14 @@
 
 依赖包括完整 Xcode、Rust、Node.js、protobuf、xcodegen、aarch64 Linux musl 交叉编译工具链。
 
+从仓库根目录编译并启动当前本地源码：
+
+```sh
+make run
+```
+
+`make run` 默认只为本机开发使用 ad-hoc 签名，明确启用本地 runtime 模式以接受本仓库的二开修改。原有固定上游 tag、干净 worktree 的构建模式仍保留在桌面构建脚本中。
+
 ```sh
 cd arcbox-desktop
 make test-xtask lint-xtask

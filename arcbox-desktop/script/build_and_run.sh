@@ -4,13 +4,19 @@ set -euo pipefail
 mode="${1:-run}"
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 runtime_version="$(tr -d '[:space:]' <"$root_dir/arcbox.version")"
-runtime_dir="${ARCBOX_DIR:-$root_dir/.build/arcbox-$runtime_version}"
+if [[ "${ARCBOX_USE_LOCAL_RUNTIME:-0}" == "1" ]]; then
+  runtime_dir="${ARCBOX_DIR:-$root_dir/../arcbox}"
+else
+  runtime_dir="${ARCBOX_DIR:-$root_dir/.build/arcbox-$runtime_version}"
+fi
 app_bundle="$root_dir/.build/DerivedData-Runnable/Build/Products/Debug/ArcBox.app"
 app_binary="$app_bundle/Contents/MacOS/ArcBox"
 abctl_binary="$app_bundle/Contents/MacOS/bin/abctl"
 daemon_label="com.arcboxlabs.desktop.dev.daemon"
 
-if [[ ! -e "$runtime_dir/.git" ]]; then
+if [[ "${ARCBOX_USE_LOCAL_RUNTIME:-0}" == "1" ]]; then
+  test -f "$runtime_dir/Cargo.toml" || { echo "error: local runtime Cargo.toml missing" >&2; exit 1; }
+elif [[ ! -e "$runtime_dir/.git" ]]; then
   if [[ -n "${ARCBOX_DIR:-}" ]]; then
     echo "error: ARCBOX_DIR is not a git worktree: $runtime_dir" >&2
     exit 1
@@ -20,18 +26,19 @@ fi
 
 runtime_dir="$(cd "$runtime_dir" && pwd -P)"
 
-if [[ "$(git -C "$runtime_dir" rev-parse HEAD)" != "$(git -C "$runtime_dir" rev-parse "$runtime_version^{commit}")" ]]; then
-  echo "error: ARCBOX_DIR must be checked out at $runtime_version: $runtime_dir" >&2
-  exit 1
-fi
-
-if [[ -n "$(git -C "$runtime_dir" status --porcelain --untracked-files=normal)" ]]; then
-  echo "error: ARCBOX_DIR has tracked or untracked source changes: $runtime_dir" >&2
-  exit 1
+if [[ "${ARCBOX_USE_LOCAL_RUNTIME:-0}" != "1" ]]; then
+  if [[ "$(git -C "$runtime_dir" rev-parse HEAD)" != "$(git -C "$runtime_dir" rev-parse "$runtime_version^{commit}")" ]]; then
+    echo "error: ARCBOX_DIR must be checked out at $runtime_version: $runtime_dir" >&2
+    exit 1
+  fi
+  if [[ -n "$(git -C "$runtime_dir" status --porcelain --untracked-files=normal)" ]]; then
+    echo "error: ARCBOX_DIR has tracked or untracked source changes: $runtime_dir" >&2
+    exit 1
+  fi
 fi
 
 export ARCBOX_DIR="$runtime_dir"
-export ARCBOX_HOST_TARGET_DIR="$runtime_dir/target"
+export ARCBOX_HOST_TARGET_DIR="${ARCBOX_HOST_TARGET_DIR:-$runtime_dir/target}"
 
 /usr/bin/pkill -f "$app_binary" >/dev/null 2>&1 || true
 /usr/bin/pkill -x "ArcBox Dev" >/dev/null 2>&1 || true
