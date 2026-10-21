@@ -142,6 +142,21 @@ public final class ArcBoxClient: Sendable {
         return options
     }
 
+    /// Call options for a machine image import, which reads, checks and
+    /// compresses a whole root filesystem.
+    public static var machineImageImportCallOptions: GRPCCore.CallOptions {
+        var options = CallOptions.defaults
+        options.timeout = .seconds(1800)
+        return options
+    }
+
+    /// Call options for the proxy test, which bounds each step itself.
+    public static var proxyTestCallOptions: GRPCCore.CallOptions {
+        var options = CallOptions.defaults
+        options.timeout = .seconds(60)
+        return options
+    }
+
     /// Call options for sandbox creation, which may materialize a Docker
     /// template inside the System VM on first use.
     public static var sandboxCreateCallOptions: GRPCCore.CallOptions {
@@ -187,6 +202,16 @@ public final class ArcBoxClient: Sendable {
 
     /// Virtual machine management operations.
     public var machines: Arcbox_V1_MachineService.Client<HTTP2ClientTransport.TransportServices> {
+        .init(wrapping: grpcClient)
+    }
+
+    /// Linux machine image registry (list, import, remove).
+    public var machineImages: Arcbox_V1_MachineImageService.Client<HTTP2ClientTransport.TransportServices> {
+        .init(wrapping: grpcClient)
+    }
+
+    /// Guest egress proxy settings and the proxy test.
+    public var egressProxy: Arcbox_V1_EgressProxyService.Client<HTTP2ClientTransport.TransportServices> {
         .init(wrapping: grpcClient)
     }
 
