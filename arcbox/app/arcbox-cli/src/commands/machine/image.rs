@@ -23,7 +23,7 @@ pub enum ImageCommands {
     /// SOURCE is a rootfs archive (.tar, .tar.gz, .tar.xz, .tar.zst), a
     /// squashfs image, or `docker:<image>` for an image in ArcBox's Docker
     /// engine. The rootfs must contain /sbin/init for this Mac's
-    /// architecture.
+    /// architecture. Disk images (qcow2, VMDK, raw) are not importable yet.
     Import(ImportArgs),
     /// Remove a local machine image (refused while a machine uses it)
     #[command(alias = "remove")]

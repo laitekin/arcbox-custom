@@ -423,3 +423,41 @@ fn the_init_dockerfile_derives_from_the_source_and_requires_an_init() {
     assert!(dockerfile.contains("openrc"));
     assert!(dockerfile.trim_end().ends_with("test -e /sbin/init"));
 }
+
+#[test]
+fn disk_images_are_refused_with_a_clear_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager = manager(dir.path());
+    let at = |offset: usize, magic: &[u8]| {
+        let mut bytes = vec![0u8; 4096];
+        bytes[offset..offset + magic.len()].copy_from_slice(magic);
+        bytes
+    };
+    let cases = [
+        ("qcow2", at(0, b"QFI\xfb\0\0\0\x03"), "qcow2 disk image"),
+        ("vmdk", at(0, b"KDMV"), "VMDK disk image"),
+        ("vhdx", at(0, b"vhdxfile"), "VHDX disk image"),
+        ("vdi", at(64, &[0x7f, 0x10, 0xda, 0xbe]), "VDI disk image"),
+        ("gpt", at(512, b"EFI PART"), "raw disk image"),
+        ("mbr", at(510, &[0x55, 0xaa]), "raw disk image"),
+        ("ext4", at(1080, &[0x53, 0xef]), "raw ext filesystem image"),
+    ];
+    for (name, bytes, kind) in cases {
+        let path = dir.path().join(format!("disk.{name}"));
+        std::fs::write(&path, bytes).unwrap();
+        let error = manager
+            .import(request(name, ImportSource::File(path)), |_, _| {})
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(kind), "{name}: {error}");
+        assert!(error.contains("cannot be imported yet"), "{name}: {error}");
+    }
+    assert!(manager.list().is_empty());
+    assert!(leftovers(&manager).is_empty(), "{:?}", leftovers(&manager));
+}
+
+#[test]
+fn archives_are_not_mistaken_for_disk_images() {
+    assert_eq!(disk_image_kind(&Archive::rootfs().finish()), None);
+    assert_eq!(disk_image_kind(b"short"), None);
+}

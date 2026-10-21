@@ -654,7 +654,9 @@ message ImportMachineImageRequest {
     // Name for the image: 1-63 lowercase letters, digits, `.`, `-`, `_`.
     string name = 1;
     // A rootfs archive (tar, tar.gz, tar.xz, tar.zst) or squashfs image, by
-    // absolute path on the daemon's host.
+    // absolute path on the daemon's host. Disk images (qcow2, VMDK, VHDX,
+    // VDI, raw disks and bare ext filesystems) are not importable yet and
+    // fail with INVALID_ARGUMENT naming the format.
     string path = 2;
     // A Docker image in the System VM's engine, exported as the rootfs.
     string docker_image = 3;
@@ -666,7 +668,6 @@ message ImportMachineImageRequest {
     uint64 max_size = 6;
     // With `docker_image`: first build a derived image with an init system
     // installed (systemd, or openrc on Alpine), import that, then remove it.
-    // qcow2 and raw disk images are not importable yet.
     bool add_init = 7;
 }
 

@@ -22,7 +22,7 @@
 - [x] R6 宿主机 DNS：已确认会泄露（网关 DNS 由宿主机直连上游解析器，不经代理）；结论与三种改法写入覆盖矩阵「Host-side DNS (R6)」。改法涉及排除列表 / `udp = direct` / ICMP 的直连路径，**等用户选定方案后再实现**，定时任务不做。
 - [x] sandbox 覆盖：确认 `computer/` sandbox microVM 出站经过 System VM 数据通路，结论写入覆盖矩阵。
 - [x] F2.4 跟随系统：macOS 上用 `SCDynamicStore` 通知替代 30 秒轮询（保留轮询作为非 macOS 回退），`cfg(target_os = "macos")` 隔离。
-- [ ] F4.8（P2，仅接口）：`ImportMachineImageRequest` 文档注明 qcow2/raw 暂不支持，导入时识别 qcow2 魔数并返回明确错误（带测试）。
+- [x] F4.8（P2，仅接口）：`ImportMachineImageRequest` 文档注明 qcow2/raw 暂不支持，导入时识别 qcow2 魔数并返回明确错误（带测试）。
 - [ ] 收尾：README「开发进度」更新；在 issue #2、#3 评论实现与验证摘要（若 GitHub 工具可用）；询问用户是否开 PR。
 
 ## 需要 Mac 才能做（只记录，不由定时任务完成）

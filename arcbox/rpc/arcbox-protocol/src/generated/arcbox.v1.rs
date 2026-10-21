@@ -2645,7 +2645,9 @@ pub struct ImportMachineImageRequest {
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
     /// A rootfs archive (tar, tar.gz, tar.xz, tar.zst) or squashfs image, by
-    /// absolute path on the daemon's host.
+    /// absolute path on the daemon's host. Disk images (qcow2, VMDK, VHDX,
+    /// VDI, raw disks and bare ext filesystems) are not importable yet and
+    /// fail with INVALID_ARGUMENT naming the format.
     #[prost(string, tag = "2")]
     pub path: ::prost::alloc::string::String,
     /// A Docker image in the System VM's engine, exported as the rootfs.
@@ -2662,7 +2664,6 @@ pub struct ImportMachineImageRequest {
     pub max_size: u64,
     /// With `docker_image`: first build a derived image with an init system
     /// installed (systemd, or openrc on Alpine), import that, then remove it.
-    /// qcow2 and raw disk images are not importable yet.
     #[prost(bool, tag = "7")]
     pub add_init: bool,
 }

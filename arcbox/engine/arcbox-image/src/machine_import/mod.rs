@@ -156,10 +156,19 @@ enum Format {
 }
 
 fn sniff(path: &Path) -> Result<Format> {
-    let mut magic = [0u8; 6];
-    let mut file = std::fs::File::open(path)?;
-    let n = file.read(&mut magic)?;
-    let magic = &magic[..n];
+    // Enough for the ext superblock magic at 1080.
+    let mut head = Vec::with_capacity(1082);
+    std::fs::File::open(path)?
+        .take(1082)
+        .read_to_end(&mut head)?;
+    if let Some(kind) = disk_image_kind(&head) {
+        return Err(ImageError::image(format!(
+            "{} is a {kind}, which cannot be imported yet; import its root filesystem \
+             as a tar archive instead (for example `virt-tar-out -a <disk> / rootfs.tar`)",
+            path.display()
+        )));
+    }
+    let magic = &head[..head.len().min(6)];
     Ok(if magic.starts_with(SQUASHFS_MAGIC) {
         Format::Squashfs
     } else if magic.starts_with(&[0x1f, 0x8b]) {
@@ -171,6 +180,37 @@ fn sniff(path: &Path) -> Result<Format> {
     } else {
         Format::Tar
     })
+}
+
+/// What kind of disk image `head` (the first bytes of a file) starts, when
+/// it is one: VM disk formats, a partitioned raw disk, or a bare ext
+/// filesystem.
+fn disk_image_kind(head: &[u8]) -> Option<&'static str> {
+    let at = |offset: usize, magic: &[u8]| head.get(offset..offset + magic.len()) == Some(magic);
+    if at(0, b"QFI\xfb") {
+        return Some("qcow2 disk image");
+    }
+    if at(0, b"KDMV") || at(0, b"# Disk DescriptorFile") {
+        return Some("VMDK disk image");
+    }
+    if at(0, b"vhdxfile") {
+        return Some("VHDX disk image");
+    }
+    if at(64, &[0x7f, 0x10, 0xda, 0xbe]) {
+        return Some("VDI disk image");
+    }
+    // A tar header carries `ustar` at 257 and zero padding at 500..512, so
+    // these raw-disk checks do not trip on an archive.
+    if at(257, b"ustar") {
+        return None;
+    }
+    if at(512, b"EFI PART") || at(510, &[0x55, 0xaa]) {
+        return Some("raw disk image");
+    }
+    if at(1080, &[0x53, 0xef]) {
+        return Some("raw ext filesystem image");
+    }
+    None
 }
 
 fn open_tar(path: &Path, format: &Format) -> Result<Box<dyn Read + Send>> {
