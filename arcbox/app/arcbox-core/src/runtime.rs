@@ -293,7 +293,9 @@ impl Runtime {
         // once per daemon start.
         let host_network = HostNetwork {
             dns_hosts: Some(network_manager.local_hosts_table()),
-            proxy: config.network.proxy_settings().resolve(),
+            proxy: arcbox_fakeip::proxy_state::ProxyState::new(
+                config.network.proxy_settings().resolve(),
+            ),
         };
 
         let machine_manager = Arc::new(MachineManager::new(

@@ -81,9 +81,8 @@ pub struct HostNetwork {
     /// Hostname table shared with the host-side DNS service, so names
     /// registered on the host resolve inside the guest too.
     pub dns_hosts: Option<std::sync::Arc<arcbox_dns::LocalHostsTable>>,
-    /// Proxy the guest's TCP and UDP egress is tunnelled through; `None`
-    /// connects directly.
-    pub proxy: Option<arcbox_fakeip::proxy_detect::ProxyEnvironment>,
+    /// Shared live policy, including direct mode; installed even before a proxy is set.
+    pub proxy: arcbox_fakeip::proxy_state::ProxyState,
 }
 
 /// Shared directory configuration for `VirtioFS`.

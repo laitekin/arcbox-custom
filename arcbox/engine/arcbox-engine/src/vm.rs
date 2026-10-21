@@ -264,9 +264,7 @@ impl VmManager {
             if let Some(table) = host_network.dns_hosts {
                 vmm.set_shared_dns_hosts(table);
             }
-            if let Some(proxy) = host_network.proxy {
-                vmm.set_proxy_env(proxy);
-            }
+            vmm.set_proxy_state(host_network.proxy);
         }
         #[cfg(not(target_os = "macos"))]
         let _ = host_network;

@@ -93,7 +93,7 @@ pub struct NetworkDatapath {
     /// Proxy the guest's TCP and UDP egress is tunnelled through, already
     /// resolved from the operator's policy. `None` connects everything
     /// directly.
-    pub proxy_env: Option<ProxyEnvironment>,
+    pub proxy_env: arcbox_fakeip::proxy_state::ProxyState,
 }
 
 impl NetworkDatapath {
@@ -133,13 +133,18 @@ impl NetworkDatapath {
             mtu,
             frame_sink: None,
             conn_sink: None,
-            proxy_env: None,
+            proxy_env: arcbox_fakeip::proxy_state::ProxyState::default(),
         }
     }
 
     /// Tunnels guest egress through `env`'s proxy, honouring its bypass list.
     pub fn set_proxy_env(&mut self, env: ProxyEnvironment) {
-        self.proxy_env = Some(env);
+        self.set_proxy_state(arcbox_fakeip::proxy_state::ProxyState::new(Some(env)));
+    }
+
+    /// Shares configuration updates with both TCP and UDP without restarting the VM.
+    pub fn set_proxy_state(&mut self, state: arcbox_fakeip::proxy_state::ProxyState) {
+        self.proxy_env = state;
     }
 
     /// Attaches a frame sink for host-to-guest RX injection.
@@ -220,13 +225,8 @@ impl NetworkDatapath {
         // its bypass list (HTTP proxies cannot carry UDP, so only a SOCKS
         // proxy actually routes UDP). Without a proxy the bridge still gets
         // the DNS log, so flow metadata keeps recovering domains.
-        match proxy_env {
-            Some(env) => {
-                egress.set_proxy_awareness(dns_log.clone(), env.clone());
-                tcp_bridge.set_proxy_awareness(dns_log.clone(), env);
-            }
-            None => tcp_bridge.set_dns_log(dns_log.clone()),
-        }
+        egress.set_proxy_state(dns_log.clone(), proxy_env.clone());
+        tcp_bridge.set_proxy_state(dns_log.clone(), proxy_env);
 
         let guest_async = AsyncFd::new(FdWrapper(guest_fd))?;
 

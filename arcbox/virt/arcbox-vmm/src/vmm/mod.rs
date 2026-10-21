@@ -101,9 +101,9 @@ pub struct Vmm {
     /// Shared DNS hosts table from NetworkManager.
     #[cfg(target_os = "macos")]
     shared_dns_hosts: Option<std::sync::Arc<arcbox_dns::LocalHostsTable>>,
-    /// Proxy the guest's egress is tunnelled through; `None` is direct.
+    /// Live host-side egress policy shared with running VMs.
     #[cfg(target_os = "macos")]
-    proxy_env: Option<arcbox_fakeip::proxy_detect::ProxyEnvironment>,
+    proxy_env: arcbox_fakeip::proxy_state::ProxyState,
     /// Kernel entry address for the custom HV VMM path (stored during
     /// `initialize_darwin_hv`, consumed by `start_darwin_hv`).
     #[cfg(target_os = "macos")]
@@ -310,7 +310,7 @@ impl Vmm {
             #[cfg(target_os = "macos")]
             shared_dns_hosts: None,
             #[cfg(target_os = "macos")]
-            proxy_env: None,
+            proxy_env: arcbox_fakeip::proxy_state::ProxyState::default(),
             #[cfg(target_os = "macos")]
             hv_kernel_entry: None,
             #[cfg(target_os = "macos")]
@@ -402,7 +402,13 @@ impl Vmm {
     /// connects directly from the host.
     #[cfg(target_os = "macos")]
     pub fn set_proxy_env(&mut self, env: arcbox_fakeip::proxy_detect::ProxyEnvironment) {
-        self.proxy_env = Some(env);
+        self.set_proxy_state(arcbox_fakeip::proxy_state::ProxyState::new(Some(env)));
+    }
+
+    /// Installs a live policy source before initializing either backend.
+    #[cfg(target_os = "macos")]
+    pub fn set_proxy_state(&mut self, state: arcbox_fakeip::proxy_state::ProxyState) {
+        self.proxy_env = state;
     }
 
     /// Returns vmnet interface info for the bridge NIC, if available.
