@@ -27,6 +27,7 @@ pub mod host_mount;
 #[cfg(target_os = "macos")]
 pub mod macos;
 pub mod migration;
+pub mod network_proxy;
 #[cfg(target_os = "macos")]
 pub mod route_reconciler;
 pub mod runtime;

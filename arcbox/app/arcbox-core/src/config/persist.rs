@@ -64,6 +64,46 @@ pub fn set_default_machine(path: &Path, name: Option<&str>) -> Result<()> {
     })
 }
 
+/// Writes the egress proxy preferences to `[network]`.
+///
+/// Sets `proxy`, `proxy_exclude`, `udp` and `icmp`. A custom proxy URL is
+/// written without its password: secrets belong in the credential store.
+///
+/// # Errors
+///
+/// Returns an error if the file exists but is not valid TOML, or cannot be
+/// read or replaced atomically.
+pub fn set_network_proxy(
+    path: &Path,
+    preferences: &crate::network_proxy::ProxyPreferences,
+) -> Result<()> {
+    use arcbox_fakeip::proxy_state::{IcmpPolicy, UdpPolicy};
+
+    let udp = match preferences.udp {
+        UdpPolicy::Proxy => "proxy",
+        UdpPolicy::Direct => "direct",
+        UdpPolicy::Block => "block",
+    };
+    let icmp = match preferences.icmp {
+        IcmpPolicy::Direct => "direct",
+        IcmpPolicy::Block => "block",
+    };
+    edit(path, |doc| {
+        let network = table(doc, path, "network", "the egress proxy")?;
+        // `ProxyPolicy`'s Display omits any password.
+        set_value(
+            network,
+            "proxy",
+            Value::from(preferences.policy.to_string()),
+        );
+        let exclude: toml_edit::Array = preferences.exclude.iter().map(String::as_str).collect();
+        set_value(network, "proxy_exclude", Value::Array(exclude));
+        set_value(network, "udp", Value::from(udp));
+        set_value(network, "icmp", Value::from(icmp));
+        Ok(())
+    })
+}
+
 /// Loads `path` (an absent file is an empty document), applies `change`,
 /// and replaces the file atomically.
 fn edit(path: &Path, change: impl FnOnce(&mut DocumentMut) -> Result<()>) -> Result<()> {
@@ -111,14 +151,19 @@ fn table<'doc>(
 /// Sets `key` to `n`, keeping the comment and spacing around an existing
 /// value rather than replacing the whole entry.
 fn set_integer(table: &mut Table, key: &str, n: i64) {
+    set_value(table, key, Value::from(n));
+}
+
+/// Sets `key` to `value`, keeping the decor of an existing value.
+fn set_value(table: &mut Table, key: &str, value: Value) {
     match table.get_mut(key).and_then(Item::as_value_mut) {
         Some(existing) => {
             let decor = existing.decor().clone();
-            *existing = Value::from(n);
+            *existing = value;
             *existing.decor_mut() = decor;
         }
         None => {
-            table[key] = Item::Value(Value::from(n));
+            table[key] = Item::Value(value);
         }
     }
 }
@@ -179,6 +224,51 @@ mod tests {
             absent.exists(),
             "the file is written even when nothing changed"
         );
+    }
+
+    #[test]
+    fn network_proxy_is_written_without_its_password_and_keeps_comments() {
+        use crate::network_proxy::ProxyPreferences;
+        use arcbox_fakeip::proxy_state::{IcmpPolicy, UdpPolicy};
+        use figment::providers::Format;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[network]\nmtu = 1400 # jumbo off\nproxy = \"system\" # was\n",
+        )
+        .unwrap();
+
+        let preferences = ProxyPreferences {
+            policy: "socks5://alice:do-not-leak@10.0.0.2:1080".parse().unwrap(),
+            exclude: vec![".corp.example".into()],
+            udp: UdpPolicy::Block,
+            icmp: IcmpPolicy::Direct,
+        };
+        set_network_proxy(&path, &preferences).unwrap();
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(!written.contains("do-not-leak"), "{written}");
+        assert!(written.contains("mtu = 1400 # jumbo off"), "{written}");
+        assert!(
+            written.contains("proxy = \"socks5://alice@10.0.0.2:1080\" # was"),
+            "{written}"
+        );
+
+        let config: crate::Config = figment::Figment::new()
+            .merge(figment::providers::Serialized::defaults(
+                crate::Config::default(),
+            ))
+            .merge(figment::providers::Toml::file(&path))
+            .extract()
+            .unwrap();
+        assert_eq!(
+            config.network.proxy.to_string(),
+            "socks5://alice@10.0.0.2:1080"
+        );
+        assert_eq!(config.network.proxy_exclude, vec![".corp.example"]);
+        assert_eq!(config.network.udp, UdpPolicy::Block);
+        assert_eq!(config.network.icmp, IcmpPolicy::Direct);
     }
 
     #[test]

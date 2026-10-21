@@ -47,6 +47,7 @@ use arcbox_constants::container_network::ContainerNetwork;
 use arcbox_constants::paths::{ArcboxProfile, HostLayout};
 use arcbox_constants::ports::DOCKER_API_VSOCK_PORT;
 use arcbox_fakeip::proxy_policy::{ProxyPolicy, ProxySettings};
+use arcbox_fakeip::proxy_state::{IcmpPolicy, UdpPolicy};
 use figment::{
     Figment,
     providers::{Env, Format, Serialized, Toml},
@@ -346,6 +347,13 @@ pub struct NetworkConfig {
     /// `.example.com`, `*.example.com`). Added to the Mac's own exclusions
     /// under `proxy = "system"`.
     pub proxy_exclude: Vec<String>,
+    /// What happens to guest UDP: `proxy` (SOCKS5 UDP ASSOCIATE, dropped
+    /// when only an HTTP proxy is configured), `direct`, or `block`.
+    /// Gateway-local UDP (the built-in DNS) is never affected.
+    pub udp: UdpPolicy,
+    /// What happens to guest ICMP echo, which no proxy can carry: `direct`
+    /// or `block`.
+    pub icmp: IcmpPolicy,
 }
 
 impl NetworkConfig {
@@ -369,6 +377,8 @@ impl Default for NetworkConfig {
             mtu: 1500,
             proxy: ProxyPolicy::System,
             proxy_exclude: Vec::new(),
+            udp: UdpPolicy::default(),
+            icmp: IcmpPolicy::default(),
         }
     }
 }

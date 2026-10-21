@@ -184,6 +184,8 @@ pub struct Runtime {
     /// macOS guest machine manager (Apple Silicon only).
     #[cfg(target_os = "macos")]
     mac_machine_manager: Arc<MacMachineManager>,
+    /// Live guest egress proxy settings, shared with every VM's datapath.
+    network_proxy: Arc<crate::network_proxy::NetworkProxy>,
     /// Linux machine image registry (published distro rootfs images).
     machine_image_manager: Arc<crate::machine_image::MachineImageManager>,
     /// Inbound listener managers keyed by machine name, for port
@@ -289,13 +291,16 @@ impl Runtime {
 
         // Every VM's datapath is wired to the host the same way: the DNS
         // hosts table it shares with the host DnsService, and the operator's
-        // egress proxy policy. `system` probes the Mac's proxy settings here,
-        // once per daemon start.
+        // egress proxy policy. The policy is a live `ProxyState`: changing it
+        // through `network_proxy()` reaches running VMs at their next flow.
+        let network_proxy = Arc::new(crate::network_proxy::NetworkProxy::new(
+            crate::network_proxy::ProxyPreferences::from_config(&config.network),
+            crate::network_proxy::credentials::default_store(config.profile, &config.data_dir),
+            crate::config::writable_user_config_path(),
+        ));
         let host_network = HostNetwork {
             dns_hosts: Some(network_manager.local_hosts_table()),
-            proxy: arcbox_fakeip::proxy_state::ProxyState::new(
-                config.network.proxy_settings().resolve(),
-            ),
+            proxy: network_proxy.state(),
         };
 
         let machine_manager = Arc::new(MachineManager::new(
@@ -364,6 +369,7 @@ impl Runtime {
             migration_manager,
             #[cfg(target_os = "macos")]
             mac_machine_manager,
+            network_proxy,
             machine_image_manager,
             #[cfg(target_os = "macos")]
             inbound_listeners: Arc::new(TokioRwLock::new(HashMap::new())),
@@ -504,6 +510,12 @@ impl Runtime {
     #[must_use]
     pub const fn mac_machine_manager(&self) -> &Arc<MacMachineManager> {
         &self.mac_machine_manager
+    }
+
+    /// Returns the live guest egress proxy controller.
+    #[must_use]
+    pub const fn network_proxy(&self) -> &Arc<crate::network_proxy::NetworkProxy> {
+        &self.network_proxy
     }
 
     /// Returns the Linux machine image registry.
