@@ -11,7 +11,7 @@
 
 use std::net::Ipv4Addr;
 
-use arcbox_fakeip::proxy_detect::ProxyEnvironment;
+use arcbox_fakeip::proxy_detect::{ProxyConfig, ProxyEnvironment};
 use tokio::sync::oneshot;
 
 /// The flow a SYN opened — everything a resolver needs to decide egress.
@@ -89,16 +89,14 @@ impl DefaultEgress {
 
     /// Determines whether to connect via a proxy tunnel for the given destination.
     ///
-    /// Returns `Some((proxy_authority, target_host, target_port, protocol))` if a
-    /// proxy should be used, or `None` for direct connection. The proxy authority
-    /// is a `"host:port"` string that `TcpStream::connect` can resolve (supports
-    /// both IP addresses and hostnames like `proxy.corp.com`).
+    /// Returns the proxy configuration and destination, or `None` for direct
+    /// connection. Credentials are shared through `Arc` and never formatted.
     fn resolve_proxy_target(
         &self,
         dst_ip: Ipv4Addr,
         dst_port: u16,
         domain: Option<&str>,
-    ) -> Option<(String, String, u16, &'static str)> {
+    ) -> Option<(ProxyConfig, String, u16, &'static str)> {
         // The gateway IP means "the host itself" (`host.docker.internal`):
         // it is translated to loopback at connect time and must never be
         // tunnelled through a proxy — the proxy would dial a virtual
@@ -135,18 +133,15 @@ impl DefaultEgress {
         // then HTTPS proxy (HTTP CONNECT works on any port, not just 443),
         // then HTTP proxy as last resort.
         if let Some(ref socks) = env.socks_proxy {
-            let authority = format!("{}:{}", socks.host, socks.port);
-            return Some((authority, host, dst_port, "socks5"));
+            return Some((socks.clone(), host, dst_port, "socks5"));
         }
 
         if let Some(ref https) = env.https_proxy {
-            let authority = format!("{}:{}", https.host, https.port);
-            return Some((authority, host, dst_port, "http-connect"));
+            return Some((https.clone(), host, dst_port, "http-connect"));
         }
 
         if let Some(ref http) = env.http_proxy {
-            let authority = format!("{}:{}", http.host, http.port);
-            return Some((authority, host, dst_port, "http-connect"));
+            return Some((http.clone(), host, dst_port, "http-connect"));
         }
 
         None
@@ -172,12 +167,15 @@ impl EgressResolver for DefaultEgress {
                 match proxy_target {
                     // SOCKS5 (preferred): the proxy resolves the hostname.
                     Some((authority, host, port, "socks5")) => {
-                        arcbox_proxy::socks5::connect_via_socks5(&authority, &host, port).await
+                        arcbox_proxy::socks5::connect_via_socks5_config(&authority, &host, port)
+                            .await
                     }
                     // HTTP CONNECT (https/http system proxy).
                     Some((authority, host, port, _)) => {
-                        arcbox_proxy::http_connect::connect_via_http_proxy(&authority, &host, port)
-                            .await
+                        arcbox_proxy::http_connect::connect_via_http_proxy_config(
+                            &authority, &host, port,
+                        )
+                        .await
                     }
                     // No proxy configured / bypassed → direct.
                     None => tokio::net::TcpStream::connect(connect_addr).await,
@@ -229,7 +227,7 @@ mod tests {
         assert_eq!(
             eg.resolve_proxy_target(Ipv4Addr::new(1, 2, 3, 4), 443, None),
             Some((
-                "127.0.0.1:1080".to_string(),
+                env(false, false, true).socks_proxy.unwrap(),
                 "1.2.3.4".to_string(),
                 443,
                 "socks5"
@@ -244,7 +242,7 @@ mod tests {
         assert_eq!(
             eg.resolve_proxy_target(Ipv4Addr::new(1, 2, 3, 4), 80, None),
             Some((
-                "127.0.0.1:3129".to_string(),
+                env(false, true, false).https_proxy.unwrap(),
                 "1.2.3.4".to_string(),
                 80,
                 "http-connect"
@@ -255,7 +253,7 @@ mod tests {
         assert_eq!(
             eg.resolve_proxy_target(Ipv4Addr::new(1, 2, 3, 4), 80, None),
             Some((
-                "127.0.0.1:3128".to_string(),
+                env(true, false, false).http_proxy.unwrap(),
                 "1.2.3.4".to_string(),
                 80,
                 "http-connect"

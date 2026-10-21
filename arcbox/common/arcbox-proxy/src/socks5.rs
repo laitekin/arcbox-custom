@@ -15,6 +15,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
 use tokio_util::sync::CancellationToken;
 
+use arcbox_fakeip::proxy_auth::ProxyAuth;
+use arcbox_fakeip::proxy_detect::ProxyConfig;
+
+use crate::error::ProxyError;
+
 /// SOCKS protocol version (5).
 pub(crate) const VER: u8 = 0x05;
 const CMD_UDP_ASSOCIATE: u8 = 0x03;
@@ -24,10 +29,13 @@ const ATYP_IPV6: u8 = 0x04;
 /// Upper bound on the UDP ASSOCIATE handshake (TCP connect + greeting + reply).
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Performs the no-auth SOCKS5 greeting on an established control stream: sends
-/// `[VER, 1, 0x00]` and requires the server to select method `0x00`.
-pub(crate) async fn greet(stream: &mut TcpStream) -> io::Result<()> {
-    stream.write_all(&[VER, 0x01, 0x00]).await?;
+/// Negotiates exactly the configured method; credentials never downgrade to no-auth.
+pub(crate) async fn greet(stream: &mut TcpStream, auth: Option<&ProxyAuth>) -> io::Result<()> {
+    let method = if auth.is_some() { 0x02 } else { 0x00 };
+    let password = auth
+        .map(|auth| auth.password().ok_or(ProxyError::MissingPassword))
+        .transpose()?;
+    stream.write_all(&[VER, 0x01, method]).await?;
     let mut resp = [0u8; 2];
     stream.read_exact(&mut resp).await?;
     if resp[0] != VER {
@@ -36,11 +44,22 @@ pub(crate) async fn greet(stream: &mut TcpStream) -> io::Result<()> {
             resp[0]
         )));
     }
-    if resp[1] != 0x00 {
-        return Err(io::Error::other(format!(
-            "SOCKS5: server chose unsupported auth method 0x{:02X} (expected 0x00 no-auth)",
-            resp[1]
-        )));
+    if resp[1] != method {
+        return Err(ProxyError::NoAcceptableMethod.into());
+    }
+    if let (Some(auth), Some(password)) = (auth, password) {
+        // ProxyAuth validates both byte lengths; write slices to avoid a secret packet copy.
+        stream.write_all(&[1, auth.username().len() as u8]).await?;
+        stream.write_all(auth.username().as_bytes()).await?;
+        stream.write_all(&[password.len() as u8]).await?;
+        stream.write_all(password.as_bytes()).await?;
+        stream.read_exact(&mut resp).await?;
+        if resp[0] != 1 {
+            return Err(ProxyError::Protocol("authentication version").into());
+        }
+        if resp[1] != 0 {
+            return Err(ProxyError::AuthRejected.into());
+        }
     }
     Ok(())
 }
@@ -174,9 +193,33 @@ fn unspecified_in_family(addr: SocketAddr) -> SocketAddr {
 /// tunnel to `host:port`.
 pub async fn connect_via_socks5(proxy: &str, host: &str, port: u16) -> io::Result<TcpStream> {
     let mut stream = TcpStream::connect(proxy).await?;
+    connect_stream(&mut stream, None, host, port).await?;
+    Ok(stream)
+}
 
-    // Phase 1: no-auth greeting (shared with the UDP-ASSOCIATE client).
-    greet(&mut stream).await?;
+/// Connects through an explicitly configured, optionally authenticated proxy.
+pub async fn connect_via_socks5_config(
+    proxy: &ProxyConfig,
+    host: &str,
+    port: u16,
+) -> io::Result<TcpStream> {
+    tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        let mut stream = TcpStream::connect((proxy.host.as_str(), proxy.port)).await?;
+        connect_stream(&mut stream, proxy.auth.as_deref(), host, port).await?;
+        Ok(stream)
+    })
+    .await
+    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "SOCKS5 connect timed out"))?
+}
+
+async fn connect_stream(
+    stream: &mut TcpStream,
+    auth: Option<&ProxyAuth>,
+    host: &str,
+    port: u16,
+) -> io::Result<()> {
+    // Phase 1: shared authentication for CONNECT and UDP ASSOCIATE.
+    greet(stream, auth).await?;
 
     // Phase 2: CONNECT request via the shared address codec.
     let mut req = vec![VER, 0x01, 0x00]; // VER | CMD=CONNECT | RSV
@@ -195,14 +238,13 @@ pub async fn connect_via_socks5(proxy: &str, host: &str, port: u16) -> io::Resul
     if hdr[1] != 0x00 {
         return Err(rep_error(hdr[1]));
     }
-    let _bind = read_addr(&mut stream).await?;
+    let _bind = read_addr(stream).await?;
 
     tracing::debug!(
-        proxy = %proxy,
         target = %format!("{host}:{port}"),
         "SOCKS5 tunnel established"
     );
-    Ok(stream)
+    Ok(())
 }
 
 /// Aborts the control-connection watcher task when the association is dropped,
@@ -238,6 +280,21 @@ impl Socks5UdpAssociation {
     /// Opens a UDP association via the no-auth SOCKS5 `proxy` (`host:port`),
     /// bounded by [`HANDSHAKE_TIMEOUT`].
     pub async fn associate(proxy: &str) -> io::Result<Self> {
+        let (host, port) = proxy
+            .rsplit_once(':')
+            .ok_or(ProxyError::Protocol("proxy address"))?;
+        let proxy = ProxyConfig {
+            host: host.trim_start_matches('[').trim_end_matches(']').into(),
+            port: port
+                .parse()
+                .map_err(|_| ProxyError::Protocol("proxy port"))?,
+            auth: None,
+        };
+        Self::associate_config(&proxy).await
+    }
+
+    /// Opens an association using the same credentials as the TCP connector.
+    pub async fn associate_config(proxy: &ProxyConfig) -> io::Result<Self> {
         tokio::time::timeout(HANDSHAKE_TIMEOUT, Self::handshake(proxy))
             .await
             .map_err(|_| {
@@ -245,9 +302,9 @@ impl Socks5UdpAssociation {
             })?
     }
 
-    async fn handshake(proxy: &str) -> io::Result<Self> {
-        let mut control = TcpStream::connect(proxy).await?;
-        greet(&mut control).await?;
+    async fn handshake(proxy: &ProxyConfig) -> io::Result<Self> {
+        let mut control = TcpStream::connect((proxy.host.as_str(), proxy.port)).await?;
+        greet(&mut control, proxy.auth.as_deref()).await?;
 
         // UDP ASSOCIATE: DST.ADDR/PORT advertise where we'll send from. We don't
         // know our source port yet, so send the wildcard 0.0.0.0:0.
@@ -304,7 +361,7 @@ impl Socks5UdpAssociation {
             watcher_token.cancel();
         });
 
-        tracing::debug!(proxy = %proxy, relay = %relay, "SOCKS5 UDP association established");
+        tracing::debug!(proxy = ?proxy, relay = %relay, "SOCKS5 UDP association established");
         Ok(Self {
             socket,
             closed,

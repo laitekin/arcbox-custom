@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use arcbox_fakeip::dns_log::DnsResolutionLog;
-use arcbox_fakeip::proxy_detect::ProxyEnvironment;
+use arcbox_fakeip::proxy_detect::{ProxyConfig, ProxyEnvironment};
 use arcbox_packet::ethernet::{ETH_HEADER_LEN, build_udp_ip_ethernet};
 
 use crate::socks5::Socks5UdpAssociation;
@@ -54,12 +54,12 @@ impl UdpTransport {
 /// a direct host socket connected to `connect_ip:dst_port`. Returns `None` (after
 /// logging) on setup failure.
 async fn build_udp_transport(
-    socks: Option<(String, String)>,
+    socks: Option<(ProxyConfig, String)>,
     connect_ip: Ipv4Addr,
     dst_port: u16,
 ) -> Option<UdpTransport> {
     match socks {
-        Some((authority, host)) => match Socks5UdpAssociation::associate(&authority).await {
+        Some((authority, host)) => match Socks5UdpAssociation::associate_config(&authority).await {
             Ok(assoc) => Some(UdpTransport::Socks {
                 assoc,
                 host,
@@ -225,9 +225,7 @@ impl UdpProxy {
             if dst_ip == self.gateway_ip || env.should_bypass(&host) {
                 return None;
             }
-            env.socks_proxy
-                .as_ref()
-                .map(|p| (format!("{}:{}", p.host, p.port), host.clone()))
+            env.socks_proxy.as_ref().map(|p| (p.clone(), host.clone()))
         });
 
         tokio::spawn(async move {

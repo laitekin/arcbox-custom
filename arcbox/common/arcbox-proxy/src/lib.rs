@@ -18,6 +18,7 @@
 //! and relay machinery as the VM datapath.
 
 pub mod egress;
+pub mod error;
 pub mod http_connect;
 pub mod inbound_relay;
 pub mod socks5;
