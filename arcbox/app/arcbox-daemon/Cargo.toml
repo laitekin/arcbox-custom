@@ -68,6 +68,7 @@ gic = ["arcbox-core/gic"]
 workspace = true
 
 [dev-dependencies]
+tar = "0.4.46"
 arcbox-grpc.workspace = true
 arcbox-protocol.workspace = true
 connectrpc = { package = "arcbox-connectrpc", version = "0.9.0-arcbox.1", features = ["client"] }

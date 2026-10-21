@@ -381,6 +381,131 @@ mod tests {
         shutdown.cancel();
     }
 
+    /// Sends one Connect server-streaming request (JSON envelopes over
+    /// HTTP/1.1) and returns the decoded messages, the end-of-stream
+    /// trailer last.
+    async fn connect_stream(
+        socket: &std::path::Path,
+        path: &str,
+        body: &str,
+    ) -> Vec<serde_json::Value> {
+        let mut envelope = vec![0u8];
+        envelope.extend_from_slice(&u32::try_from(body.len()).unwrap().to_be_bytes());
+        envelope.extend_from_slice(body.as_bytes());
+        let mut request = format!(
+            "POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/connect+json\r\n\
+             Connection: close\r\nContent-Length: {}\r\n\r\n",
+            envelope.len()
+        )
+        .into_bytes();
+        request.extend_from_slice(&envelope);
+        let mut stream = UnixStream::connect(socket).await.expect("connect");
+        stream.write_all(&request).await.expect("write");
+        let mut response = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            stream.read_to_end(&mut response),
+        )
+        .await
+        .expect("stream within 60s")
+        .expect("read");
+        let text = String::from_utf8_lossy(&response).into_owned();
+        let body = dechunk(&text).into_bytes();
+        let mut messages = Vec::new();
+        let mut rest = body.as_slice();
+        while rest.len() >= 5 {
+            let len = u32::from_be_bytes([rest[1], rest[2], rest[3], rest[4]]) as usize;
+            messages.push(serde_json::from_slice(&rest[5..5 + len]).expect("json envelope"));
+            rest = &rest[5 + len..];
+        }
+        messages
+    }
+
+    /// A rootfs archive whose init is an ELF for this host.
+    fn rootfs_tar() -> Vec<u8> {
+        let machine: u16 = if arcbox_core::machine_image::host_image_arch() == "arm64" {
+            183
+        } else {
+            62
+        };
+        let mut elf = b"\x7fELF\x02\x01\x01".to_vec();
+        elf.resize(18, 0);
+        elf.extend_from_slice(&machine.to_le_bytes());
+        let mut builder = tar::Builder::new(Vec::new());
+        for (path, data) in [
+            ("sbin/init", elf.as_slice()),
+            ("etc/os-release", b"ID=tiny\nVERSION_ID=1\n".as_slice()),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_mode(0o755);
+            header.set_size(data.len() as u64);
+            builder.append_data(&mut header, path, data).unwrap();
+        }
+        builder.into_inner().unwrap()
+    }
+
+    /// Importing, listing and removing a machine image over the socket the
+    /// daemon serves: the stream reports phases and ends with the image.
+    #[tokio::test]
+    async fn a_rootfs_archive_imports_lists_and_removes_over_the_socket() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let socket = dir.path().join("arcbox.sock");
+        let runtime = Arc::new(
+            arcbox_core::Runtime::new(arcbox_core::Config {
+                data_dir: dir.path().join("data"),
+                ..Default::default()
+            })
+            .expect("runtime"),
+        );
+        let shared: arcbox_api::SharedRuntime = Arc::new(OnceLock::from(Arc::clone(&runtime)));
+        let system = arcbox_api::SystemServiceImpl::new(
+            Arc::new(arcbox_api::SetupState::new()),
+            Arc::clone(&shared),
+            Arc::clone(&shared),
+        );
+        let app = into_app(connect_router(shared, system).expect("connect router"));
+        let listener = bind(&socket).expect("bind temp socket");
+        let shutdown = CancellationToken::new();
+        drop(tokio::spawn(serve(listener, app, shutdown.clone())));
+
+        let archive = dir.path().join("rootfs.tar");
+        std::fs::write(&archive, rootfs_tar()).unwrap();
+        let events = connect_stream(
+            &socket,
+            "/arcbox.v1.MachineImageService/Import",
+            &format!(r#"{{"name":"tiny","path":"{}"}}"#, archive.display()),
+        )
+        .await;
+        let done = events
+            .iter()
+            .find(|e| e["phase"] == "IMPORT_MACHINE_IMAGE_PHASE_DONE")
+            .unwrap_or_else(|| panic!("no DONE event in {events:?}"));
+        assert_eq!(done["image"]["name"], "tiny");
+        assert_eq!(done["image"]["distro"], "tiny");
+        assert_eq!(done["image"]["imported"], true);
+        assert!(
+            events
+                .iter()
+                .any(|e| e["phase"] == "IMPORT_MACHINE_IMAGE_PHASE_WRITING")
+        );
+
+        let post = |path: &str, body: &str| {
+            format!(
+                "POST /arcbox.v1.MachineImageService/{path} HTTP/1.1\r\nHost: localhost\r\n\
+                 Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+        };
+        let listed = http1_request(&socket, &post("List", "{}")).await;
+        assert!(listed.contains("\"tiny\""), "{listed}");
+
+        let removed = http1_request(&socket, &post("Remove", r#"{"name":"tiny"}"#)).await;
+        assert!(removed.contains("HTTP/1.1 200"), "{removed}");
+        assert!(runtime.machine_image_manager().list().is_empty());
+
+        shutdown.cancel();
+    }
+
     /// Every service must actually be registered, or its path 404s: the
     /// router serves exactly what it was given, and a service dropped
     /// during the tonic migration (CORE-68) would fail nowhere else.
@@ -407,6 +532,8 @@ mod tests {
             "arcbox.v1.EgressProxyService/GetProxy",
             "arcbox.v1.EgressProxyService/SetProxy",
             "arcbox.v1.EgressProxyService/TestProxy",
+            "arcbox.v1.MachineImageService/List",
+            "arcbox.v1.MachineImageService/Import",
             // Post-migration additions live under the same guarantee: a
             // service missing from the router 404s and fails nowhere else.
             "arcbox.sandbox.v1.TemplateService/Get",

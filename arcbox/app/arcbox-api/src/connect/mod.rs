@@ -28,6 +28,7 @@ mod filesystem;
 mod icon;
 mod kubernetes;
 mod machine;
+mod machine_image;
 #[cfg(target_os = "macos")]
 mod macos;
 mod migration;
@@ -56,6 +57,7 @@ pub use filesystem::SandboxFilesystemServiceImpl;
 pub use icon::IconServiceImpl;
 pub use kubernetes::KubernetesServiceImpl;
 pub use machine::MachineServiceImpl;
+pub use machine_image::MachineImageServiceImpl;
 #[cfg(target_os = "macos")]
 pub use macos::MacosServiceImpl;
 pub use migration::MigrationServiceImpl;
@@ -248,7 +250,8 @@ pub fn router(runtime: SharedRuntime) -> connectrpc::Router {
         .add_service(Arc::new(StatsServiceImpl::new(clone())))
         .add_service(Arc::new(KubernetesServiceImpl::new(clone())))
         .add_service(Arc::new(MigrationServiceImpl::new(clone())))
-        .add_service(Arc::new(MachineServiceImpl::new(clone())));
+        .add_service(Arc::new(MachineServiceImpl::new(clone())))
+        .add_service(Arc::new(MachineImageServiceImpl::new(clone())));
     #[cfg(target_os = "macos")]
     let router = router.add_service(Arc::new(MacosServiceImpl::new(clone())));
     router

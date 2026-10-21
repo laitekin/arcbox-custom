@@ -21,6 +21,7 @@ tokio-stream = { workspace = true }
 arcbox-fakeip = { workspace = true }
 arcbox-proxy = { workspace = true }
 zeroize = "1.8"
+serde_json = { workspace = true }
 async-stream = { workspace = true }
 libc = { workspace = true }
 uuid = { workspace = true }
@@ -36,6 +37,7 @@ arcbox-engine.workspace = true
 arcbox-computer.workspace = true
 
 [dev-dependencies]
+tempfile = { workspace = true }
 base64 = "0.22.1"
 http = "1.5.0"
 tokio = { workspace = true, features = ["test-util"] }
