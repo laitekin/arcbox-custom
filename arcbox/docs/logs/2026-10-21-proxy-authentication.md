@@ -69,11 +69,12 @@ CONNECT; loopback and the bypass list direct).
 | Container TCP | System VM | Yes | `proxy_coverage` e2e (not yet run); `splicetcp` `proxy_rejection`, `proxy_hot_update` |
 | Container UDP (DNS to a public resolver, QUIC) | System VM | Yes with SOCKS5; dropped behind an HTTP-only proxy unless `udp = "direct"` | `proxy_coverage` e2e (not yet run); `arcbox-proxy` UDP unit tests |
 | `docker pull` / `docker build` | dockerd / BuildKit in the System VM | Yes (same datapath) | `proxy_coverage` e2e pull row (not yet run) |
-| Linux machine programs | machine VMs | Yes (same `ProxyState`) | not yet covered by an e2e row |
+| Linux machine programs | machine VMs | Yes (same `ProxyState`) | `proxy_coverage` e2e machine row (not yet run) |
+| Kubernetes pods | k3s containerd in the System VM | Yes (same datapath) | `proxy_coverage` e2e pod row (not yet run) |
 | Sandbox microVMs | nested in the System VM | Expected yes (their egress leaves through the System VM) | not yet verified |
 | Built-in DNS (gateway) | host DNS service | Answered on the host; names reach the proxy with the flow | by design |
 | ICMP echo | any VM | No proxy can carry it: direct, or dropped with `icmp = "block"` | `arcbox-proxy` egress |
-| Machine images, image index, Docker CLI tools, macOS IPSW | daemon (host) | Yes | `arcbox-asset` `http_proxy` |
+| Machine images, image index, Docker CLI tools, macOS IPSW | daemon (host) | Yes | `arcbox-asset` `http_proxy`; `proxy_coverage` e2e (the machine row's image pull) |
 | Boot assets (kernel, rootfs) | daemon via the external `arcbox-boot` crate | No: it builds its own clients (macOS system proxy / environment only) | upstream change needed |
 | Desktop distro catalog | ArcBox.app (URLSession) | macOS system proxy, not ArcBox's | moves to the daemon with the image work (#3) |
 | Port forwards, `host.docker.internal` | Mac ↔ VM | No, by design | — |
@@ -101,8 +102,7 @@ live fails closed (no tunnel, no file).
 
 ## Follow-ups
 
-- Run `proxy_coverage` on the e2e runner; add machine and k3s rows.
+- Run `proxy_coverage` (now with machine and pod rows) on the e2e runner.
 - Teach `arcbox-boot` to take a client (or proxy) so boot assets follow it.
-- Desktop network settings page (Swift).
 - Keychain prompts for rebuilt, differently signed daemons need checking on
   a Mac (the file store is the fallback).

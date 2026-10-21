@@ -18,13 +18,17 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use arcbox_e2e::boot_assets::{resolve_boot_version, stage_dev_boot_assets};
 use arcbox_e2e::daemon::{DaemonConfig, DaemonHandle, connect_unix, host_mounts};
+use arcbox_e2e::docker::ensure_image;
 use arcbox_e2e::metrics::{BootAssets, RunMetrics};
+use arcbox_grpc::v1::machine_image_service_client::MachineImageServiceClient;
 use arcbox_grpc::v1::machine_service_client::MachineServiceClient;
 use arcbox_grpc::v1::stats_service_client::StatsServiceClient;
 use arcbox_protocol::v1::{
-    CreateMachineRequest, InspectMachineRequest, ListMachinesRequest, MachineAgentRequest,
-    MachineExecInput, MachineExecRequest, RemoveMachineRequest, StartMachineRequest,
-    StatsWatchRequest, StopMachineRequest, TerminalSize, machine_exec_input,
+    CreateMachineRequest, ExportMachineRequest, ImportMachineImagePhase, ImportMachineImageRequest,
+    ImportMachineRequest, InspectMachineRequest, ListMachineImagesRequest, ListMachinesRequest,
+    MachineAgentRequest, MachineExecInput, MachineExecRequest, RemoveMachineImageRequest,
+    RemoveMachineRequest, StartMachineRequest, StatsWatchRequest, StopMachineRequest, TerminalSize,
+    machine_exec_input,
 };
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Channel;
@@ -111,6 +115,267 @@ fn machine_lifecycle_end_to_end() -> Result<()> {
         tracing::warn!(path = %kept.display(), "preserving test directory");
     }
     result
+}
+
+/// Budget for importing a Docker image as a machine image: building the
+/// derived image with OpenRC (an `apk add` against the live mirror),
+/// exporting it and writing the squashfs.
+const IMAGE_IMPORT_BUDGET: Duration = Duration::from_secs(300);
+/// Budget for exporting or importing a machine archive carrying its image.
+const ARCHIVE_BUDGET: Duration = Duration::from_secs(120);
+
+const IMPORTED_IMAGE: &str = "e2e-imported";
+const IMPORTED_MACHINE: &str = "e2e-imported-m";
+const RESTORED_MACHINE: &str = "e2e-imported-back";
+
+/// A user-imported image end to end: a Docker image becomes a machine image
+/// (the daemon installs OpenRC first), a machine boots from it, an export
+/// carries the image, and importing that archive on a host that lost the
+/// image brings both back.
+#[test]
+#[ignore = "boots a real VZ daemon, builds an image in its Docker engine and boots a machine from it"]
+fn imported_machine_image_end_to_end() -> Result<()> {
+    init_tracing();
+
+    let root = arcbox_e2e::repo_root();
+    if !arcbox_e2e::env_flag("SKIP_BUILD") {
+        let shell = xshell::Shell::new()?;
+        shell.change_dir(&root);
+        xshell::cmd!(shell, "cargo build --release -p arcbox-daemon").run()?;
+        xshell::cmd!(
+            shell,
+            "cargo build --release -p arcbox-agent --target aarch64-unknown-linux-musl"
+        )
+        .run()?;
+    }
+
+    let version = resolve_boot_version(&root)?;
+    let data_dir = tempfile::Builder::new()
+        .prefix("arcbox-machine-image-e2e-")
+        .tempdir()?;
+    stage_dev_boot_assets(&root, data_dir.path(), &version)?;
+    let mut metrics = RunMetrics::new(
+        "machine_image_import",
+        Some("vz"),
+        BootAssets::Bundle {
+            version: version.clone(),
+        },
+    )?;
+    let mut daemon = DaemonHandle::spawn(DaemonConfig {
+        binary: root.join("target/release/arcbox-daemon"),
+        data_dir: data_dir.path().to_owned(),
+        args: vec![],
+        env: vec![
+            ("ARCBOX_BOOT_ASSET_VERSION".to_owned(), version),
+            ("ARCBOX_VM_BACKEND".to_owned(), "vz".to_owned()),
+            ("ARCBOX_DNS_PORT".to_owned(), "0".to_owned()),
+        ],
+    })?;
+
+    let result = image_scenario(&mut daemon, data_dir.path(), &mut metrics);
+    metrics.passed = result.is_ok();
+    if let Err(error) = metrics.write(Some(data_dir.path())) {
+        tracing::warn!("writing run metrics failed: {error:#}");
+    }
+    if result.is_err() {
+        let kept = data_dir.keep();
+        tracing::warn!(path = %kept.display(), "preserving test directory");
+    }
+    result
+}
+
+fn image_scenario(
+    daemon: &mut DaemonHandle,
+    data_dir: &Path,
+    metrics: &mut RunMetrics,
+) -> Result<()> {
+    metrics.time("daemon_ready", || daemon.wait_ready_blocking(READY_TIMEOUT))?;
+    let source = std::env::var("ARCBOX_E2E_MACHINE_SOURCE_IMAGE")
+        .unwrap_or_else(|_| "alpine:3.20".to_owned());
+    ensure_image(data_dir, &source)?;
+    let socket = daemon.grpc_socket();
+    let archive = data_dir.join("e2e-imported.arcbox");
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("building tokio runtime")?;
+    runtime.block_on(async {
+        let channel = connect_unix(&socket).await?;
+        let mut machines = MachineServiceClient::new(channel.clone());
+        let mut images = MachineImageServiceClient::new(channel);
+
+        // Docker image → machine image, with OpenRC installed by the daemon.
+        let started = Instant::now();
+        let image = tokio::time::timeout(IMAGE_IMPORT_BUDGET, async {
+            let mut events = images
+                .import(ImportMachineImageRequest {
+                    name: IMPORTED_IMAGE.to_owned(),
+                    docker_image: source.clone(),
+                    add_init: true,
+                    ..Default::default()
+                })
+                .await
+                .context("import failed to start")?
+                .into_inner();
+            let mut phases = Vec::new();
+            while let Some(event) = events.message().await.context("import failed")? {
+                let phase = event.phase();
+                if phases.last() != Some(&phase) {
+                    phases.push(phase);
+                }
+                if phase == ImportMachineImagePhase::Done {
+                    if !phases.contains(&ImportMachineImagePhase::Building) {
+                        bail!("add_init never reported the building phase: {phases:?}");
+                    }
+                    return event.image.context("the done event carries no image");
+                }
+            }
+            bail!("the import ended without a done event: {phases:?}")
+        })
+        .await
+        .context("image import timed out")??;
+        tracing::info!(elapsed = ?started.elapsed(), size = image.size, "image imported");
+        if !image.imported || image.distro != "alpine" {
+            bail!("unexpected imported image: {image:?}");
+        }
+
+        // A machine boots from it.
+        tokio::time::timeout(
+            CREATE_BUDGET,
+            machines.create(CreateMachineRequest {
+                name: IMPORTED_MACHINE.to_owned(),
+                cpus: 1,
+                memory: 1024 * 1024 * 1024,
+                disk_size: 2 * 1024 * 1024 * 1024,
+                image: IMPORTED_IMAGE.to_owned(),
+                ..Default::default()
+            }),
+        )
+        .await
+        .context("create timed out")?
+        .context("create --image failed")?;
+        start_and_check(&mut machines, IMPORTED_MACHINE).await?;
+        let listed = list_images(&mut images).await?;
+        let users = listed
+            .iter()
+            .find(|i| i.name == IMPORTED_IMAGE)
+            .map(|i| i.machines.clone());
+        if users != Some(vec![IMPORTED_MACHINE.to_owned()]) {
+            bail!("the image does not list its machine: {users:?}");
+        }
+
+        // An export carries the image; then the host loses both.
+        machines
+            .stop(StopMachineRequest {
+                id: IMPORTED_MACHINE.to_owned(),
+                force: false,
+            })
+            .await
+            .context("stop failed")?;
+        tokio::time::timeout(
+            ARCHIVE_BUDGET,
+            machines.export(ExportMachineRequest {
+                id: IMPORTED_MACHINE.to_owned(),
+                path: archive.to_string_lossy().into_owned(),
+                include_image: Some(true),
+            }),
+        )
+        .await
+        .context("export timed out")?
+        .context("export failed")?;
+        remove_machine(&mut machines, IMPORTED_MACHINE).await?;
+        remove_image(&mut images).await?;
+
+        // Importing the archive restores the image along with the machine.
+        tokio::time::timeout(
+            ARCHIVE_BUDGET,
+            machines.import(ImportMachineRequest {
+                path: archive.to_string_lossy().into_owned(),
+                name: RESTORED_MACHINE.to_owned(),
+                ..Default::default()
+            }),
+        )
+        .await
+        .context("machine import timed out")?
+        .context("machine import failed")?;
+        if !list_images(&mut images)
+            .await?
+            .iter()
+            .any(|i| i.name == IMPORTED_IMAGE)
+        {
+            bail!("importing the archive did not restore {IMPORTED_IMAGE}");
+        }
+        start_and_check(&mut machines, RESTORED_MACHINE).await?;
+        machines
+            .stop(StopMachineRequest {
+                id: RESTORED_MACHINE.to_owned(),
+                force: false,
+            })
+            .await
+            .context("stop failed")?;
+        remove_machine(&mut machines, RESTORED_MACHINE).await?;
+        remove_image(&mut images).await
+    })
+}
+
+/// Starts machine `id` and checks it booted the imported Alpine with an
+/// init system.
+async fn start_and_check(machines: &mut MachineServiceClient<Channel>, id: &str) -> Result<()> {
+    tokio::time::timeout(
+        START_BUDGET,
+        machines.start(StartMachineRequest { id: id.to_owned() }),
+    )
+    .await
+    .with_context(|| format!("starting {id} timed out"))?
+    .with_context(|| format!("starting {id} failed"))?;
+    let release = exec_in(machines, id, "cat /etc/os-release").await?;
+    if !release.contains("ID=alpine") {
+        bail!("{id} does not run the imported alpine: {release:?}");
+    }
+    exec_in(machines, id, "test -e /sbin/openrc && test -e /sbin/init").await?;
+    Ok(())
+}
+
+async fn list_images(
+    images: &mut MachineImageServiceClient<Channel>,
+) -> Result<Vec<arcbox_protocol::v1::MachineImageInfo>> {
+    Ok(images
+        .list(ListMachineImagesRequest {})
+        .await
+        .context("listing machine images failed")?
+        .into_inner()
+        .images)
+}
+
+async fn remove_image(images: &mut MachineImageServiceClient<Channel>) -> Result<()> {
+    images
+        .remove(RemoveMachineImageRequest {
+            name: IMPORTED_IMAGE.to_owned(),
+            ..Default::default()
+        })
+        .await
+        .context("removing the image failed")?;
+    if list_images(images)
+        .await?
+        .iter()
+        .any(|i| i.name == IMPORTED_IMAGE)
+    {
+        bail!("{IMPORTED_IMAGE} still listed after remove");
+    }
+    Ok(())
+}
+
+async fn remove_machine(machines: &mut MachineServiceClient<Channel>, id: &str) -> Result<()> {
+    machines
+        .remove(RemoveMachineRequest {
+            id: id.to_owned(),
+            force: false,
+            volumes: false,
+        })
+        .await
+        .with_context(|| format!("removing {id} failed"))?;
+    Ok(())
 }
 
 fn scenario(daemon: &mut DaemonHandle, data_dir: &Path, metrics: &mut RunMetrics) -> Result<()> {
@@ -306,10 +571,20 @@ async fn machine_root_mounted_on_the_host(
 /// Runs `sh -c <script>` in the machine and returns its stdout; a non-zero
 /// exit is an error.
 async fn exec_output(machines: &mut MachineServiceClient<Channel>, script: &str) -> Result<String> {
+    exec_in(machines, MACHINE, script).await
+}
+
+/// Runs `sh -c <script>` in machine `id` and returns its stdout; a non-zero
+/// exit is an error.
+async fn exec_in(
+    machines: &mut MachineServiceClient<Channel>,
+    id: &str,
+    script: &str,
+) -> Result<String> {
     let mut stream = tokio::time::timeout(
         RPC_BUDGET,
         machines.exec(MachineExecRequest {
-            id: MACHINE.to_owned(),
+            id: id.to_owned(),
             cmd: vec!["/bin/sh".to_owned(), "-c".to_owned(), script.to_owned()],
             ..Default::default()
         }),

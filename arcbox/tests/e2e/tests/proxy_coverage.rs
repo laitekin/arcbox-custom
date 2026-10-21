@@ -15,9 +15,16 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use arcbox_e2e::docker::{docker_output, ensure_image};
+use arcbox_e2e::daemon::connect_unix;
+use arcbox_e2e::docker::{docker_output, docker_output_with_input, ensure_image};
 use arcbox_e2e::net_fixtures::spawn_blob_server;
 use arcbox_e2e::scenario::run_vz_scenario_with_env;
+use arcbox_grpc::v1::kubernetes_service_client::KubernetesServiceClient;
+use arcbox_grpc::v1::machine_service_client::MachineServiceClient;
+use arcbox_protocol::v1::{
+    CreateMachineRequest, KubernetesStartRequest, KubernetesStopRequest, MachineExecRequest,
+    RemoveMachineRequest, StartMachineRequest, StopMachineRequest,
+};
 
 const READY_TIMEOUT: Duration = Duration::from_secs(180);
 const DOCKER_TIMEOUT: Duration = Duration::from_secs(120);
@@ -25,6 +32,16 @@ const USER: &str = "alice";
 const PASSWORD: &str = "s3cret";
 /// TEST-NET-3: unroutable, so reaching it at all proves the proxy carried it.
 const ORIGIN_IP: &str = "203.0.113.10";
+/// The proxy splices every port of [`ORIGIN_IP`] to the origin, so each row
+/// uses its own port and its flow is told apart in the proxy's log.
+const MACHINE_PORT: u16 = 8081;
+const POD_PORT: u16 = 8082;
+const MACHINE: &str = "e2e-proxy-alpine";
+const POD: &str = "e2e-proxy-probe";
+/// Machine create pulls alpine from the image CDN through the proxy.
+const MACHINE_BUDGET: Duration = Duration::from_secs(180);
+/// A cold k3s start plus the pod's image pull.
+const KUBERNETES_BUDGET: Duration = Duration::from_secs(300);
 
 /// One request the proxy served.
 #[derive(Debug, Clone)]
@@ -272,7 +289,175 @@ fn system_vm_egress_goes_through_the_authenticated_proxy() -> Result<()> {
             proxy.expect("dockerd's registry connection", |s| {
                 s.command == 1 && s.target.ends_with(":443")
             })?;
+
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .context("building a tokio runtime")?;
+            let socket = daemon.grpc_socket();
+
+            // Rows: the daemon's image download (host side), then a Linux
+            // machine's TCP flow.
+            metrics.time("machine_tcp", || runtime.block_on(machine_row(&socket)))?;
+            proxy.expect("the daemon's machine image download", |s| {
+                s.command == 1 && s.target.ends_with(":443") && s.target.contains("arcboxcdn")
+            })?;
+            proxy.expect("the machine's TCP flow", |s| {
+                s.command == 1 && s.target == format!("{ORIGIN_IP}:{MACHINE_PORT}")
+            })?;
+
+            // Row: a Kubernetes pod.
+            metrics.time("pod_tcp", || pod_row(&runtime, &socket, data_dir, &image))?;
+            proxy.expect("the pod's TCP flow", |s| {
+                s.command == 1 && s.target == format!("{ORIGIN_IP}:{POD_PORT}")
+            })?;
             Ok(())
         },
     )
+}
+
+/// Creates and starts an alpine machine, fetches the origin from inside it,
+/// and removes it.
+async fn machine_row(socket: &std::path::Path) -> Result<()> {
+    let mut machines = MachineServiceClient::new(connect_unix(socket).await?);
+    tokio::time::timeout(MACHINE_BUDGET, async {
+        machines
+            .create(CreateMachineRequest {
+                name: MACHINE.to_owned(),
+                cpus: 1,
+                memory: 1024 * 1024 * 1024,
+                disk_size: 2 * 1024 * 1024 * 1024,
+                distro: "alpine".to_owned(),
+                version: "3.24".to_owned(),
+                ..Default::default()
+            })
+            .await
+            .context("machine create failed")?;
+        machines
+            .start(StartMachineRequest {
+                id: MACHINE.to_owned(),
+            })
+            .await
+            .context("machine start failed")?;
+        let url = format!("http://{ORIGIN_IP}:{MACHINE_PORT}/blob");
+        let mut stream = machines
+            .exec(MachineExecRequest {
+                id: MACHINE.to_owned(),
+                cmd: vec![
+                    "wget".to_owned(),
+                    "-q".to_owned(),
+                    "-O".to_owned(),
+                    "/dev/null".to_owned(),
+                    url,
+                ],
+                ..Default::default()
+            })
+            .await
+            .context("machine exec failed")?
+            .into_inner();
+        let mut exit_code = None;
+        while let Some(output) = stream.message().await.context("exec stream error")? {
+            if output.done {
+                exit_code = Some(output.exit_code);
+            }
+        }
+        if exit_code != Some(0) {
+            bail!("wget in the machine exited with {exit_code:?}");
+        }
+        machines
+            .stop(StopMachineRequest {
+                id: MACHINE.to_owned(),
+                force: true,
+            })
+            .await
+            .context("machine stop failed")?;
+        machines
+            .remove(RemoveMachineRequest {
+                id: MACHINE.to_owned(),
+                force: true,
+                volumes: false,
+            })
+            .await
+            .context("machine remove failed")?;
+        Ok(())
+    })
+    .await
+    .context("the machine row timed out")?
+}
+
+/// Starts Kubernetes, runs a pod that fetches the origin, waits for it to
+/// succeed, and stops Kubernetes.
+fn pod_row(
+    runtime: &tokio::runtime::Runtime,
+    socket: &std::path::Path,
+    data_dir: &std::path::Path,
+    image: &str,
+) -> Result<()> {
+    let mut client = KubernetesServiceClient::new(runtime.block_on(connect_unix(socket))?);
+    let started = runtime
+        .block_on(client.start(KubernetesStartRequest::default()))
+        .context("Kubernetes start failed")?
+        .into_inner();
+    if !started.api_ready {
+        bail!("Kubernetes started without an API: {}", started.detail);
+    }
+    let url = format!("http://{ORIGIN_IP}:{POD_PORT}/blob");
+    let budget = format!("--timeout={}s", KUBERNETES_BUDGET.as_secs());
+    let result = kubectl(
+        data_dir,
+        image,
+        &[
+            "run",
+            POD,
+            &format!("--image={image}"),
+            "--image-pull-policy=IfNotPresent",
+            "--restart=Never",
+            "--command",
+            "--",
+            "wget",
+            "-q",
+            "-O",
+            "/dev/null",
+            &url,
+        ],
+    )
+    .and_then(|_| {
+        kubectl(
+            data_dir,
+            image,
+            &[
+                "wait",
+                "--for=jsonpath={.status.phase}=Succeeded",
+                &format!("pod/{POD}"),
+                &budget,
+            ],
+        )
+    });
+    let _ = runtime.block_on(client.stop(KubernetesStopRequest::default()));
+    result.map(drop)
+}
+
+/// `k3s kubectl` in the guest's root namespaces (see `kubernetes_lb.rs`).
+fn kubectl(data_dir: &std::path::Path, image: &str, args: &[&str]) -> Result<String> {
+    let mut command = vec![
+        "run",
+        "--rm",
+        "-i",
+        "--privileged",
+        "--pid=host",
+        image,
+        "nsenter",
+        "-t",
+        "1",
+        "-m",
+        "-n",
+        "-p",
+        "--",
+        "/run/arcbox/runtime/bin/k3s",
+        "kubectl",
+        "--kubeconfig=/var/lib/rancher/k3s/k3s.yaml",
+    ];
+    command.extend_from_slice(args);
+    docker_output_with_input(data_dir, &command, b"", KUBERNETES_BUDGET)
+        .with_context(|| format!("kubectl {}", args.join(" ")))
 }
