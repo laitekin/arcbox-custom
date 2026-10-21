@@ -25,6 +25,19 @@
 - [认证代理、设置与诊断](https://github.com/laitekin/arcbox-custom/issues/2)
 - [Linux 镜像库、导入与迁移](https://github.com/laitekin/arcbox-custom/issues/3)
 
+当前状态（分支 `claude/exciting-brown-jx9f1y`）：
+
+| 模块 | 状态 |
+| --- | --- |
+| F2 认证代理（守护进程、CLI、热更新、钥匙串/文件凭据、跟随系统的 SCDynamicStore 通知） | 已实现，Linux 上单元/集成测试通过 |
+| F2 桌面「设置 › 网络」、菜单栏「代理：开/关」 | 已实现，Linux 上做了编译与逻辑测试，未在 Mac 上运行 |
+| F3 代理测试与诊断、守护进程下载走代理 | 已实现并测试 |
+| F4 镜像库、导入（归档 / squashfs / Docker，含自动安装 init）、`create --image`、导出携带镜像 | 已实现并测试；磁盘镜像（qcow2 等）明确拒绝 |
+| e2e：代理覆盖（容器/UDP/pull/机器/Pod）、镜像导入全流程 | 已编写，需在 Mac e2e 环境运行 |
+| R6 网关 DNS 不经代理 | 已确认存在，修复方案待定（见代理文档「Host-side DNS (R6)」） |
+
+逐项清单见 [`TODO-PRD.md`](TODO-PRD.md)。
+
 ## 构建检查
 
 依赖包括完整 Xcode、Rust、Node.js、protobuf、xcodegen、aarch64 Linux musl 交叉编译工具链。
@@ -55,8 +68,8 @@ make -C arcbox-desktop generate-arcbox-protobuf ARCBOX_DIR=../arcbox   # Swift �
 
 ## 二开功能速览
 
-- 认证代理：`abctl network proxy set socks5://user@host:1080 --password-stdin`，`abctl network proxy test`；桌面版「设置 › 网络」。密码保存在登录钥匙串（或 `ARCBOX_PROXY_CREDENTIALS=file` 时的 0600 文件），`config.toml` 不含密码，修改后对新连接立即生效。
-- 自定义镜像：`abctl machine image import ./rootfs.tar.gz --name my-linux`（或 `docker:ubuntu:24.04 --add-init`），`abctl machine create dev --image my-linux`；桌面版「机器 › 镜像」与新建机器中的「My Images」。
+- 认证代理：`abctl network proxy set socks5://user@host:1080 --password-stdin`，`abctl network proxy test`；桌面版「设置 › 网络」。密码保存在登录钥匙串（或 `ARCBOX_PROXY_CREDENTIALS=file` 时的 0600 文件），`config.toml` 不含密码，修改后对新连接立即生效；菜单栏可一键切换代理开/关。
+- 自定义镜像：`abctl machine image import ./rootfs.tar.gz --name my-linux`（或 `docker:ubuntu:24.04 --add-init`，由守护进程构建），`abctl machine create dev --image my-linux`；桌面版「机器 › 镜像」与新建机器中的「My Images」。
 - 详细说明与验证记录：`arcbox/docs/logs/2026-10-21-proxy-authentication.md`、`arcbox/docs/logs/2026-10-21-machine-image-import.md`。
 
 ## 当前开发环境限制
