@@ -18,6 +18,9 @@ socket2 = { version = "0.5", features = ["all"] }
 tokio = { workspace = true }
 tokio-util = "0.7"
 tracing = { workspace = true }
+thiserror = "2"
+base64 = "0.22"
+zeroize = "1.8"
 
 [lints]
 workspace = true

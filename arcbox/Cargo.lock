@@ -764,8 +764,10 @@ dependencies = [
 name = "arcbox-fakeip"
 version = "0.10.4"
 dependencies = [
+ "percent-encoding",
  "thiserror 2.0.18",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -1019,11 +1021,14 @@ version = "0.10.4"
 dependencies = [
  "arcbox-fakeip",
  "arcbox-packet",
+ "base64 0.22.1",
  "libc",
  "socket2 0.5.10",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]

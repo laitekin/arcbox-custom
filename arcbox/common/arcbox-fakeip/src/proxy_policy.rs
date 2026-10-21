@@ -13,7 +13,11 @@
 
 use std::fmt;
 use std::str::FromStr;
+use std::sync::Arc;
 
+use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
+
+use crate::proxy_auth::ProxyAuth;
 use crate::proxy_detect::{ProxyConfig, ProxyEnvironment};
 
 /// Where guest TCP and UDP egress is sent.
@@ -94,16 +98,19 @@ impl ProxyScheme {
 
 impl fmt::Display for ProxyUrl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let host = &self.server.host;
-        if host.contains(':') {
+        write!(f, "{}://", self.scheme.as_str())?;
+        if let Some(auth) = &self.server.auth {
             write!(
                 f,
-                "{}://[{host}]:{}",
-                self.scheme.as_str(),
-                self.server.port
-            )
+                "{}@",
+                utf8_percent_encode(auth.username(), NON_ALPHANUMERIC)
+            )?;
+        }
+        let host = &self.server.host;
+        if host.contains(':') {
+            write!(f, "[{host}]:{}", self.server.port)
         } else {
-            write!(f, "{}://{host}:{}", self.scheme.as_str(), self.server.port)
+            write!(f, "{host}:{}", self.server.port)
         }
     }
 }
@@ -114,34 +121,59 @@ impl FromStr for ProxyUrl {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (scheme, rest) = s
             .split_once("://")
-            .ok_or_else(|| ProxyPolicyError::MissingScheme(s.to_string()))?;
+            .ok_or_else(|| ProxyPolicyError::MissingScheme("[redacted]".into()))?;
         let scheme = match scheme.to_ascii_lowercase().as_str() {
             "http" => ProxyScheme::Http,
             "https" => ProxyScheme::Https,
             "socks5" | "socks5h" | "socks" => ProxyScheme::Socks5,
-            other => return Err(ProxyPolicyError::UnsupportedScheme(other.to_string())),
+            _ => return Err(ProxyPolicyError::UnsupportedScheme("unsupported".into())),
         };
         let rest = rest.trim_end_matches('/');
-        if rest.contains('@') {
-            return Err(ProxyPolicyError::CredentialsUnsupported);
-        }
+        let (rest, auth) = match rest.rsplit_once('@') {
+            Some((userinfo, authority)) => {
+                let (user, password) = userinfo
+                    .split_once(':')
+                    .map_or((userinfo, None), |(user, pass)| (user, Some(pass)));
+                let auth = ProxyAuth::new(
+                    decode_credential(user)?,
+                    password.map(decode_credential).transpose()?,
+                )
+                .map_err(|_| ProxyPolicyError::InvalidCredentials)?;
+                (authority, Some(Arc::new(auth)))
+            }
+            None => (rest, None),
+        };
         let (host, port) = rest
             .rsplit_once(':')
-            .ok_or_else(|| ProxyPolicyError::MissingPort(s.to_string()))?;
+            .ok_or_else(|| ProxyPolicyError::MissingPort("[redacted]".into()))?;
         let port: u16 = port
             .parse()
             .ok()
             .filter(|port| *port != 0)
-            .ok_or_else(|| ProxyPolicyError::InvalidPort(port.to_string()))?;
-        let host = host.trim_start_matches('[').trim_end_matches(']');
-        if host.is_empty() {
-            return Err(ProxyPolicyError::MissingPort(s.to_string()));
+            .ok_or_else(|| ProxyPolicyError::InvalidPort("expected 1–65535".into()))?;
+        let host = if host.starts_with('[') {
+            host.strip_prefix('[')
+                .and_then(|host| host.strip_suffix(']'))
+                .filter(|host| host.parse::<std::net::Ipv6Addr>().is_ok())
+                .ok_or_else(|| ProxyPolicyError::MissingPort("[redacted]".into()))?
+        } else if host.contains(':') {
+            return Err(ProxyPolicyError::MissingPort("[redacted]".into()));
+        } else {
+            host
+        };
+        if host.is_empty()
+            || host
+                .chars()
+                .any(|c| c.is_whitespace() || matches!(c, '/' | '?' | '#' | '[' | ']'))
+        {
+            return Err(ProxyPolicyError::MissingPort("[redacted]".into()));
         }
         Ok(Self {
             scheme,
             server: ProxyConfig {
                 host: host.to_string(),
                 port,
+                auth,
             },
         })
     }
@@ -162,9 +194,26 @@ pub enum ProxyPolicyError {
     /// The port is not a non-zero 16-bit integer.
     #[error("invalid proxy port {0:?}")]
     InvalidPort(String),
-    /// The URL carries `user:password@`, which the connectors do not send.
-    #[error("proxy credentials are not supported yet; use an unauthenticated proxy")]
-    CredentialsUnsupported,
+    /// Credentials have invalid encoding or exceed RFC 1929 wire limits.
+    #[error("invalid proxy credentials: expected valid UTF-8 and 1–255 bytes per field")]
+    InvalidCredentials,
+}
+
+fn decode_credential(value: &str) -> Result<String, ProxyPolicyError> {
+    let bytes = value.as_bytes();
+    for (i, byte) in bytes.iter().enumerate() {
+        if *byte == b'%'
+            && !bytes
+                .get(i + 1..i + 3)
+                .is_some_and(|pair| pair.iter().all(u8::is_ascii_hexdigit))
+        {
+            return Err(ProxyPolicyError::InvalidCredentials);
+        }
+    }
+    percent_decode_str(value)
+        .decode_utf8()
+        .map(|value| value.into_owned())
+        .map_err(|_| ProxyPolicyError::InvalidCredentials)
 }
 
 /// The complete egress policy: where traffic goes, and what stays direct.
@@ -286,8 +335,8 @@ mod tests {
             Err(ProxyPolicyError::MissingPort(_))
         ));
         assert!(matches!(
-            "http://user:pw@proxy.corp:3128".parse::<ProxyPolicy>(),
-            Err(ProxyPolicyError::CredentialsUnsupported)
+            "http://:pw@proxy.corp:3128".parse::<ProxyPolicy>(),
+            Err(ProxyPolicyError::InvalidCredentials)
         ));
     }
 

@@ -204,6 +204,7 @@ mod tests {
             Some(ProxyConfig {
                 host: "127.0.0.1".to_string(),
                 port,
+                auth: None,
             })
         };
         ProxyEnvironment {

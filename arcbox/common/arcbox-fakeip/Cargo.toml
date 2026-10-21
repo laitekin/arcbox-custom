@@ -9,8 +9,10 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+percent-encoding = "2.3"
 thiserror.workspace = true
 tracing = { workspace = true }
+zeroize = "1.8"
 
 [lints]
 workspace = true

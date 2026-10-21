@@ -11,12 +11,14 @@
 use std::net::Ipv4Addr;
 #[cfg(target_os = "macos")]
 use std::process::Command;
+use std::sync::Arc;
 
 /// Proxy server configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProxyConfig {
     pub host: String,
     pub port: u16,
+    pub auth: Option<Arc<crate::proxy_auth::ProxyAuth>>,
 }
 
 /// Detected proxy/VPN environment on the host.
@@ -255,7 +257,11 @@ fn parse_proxy_block(
         return None;
     }
 
-    Some(ProxyConfig { host, port })
+    Some(ProxyConfig {
+        host,
+        port,
+        auth: None,
+    })
 }
 
 /// Parses the ExceptionsList from scutil output.
@@ -293,24 +299,9 @@ fn proxy_from_env(var: &str) -> Option<ProxyConfig> {
 
 /// Parses a proxy URL like `http://host:port` or `socks5://[::1]:1080`.
 fn parse_proxy_url(url: &str) -> Option<ProxyConfig> {
-    let val = url
-        .trim_start_matches("http://")
-        .trim_start_matches("https://")
-        .trim_start_matches("socks5://")
-        .trim_end_matches('/');
-
-    let (host, port_str) = val.rsplit_once(':')?;
-    let port: u16 = port_str.parse().ok()?;
-    let host = host.trim_start_matches('[').trim_end_matches(']');
-
-    if host.is_empty() || port == 0 {
-        return None;
-    }
-
-    Some(ProxyConfig {
-        host: host.to_string(),
-        port,
-    })
+    url.parse::<crate::proxy_policy::ProxyUrl>()
+        .ok()
+        .map(|value| value.server)
 }
 
 #[cfg(test)]

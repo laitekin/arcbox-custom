@@ -17,5 +17,6 @@
 //! Fake-IP machinery as the VM datapath.
 
 pub mod dns_log;
+pub mod proxy_auth;
 pub mod proxy_detect;
 pub mod proxy_policy;

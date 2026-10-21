@@ -451,6 +451,7 @@ mod tests {
         let (phost, pport) = (proxy_addr.ip().to_string(), proxy_addr.port());
         proxy.proxy_env = Some(ProxyEnvironment {
             socks_proxy: Some(arcbox_fakeip::proxy_detect::ProxyConfig {
+                auth: None,
                 host: phost,
                 port: pport,
             }),

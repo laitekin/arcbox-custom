@@ -158,6 +158,7 @@ mod macos {
         let proxy_env = ProxyEnvironment {
             fake_ip_active: true,
             socks_proxy: Some(ProxyConfig {
+                auth: None,
                 host: socks_host,
                 port: socks_port,
             }),
