@@ -171,6 +171,12 @@ impl SystemServiceImpl {
             early_runtime,
         }
     }
+
+    /// The diagnostics handle, shared with services that must answer
+    /// before the VM is ready.
+    pub(crate) fn early_runtime(&self) -> SharedRuntime {
+        Arc::clone(&self.early_runtime)
+    }
 }
 
 /// Maps the wire enum to the core backend, or `None` for the unspecified value.

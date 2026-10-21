@@ -1173,3 +1173,147 @@ message StorageRecoveryProgress {
     // Remains true after CHECK_ONLY, failure, or interruption. Only verified recovery clears it.
     bool storage_protected = 5;
 }
+
+// =============================================================================
+// Egress Proxy Service
+// =============================================================================
+
+// EgressProxyService manages where guest TCP and UDP egress is sent. A
+// change is persisted to config.toml (and the password to the credential
+// store) and applies to the next flow of every running VM; flows already
+// open keep the proxy they started with.
+service EgressProxyService {
+    // Gets the current settings. Never returns a password.
+    rpc GetProxy(Empty) returns (EgressProxySettings);
+
+    // Validates, persists and applies new settings. Nothing changes when it
+    // fails. Returns the resulting settings.
+    rpc SetProxy(SetEgressProxyRequest) returns (EgressProxySettings);
+
+    // Walks the proxy path from the host step by step, streaming each step
+    // as it finishes and stopping at the first failure. Tests the saved
+    // settings, or a draft without saving it.
+    rpc TestProxy(TestEgressProxyRequest) returns (stream EgressProxyTestStep);
+}
+
+// Where guest egress goes.
+enum EgressProxyMode {
+    // Unset; rejected by SetProxy.
+    EGRESS_PROXY_MODE_UNSPECIFIED = 0;
+    // Follow the Mac's proxy settings and their exclusions.
+    EGRESS_PROXY_MODE_SYSTEM = 1;
+    // Always connect directly.
+    EGRESS_PROXY_MODE_NONE = 2;
+    // Use the proxy in `url`.
+    EGRESS_PROXY_MODE_CUSTOM = 3;
+}
+
+// What happens to guest UDP. Gateway-local UDP (the built-in DNS) is never
+// affected.
+enum EgressUdpPolicy {
+    // Unset; treated as PROXY.
+    EGRESS_UDP_POLICY_UNSPECIFIED = 0;
+    // SOCKS5 UDP ASSOCIATE; dropped when only an HTTP proxy is configured.
+    EGRESS_UDP_POLICY_PROXY = 1;
+    // Always direct.
+    EGRESS_UDP_POLICY_DIRECT = 2;
+    // Always dropped; applications fall back to TCP.
+    EGRESS_UDP_POLICY_BLOCK = 3;
+}
+
+// What happens to guest ICMP echo, which no proxy can carry.
+enum EgressIcmpPolicy {
+    // Unset; treated as DIRECT.
+    EGRESS_ICMP_POLICY_UNSPECIFIED = 0;
+    // Sent from the host directly.
+    EGRESS_ICMP_POLICY_DIRECT = 1;
+    // Dropped.
+    EGRESS_ICMP_POLICY_BLOCK = 2;
+}
+
+// The egress proxy settings. Never carries a password.
+message EgressProxySettings {
+    EgressProxyMode mode = 1;
+    // CUSTOM only: `socks5://[user@]host:port`, `http://...` or
+    // `https://...`. Any password in a URL sent to SetProxy is moved to the
+    // credential store and never echoed back.
+    string url = 2;
+    // Output only: a password is stored for the custom proxy's user.
+    bool has_password = 3;
+    // Hosts that bypass the proxy, `NO_PROXY` form (`example.com`,
+    // `.example.com`, `*.example.com`).
+    repeated string exclude = 4;
+    EgressUdpPolicy udp = 5;
+    EgressIcmpPolicy icmp = 6;
+    // Output only: the proxies flows are sent to right now, password-free,
+    // in the order the egress prefers them; empty when everything is
+    // direct. Under SYSTEM this is the last probe of the Mac's settings.
+    repeated string effective = 7;
+    // Output only: where the password is stored (`keychain`, `file`).
+    string credential_store = 8;
+    // Output only: bumps every time the applied settings change.
+    uint64 revision = 9;
+}
+
+// Request to change the egress proxy settings.
+message SetEgressProxyRequest {
+    // The new settings; output-only fields are ignored.
+    EgressProxySettings settings = 1;
+    // Absent: keep the stored password. Empty: remove it. Otherwise:
+    // store it for the custom proxy's user.
+    optional string password = 2;
+}
+
+// Request to test a proxy path.
+message TestEgressProxyRequest {
+    // Draft settings to test instead of the saved ones.
+    EgressProxySettings settings = 1;
+    // Draft password; absent uses the stored one. Ignored without
+    // `settings`.
+    optional string password = 2;
+    // Target `host:port` to tunnel to; empty means www.gstatic.com:443.
+    string target = 3;
+}
+
+// A stage of the proxy test.
+enum EgressProxyTestStepKind {
+    EGRESS_PROXY_TEST_STEP_KIND_UNSPECIFIED = 0;
+    // Which proxy the target's flows use (skipped when direct).
+    EGRESS_PROXY_TEST_STEP_KIND_SELECT = 1;
+    // TCP connection to the proxy.
+    EGRESS_PROXY_TEST_STEP_KIND_REACH = 2;
+    // SOCKS5 method negotiation and username/password authentication.
+    EGRESS_PROXY_TEST_STEP_KIND_AUTHENTICATE = 3;
+    // CONNECT to the target (HTTP proxies authenticate here).
+    EGRESS_PROXY_TEST_STEP_KIND_TUNNEL = 4;
+    // UDP ASSOCIATE plus one relayed DNS query (SOCKS5 only).
+    EGRESS_PROXY_TEST_STEP_KIND_UDP = 5;
+}
+
+// Why a proxy test step failed.
+enum EgressProxyTestFailure {
+    EGRESS_PROXY_TEST_FAILURE_UNSPECIFIED = 0;
+    EGRESS_PROXY_TEST_FAILURE_UNREACHABLE = 1;
+    EGRESS_PROXY_TEST_FAILURE_TIMEOUT = 2;
+    EGRESS_PROXY_TEST_FAILURE_AUTH_REJECTED = 3;
+    EGRESS_PROXY_TEST_FAILURE_NO_ACCEPTABLE_METHOD = 4;
+    EGRESS_PROXY_TEST_FAILURE_MISSING_PASSWORD = 5;
+    EGRESS_PROXY_TEST_FAILURE_TARGET_REFUSED = 6;
+    EGRESS_PROXY_TEST_FAILURE_UDP_UNSUPPORTED = 7;
+    EGRESS_PROXY_TEST_FAILURE_PROTOCOL = 8;
+    // The draft settings could not be resolved (for example, a user with no
+    // password anywhere).
+    EGRESS_PROXY_TEST_FAILURE_CONFIG = 9;
+}
+
+// One finished step of a proxy test.
+message EgressProxyTestStep {
+    EgressProxyTestStepKind step = 1;
+    bool ok = 2;
+    // Not applicable (direct egress; UDP behind an HTTP proxy).
+    bool skipped = 3;
+    uint64 latency_ms = 4;
+    EgressProxyTestFailure failure = 5;
+    // Human-readable detail; never contains a password.
+    string message = 6;
+}

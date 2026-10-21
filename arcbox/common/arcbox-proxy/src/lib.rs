@@ -17,6 +17,7 @@
 //! Extracted from `arcbox-net` so a host-level proxy can reuse the same egress
 //! and relay machinery as the VM datapath.
 
+pub mod diagnose;
 pub mod egress;
 pub mod error;
 pub mod http_connect;

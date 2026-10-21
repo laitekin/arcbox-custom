@@ -1578,6 +1578,82 @@ pub mod storage_recovery_progress {
         }
     }
 }
+/// The egress proxy settings. Never carries a password.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct EgressProxySettings {
+    #[prost(enumeration = "EgressProxyMode", tag = "1")]
+    pub mode: i32,
+    /// CUSTOM only: `socks5://\[user@\]host:port`, `<http://...`> or
+    /// `<https://...`.> Any password in a URL sent to SetProxy is moved to the
+    /// credential store and never echoed back.
+    #[prost(string, tag = "2")]
+    pub url: ::prost::alloc::string::String,
+    /// Output only: a password is stored for the custom proxy's user.
+    #[prost(bool, tag = "3")]
+    pub has_password: bool,
+    /// Hosts that bypass the proxy, `NO_PROXY` form (`example.com`,
+    /// `.example.com`, `*.example.com`).
+    #[prost(string, repeated, tag = "4")]
+    pub exclude: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(enumeration = "EgressUdpPolicy", tag = "5")]
+    pub udp: i32,
+    #[prost(enumeration = "EgressIcmpPolicy", tag = "6")]
+    pub icmp: i32,
+    /// Output only: the proxies flows are sent to right now, password-free,
+    /// in the order the egress prefers them; empty when everything is
+    /// direct. Under SYSTEM this is the last probe of the Mac's settings.
+    #[prost(string, repeated, tag = "7")]
+    pub effective: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Output only: where the password is stored (`keychain`, `file`).
+    #[prost(string, tag = "8")]
+    pub credential_store: ::prost::alloc::string::String,
+    /// Output only: bumps every time the applied settings change.
+    #[prost(uint64, tag = "9")]
+    pub revision: u64,
+}
+/// Request to change the egress proxy settings.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetEgressProxyRequest {
+    /// The new settings; output-only fields are ignored.
+    #[prost(message, optional, tag = "1")]
+    pub settings: ::core::option::Option<EgressProxySettings>,
+    /// Absent: keep the stored password. Empty: remove it. Otherwise:
+    /// store it for the custom proxy's user.
+    #[prost(string, optional, tag = "2")]
+    pub password: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// Request to test a proxy path.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct TestEgressProxyRequest {
+    /// Draft settings to test instead of the saved ones.
+    #[prost(message, optional, tag = "1")]
+    pub settings: ::core::option::Option<EgressProxySettings>,
+    /// Draft password; absent uses the stored one. Ignored without
+    /// `settings`.
+    #[prost(string, optional, tag = "2")]
+    pub password: ::core::option::Option<::prost::alloc::string::String>,
+    /// Target `host:port` to tunnel to; empty means www.gstatic.com:443.
+    #[prost(string, tag = "3")]
+    pub target: ::prost::alloc::string::String,
+}
+/// One finished step of a proxy test.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct EgressProxyTestStep {
+    #[prost(enumeration = "EgressProxyTestStepKind", tag = "1")]
+    pub step: i32,
+    #[prost(bool, tag = "2")]
+    pub ok: bool,
+    /// Not applicable (direct egress; UDP behind an HTTP proxy).
+    #[prost(bool, tag = "3")]
+    pub skipped: bool,
+    #[prost(uint64, tag = "4")]
+    pub latency_ms: u64,
+    #[prost(enumeration = "EgressProxyTestFailure", tag = "5")]
+    pub failure: i32,
+    /// Human-readable detail; never contains a password.
+    #[prost(string, tag = "6")]
+    pub message: ::prost::alloc::string::String,
+}
 /// Hypervisor backend for the single System VM.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -1686,6 +1762,211 @@ impl MigrationMountType {
             "MIGRATION_MOUNT_TYPE_VOLUME" => Some(Self::Volume),
             "MIGRATION_MOUNT_TYPE_BIND" => Some(Self::Bind),
             "MIGRATION_MOUNT_TYPE_TMPFS" => Some(Self::Tmpfs),
+            _ => None,
+        }
+    }
+}
+/// Where guest egress goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum EgressProxyMode {
+    /// Unset; rejected by SetProxy.
+    Unspecified = 0,
+    /// Follow the Mac's proxy settings and their exclusions.
+    System = 1,
+    /// Always connect directly.
+    None = 2,
+    /// Use the proxy in `url`.
+    Custom = 3,
+}
+impl EgressProxyMode {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "EGRESS_PROXY_MODE_UNSPECIFIED",
+            Self::System => "EGRESS_PROXY_MODE_SYSTEM",
+            Self::None => "EGRESS_PROXY_MODE_NONE",
+            Self::Custom => "EGRESS_PROXY_MODE_CUSTOM",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "EGRESS_PROXY_MODE_UNSPECIFIED" => Some(Self::Unspecified),
+            "EGRESS_PROXY_MODE_SYSTEM" => Some(Self::System),
+            "EGRESS_PROXY_MODE_NONE" => Some(Self::None),
+            "EGRESS_PROXY_MODE_CUSTOM" => Some(Self::Custom),
+            _ => None,
+        }
+    }
+}
+/// What happens to guest UDP. Gateway-local UDP (the built-in DNS) is never
+/// affected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum EgressUdpPolicy {
+    /// Unset; treated as PROXY.
+    Unspecified = 0,
+    /// SOCKS5 UDP ASSOCIATE; dropped when only an HTTP proxy is configured.
+    Proxy = 1,
+    /// Always direct.
+    Direct = 2,
+    /// Always dropped; applications fall back to TCP.
+    Block = 3,
+}
+impl EgressUdpPolicy {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "EGRESS_UDP_POLICY_UNSPECIFIED",
+            Self::Proxy => "EGRESS_UDP_POLICY_PROXY",
+            Self::Direct => "EGRESS_UDP_POLICY_DIRECT",
+            Self::Block => "EGRESS_UDP_POLICY_BLOCK",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "EGRESS_UDP_POLICY_UNSPECIFIED" => Some(Self::Unspecified),
+            "EGRESS_UDP_POLICY_PROXY" => Some(Self::Proxy),
+            "EGRESS_UDP_POLICY_DIRECT" => Some(Self::Direct),
+            "EGRESS_UDP_POLICY_BLOCK" => Some(Self::Block),
+            _ => None,
+        }
+    }
+}
+/// What happens to guest ICMP echo, which no proxy can carry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum EgressIcmpPolicy {
+    /// Unset; treated as DIRECT.
+    Unspecified = 0,
+    /// Sent from the host directly.
+    Direct = 1,
+    /// Dropped.
+    Block = 2,
+}
+impl EgressIcmpPolicy {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "EGRESS_ICMP_POLICY_UNSPECIFIED",
+            Self::Direct => "EGRESS_ICMP_POLICY_DIRECT",
+            Self::Block => "EGRESS_ICMP_POLICY_BLOCK",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "EGRESS_ICMP_POLICY_UNSPECIFIED" => Some(Self::Unspecified),
+            "EGRESS_ICMP_POLICY_DIRECT" => Some(Self::Direct),
+            "EGRESS_ICMP_POLICY_BLOCK" => Some(Self::Block),
+            _ => None,
+        }
+    }
+}
+/// A stage of the proxy test.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum EgressProxyTestStepKind {
+    Unspecified = 0,
+    /// Which proxy the target's flows use (skipped when direct).
+    Select = 1,
+    /// TCP connection to the proxy.
+    Reach = 2,
+    /// SOCKS5 method negotiation and username/password authentication.
+    Authenticate = 3,
+    /// CONNECT to the target (HTTP proxies authenticate here).
+    Tunnel = 4,
+    /// UDP ASSOCIATE plus one relayed DNS query (SOCKS5 only).
+    Udp = 5,
+}
+impl EgressProxyTestStepKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "EGRESS_PROXY_TEST_STEP_KIND_UNSPECIFIED",
+            Self::Select => "EGRESS_PROXY_TEST_STEP_KIND_SELECT",
+            Self::Reach => "EGRESS_PROXY_TEST_STEP_KIND_REACH",
+            Self::Authenticate => "EGRESS_PROXY_TEST_STEP_KIND_AUTHENTICATE",
+            Self::Tunnel => "EGRESS_PROXY_TEST_STEP_KIND_TUNNEL",
+            Self::Udp => "EGRESS_PROXY_TEST_STEP_KIND_UDP",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "EGRESS_PROXY_TEST_STEP_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "EGRESS_PROXY_TEST_STEP_KIND_SELECT" => Some(Self::Select),
+            "EGRESS_PROXY_TEST_STEP_KIND_REACH" => Some(Self::Reach),
+            "EGRESS_PROXY_TEST_STEP_KIND_AUTHENTICATE" => Some(Self::Authenticate),
+            "EGRESS_PROXY_TEST_STEP_KIND_TUNNEL" => Some(Self::Tunnel),
+            "EGRESS_PROXY_TEST_STEP_KIND_UDP" => Some(Self::Udp),
+            _ => None,
+        }
+    }
+}
+/// Why a proxy test step failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum EgressProxyTestFailure {
+    Unspecified = 0,
+    Unreachable = 1,
+    Timeout = 2,
+    AuthRejected = 3,
+    NoAcceptableMethod = 4,
+    MissingPassword = 5,
+    TargetRefused = 6,
+    UdpUnsupported = 7,
+    Protocol = 8,
+    /// The draft settings could not be resolved (for example, a user with no
+    /// password anywhere).
+    Config = 9,
+}
+impl EgressProxyTestFailure {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "EGRESS_PROXY_TEST_FAILURE_UNSPECIFIED",
+            Self::Unreachable => "EGRESS_PROXY_TEST_FAILURE_UNREACHABLE",
+            Self::Timeout => "EGRESS_PROXY_TEST_FAILURE_TIMEOUT",
+            Self::AuthRejected => "EGRESS_PROXY_TEST_FAILURE_AUTH_REJECTED",
+            Self::NoAcceptableMethod => "EGRESS_PROXY_TEST_FAILURE_NO_ACCEPTABLE_METHOD",
+            Self::MissingPassword => "EGRESS_PROXY_TEST_FAILURE_MISSING_PASSWORD",
+            Self::TargetRefused => "EGRESS_PROXY_TEST_FAILURE_TARGET_REFUSED",
+            Self::UdpUnsupported => "EGRESS_PROXY_TEST_FAILURE_UDP_UNSUPPORTED",
+            Self::Protocol => "EGRESS_PROXY_TEST_FAILURE_PROTOCOL",
+            Self::Config => "EGRESS_PROXY_TEST_FAILURE_CONFIG",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "EGRESS_PROXY_TEST_FAILURE_UNSPECIFIED" => Some(Self::Unspecified),
+            "EGRESS_PROXY_TEST_FAILURE_UNREACHABLE" => Some(Self::Unreachable),
+            "EGRESS_PROXY_TEST_FAILURE_TIMEOUT" => Some(Self::Timeout),
+            "EGRESS_PROXY_TEST_FAILURE_AUTH_REJECTED" => Some(Self::AuthRejected),
+            "EGRESS_PROXY_TEST_FAILURE_NO_ACCEPTABLE_METHOD" => Some(Self::NoAcceptableMethod),
+            "EGRESS_PROXY_TEST_FAILURE_MISSING_PASSWORD" => Some(Self::MissingPassword),
+            "EGRESS_PROXY_TEST_FAILURE_TARGET_REFUSED" => Some(Self::TargetRefused),
+            "EGRESS_PROXY_TEST_FAILURE_UDP_UNSUPPORTED" => Some(Self::UdpUnsupported),
+            "EGRESS_PROXY_TEST_FAILURE_PROTOCOL" => Some(Self::Protocol),
+            "EGRESS_PROXY_TEST_FAILURE_CONFIG" => Some(Self::Config),
             _ => None,
         }
     }

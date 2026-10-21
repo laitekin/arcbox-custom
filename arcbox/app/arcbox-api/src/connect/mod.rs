@@ -23,6 +23,7 @@
 //! the two surfaces without any twin-codegen re-decode.
 
 mod control;
+mod egress_proxy;
 mod filesystem;
 mod icon;
 mod kubernetes;
@@ -50,6 +51,7 @@ use connectrpc::{ConnectError, RequestContext};
 use tokio_stream::{Stream, StreamExt as _};
 
 pub use control::SandboxServiceImpl;
+pub use egress_proxy::{EgressProxyServiceImpl, follow_system_proxy};
 pub use filesystem::SandboxFilesystemServiceImpl;
 pub use icon::IconServiceImpl;
 pub use kubernetes::KubernetesServiceImpl;
@@ -257,10 +259,15 @@ pub fn router(runtime: SharedRuntime) -> connectrpc::Router {
 ///
 /// `SystemService` is separate because it also observes the setup state and
 /// the early runtime handle — it must answer while `shared_runtime` is still
-/// empty, which is the whole point of a diagnostics RPC.
+/// empty, which is the whole point of a diagnostics RPC. `EgressProxyService`
+/// rides the same early handle: a proxy the boot itself needs must be
+/// fixable before boot finishes.
 #[must_use]
 pub fn router_with_system(runtime: SharedRuntime, system: SystemServiceImpl) -> connectrpc::Router {
-    router(runtime).add_service(Arc::new(system))
+    let egress_proxy = EgressProxyServiceImpl::new(system.early_runtime());
+    router(runtime)
+        .add_service(Arc::new(egress_proxy))
+        .add_service(Arc::new(system))
 }
 
 #[cfg(test)]

@@ -161,18 +161,7 @@ pub async fn read_addr<R: AsyncReadExt + Unpin>(r: &mut R) -> io::Result<(String
 
 /// Maps a SOCKS5 REP error code to an `io::Error` (RFC 1928 §6).
 pub(crate) fn rep_error(code: u8) -> io::Error {
-    let reason = match code {
-        0x01 => "general SOCKS server failure",
-        0x02 => "connection not allowed by ruleset",
-        0x03 => "network unreachable",
-        0x04 => "host unreachable",
-        0x05 => "connection refused",
-        0x06 => "TTL expired",
-        0x07 => "command not supported",
-        0x08 => "address type not supported",
-        _ => "unknown error",
-    };
-    io::Error::other(format!("SOCKS5: request failed: {reason} (code {code})"))
+    ProxyError::Refused(code).into()
 }
 
 /// The wildcard bind address (`0.0.0.0:0` or `[::]:0`) in the same address
@@ -220,7 +209,16 @@ async fn connect_stream(
 ) -> io::Result<()> {
     // Phase 1: shared authentication for CONNECT and UDP ASSOCIATE.
     greet(stream, auth).await?;
+    request_connect(stream, host, port).await
+}
 
+/// Sends the CONNECT request on a greeted control stream and reads the
+/// reply; on success the stream is a tunnel to `host:port`.
+pub(crate) async fn request_connect(
+    stream: &mut TcpStream,
+    host: &str,
+    port: u16,
+) -> io::Result<()> {
     // Phase 2: CONNECT request via the shared address codec.
     let mut req = vec![VER, 0x01, 0x00]; // VER | CMD=CONNECT | RSV
     encode_addr(&mut req, host, port);

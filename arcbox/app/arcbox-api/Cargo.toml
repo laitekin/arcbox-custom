@@ -18,6 +18,9 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
+arcbox-fakeip = { workspace = true }
+arcbox-proxy = { workspace = true }
+zeroize = "1.8"
 async-stream = { workspace = true }
 libc = { workspace = true }
 uuid = { workspace = true }

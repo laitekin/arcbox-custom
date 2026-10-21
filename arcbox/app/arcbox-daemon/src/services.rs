@@ -40,6 +40,10 @@ pub async fn start_control_plane(ctx: &DaemonContext) -> Result<ControlPlane> {
     Ok(ControlPlane { grpc, dns })
 }
 
+/// How often the Mac's proxy settings are re-probed under the `system`
+/// policy.
+const SYSTEM_PROXY_POLL: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Starts the gRPC server with all services.
 ///
 /// Machine/Sandbox/Snapshot services return `UNAVAILABLE` until
@@ -67,6 +71,17 @@ async fn start_grpc(ctx: &DaemonContext) -> Result<tokio::task::JoinHandle<()>> 
 
     let shutdown = ctx.shutdown.clone();
     let handle = tokio::spawn(crate::control_plane::serve(listener, app, shutdown));
+
+    // Under the `system` proxy policy, follow changes to the Mac's proxy
+    // settings without a restart.
+    let early_runtime = Arc::clone(&ctx.early_runtime);
+    let shutdown = ctx.shutdown.clone();
+    tokio::spawn(async move {
+        tokio::select! {
+            () = shutdown.cancelled() => {}
+            () = arcbox_api::connect::follow_system_proxy(early_runtime, SYSTEM_PROXY_POLL) => {}
+        }
+    });
 
     Ok(handle)
 }
