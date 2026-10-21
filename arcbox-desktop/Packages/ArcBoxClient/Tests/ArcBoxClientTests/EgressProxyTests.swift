@@ -112,6 +112,15 @@ import Testing
         let docker = MachineImageImportSource.docker("ubuntu:24.04").request(name: "x")
         #expect(docker.dockerImage == "ubuntu:24.04")
         #expect(docker.path.isEmpty)
+        #expect(!docker.addInit)
+        let withInit = MachineImageImportSource.docker("alpine", addInit: true).request(name: "x")
+        #expect(withInit.addInit)
+    }
+
+    @Test func theBuildingPhaseIsReported() {
+        var event = Arcbox_V1_ImportMachineImageEvent()
+        event.phase = .building
+        #expect(MachineImageImportPhase(proto: event) == .building)
     }
 
     @Test func theDoneEventCarriesTheImage() {

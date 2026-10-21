@@ -45,8 +45,8 @@ final class MachineImagesModel {
         guard let client, !isImporting else { return }
         lastError = nil
         importWarnings = []
-        if case .docker = source {
-            importPhase = .exporting
+        if case .docker(_, let addInit) = source {
+            importPhase = addInit ? .building : .exporting
         } else {
             importPhase = .reading(bytes: 0)
         }

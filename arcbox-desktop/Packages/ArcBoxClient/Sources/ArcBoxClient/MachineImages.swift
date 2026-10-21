@@ -44,12 +44,15 @@ public struct LocalMachineImage: Identifiable, Equatable, Sendable {
 public enum MachineImageImportSource: Equatable, Sendable {
     /// A rootfs archive or squashfs file on this Mac.
     case file(URL)
-    /// An image in ArcBox's Docker engine (`ubuntu:24.04`).
-    case docker(String)
+    /// An image in ArcBox's Docker engine (`ubuntu:24.04`). With `addInit`
+    /// the daemon first builds a derived image with systemd (or OpenRC on
+    /// Alpine) installed, imports that, and removes it.
+    case docker(String, addInit: Bool = false)
 }
 
 /// One step of an import, as the daemon reports it.
 public enum MachineImageImportPhase: Equatable, Sendable {
+    case building
     case exporting
     case reading(bytes: UInt64)
     case checking
@@ -59,6 +62,7 @@ public enum MachineImageImportPhase: Equatable, Sendable {
 
     public init?(proto: Arcbox_V1_ImportMachineImageEvent) {
         switch proto.phase {
+        case .building: self = .building
         case .exporting: self = .exporting
         case .reading: self = .reading(bytes: proto.bytes)
         case .checking: self = .checking
@@ -71,6 +75,7 @@ public enum MachineImageImportPhase: Equatable, Sendable {
 
     public var label: String {
         switch self {
+        case .building: "Installing an init system into the Docker image…"
         case .exporting: "Exporting the Docker image…"
         case .reading(let bytes):
             "Reading the root filesystem… \(ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file))"
@@ -98,7 +103,9 @@ extension MachineImageImportSource {
         request.name = name
         switch self {
         case .file(let url): request.path = url.path
-        case .docker(let image): request.dockerImage = image
+        case .docker(let image, let addInit):
+            request.dockerImage = image
+            request.addInit = addInit
         }
         return request
     }

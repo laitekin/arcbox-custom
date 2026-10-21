@@ -52,6 +52,9 @@ public enum Arcbox_V1_ImportMachineImagePhase: SwiftProtobuf.Enum, Swift.CaseIte
 
   /// Finished; `image` and `warnings` are set.
   case done // = 6
+
+  /// Building the derived image with an init system (`add_init`).
+  case building // = 7
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -67,6 +70,7 @@ public enum Arcbox_V1_ImportMachineImagePhase: SwiftProtobuf.Enum, Swift.CaseIte
     case 4: self = .writing
     case 5: self = .registering
     case 6: self = .done
+    case 7: self = .building
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -80,6 +84,7 @@ public enum Arcbox_V1_ImportMachineImagePhase: SwiftProtobuf.Enum, Swift.CaseIte
     case .writing: return 4
     case .registering: return 5
     case .done: return 6
+    case .building: return 7
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -93,6 +98,7 @@ public enum Arcbox_V1_ImportMachineImagePhase: SwiftProtobuf.Enum, Swift.CaseIte
     .writing,
     .registering,
     .done,
+    .building,
   ]
 
 }
@@ -1164,6 +1170,11 @@ public struct Arcbox_V1_ImportMachineImageRequest: Sendable {
   /// Refuses larger root filesystems; 0 means 20 GiB.
   public var maxSize: UInt64 = 0
 
+  /// With `docker_image`: first build a derived image with an init system
+  /// installed (systemd, or openrc on Alpine), import that, then remove it.
+  /// qcow2 and raw disk images are not importable yet.
+  public var addInit: Bool = false
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1221,7 +1232,7 @@ public struct Arcbox_V1_RemoveMachineImageRequest: Sendable {
 fileprivate let _protobuf_package = "arcbox.v1"
 
 extension Arcbox_V1_ImportMachineImagePhase: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0IMPORT_MACHINE_IMAGE_PHASE_UNSPECIFIED\0\u{1}IMPORT_MACHINE_IMAGE_PHASE_EXPORTING\0\u{1}IMPORT_MACHINE_IMAGE_PHASE_READING\0\u{1}IMPORT_MACHINE_IMAGE_PHASE_CHECKING\0\u{1}IMPORT_MACHINE_IMAGE_PHASE_WRITING\0\u{1}IMPORT_MACHINE_IMAGE_PHASE_REGISTERING\0\u{1}IMPORT_MACHINE_IMAGE_PHASE_DONE\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0IMPORT_MACHINE_IMAGE_PHASE_UNSPECIFIED\0\u{1}IMPORT_MACHINE_IMAGE_PHASE_EXPORTING\0\u{1}IMPORT_MACHINE_IMAGE_PHASE_READING\0\u{1}IMPORT_MACHINE_IMAGE_PHASE_CHECKING\0\u{1}IMPORT_MACHINE_IMAGE_PHASE_WRITING\0\u{1}IMPORT_MACHINE_IMAGE_PHASE_REGISTERING\0\u{1}IMPORT_MACHINE_IMAGE_PHASE_DONE\0\u{1}IMPORT_MACHINE_IMAGE_PHASE_BUILDING\0")
 }
 
 extension Arcbox_V1_CreateMachineRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
@@ -3095,7 +3106,7 @@ extension Arcbox_V1_ListRemoteMachineImagesResponse: SwiftProtobuf.Message, Swif
 
 extension Arcbox_V1_ImportMachineImageRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ImportMachineImageRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}path\0\u{3}docker_image\0\u{1}distro\0\u{1}release\0\u{3}max_size\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}path\0\u{3}docker_image\0\u{1}distro\0\u{1}release\0\u{3}max_size\0\u{3}add_init\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3109,6 +3120,7 @@ extension Arcbox_V1_ImportMachineImageRequest: SwiftProtobuf.Message, SwiftProto
       case 4: try { try decoder.decodeSingularStringField(value: &self.distro) }()
       case 5: try { try decoder.decodeSingularStringField(value: &self.release) }()
       case 6: try { try decoder.decodeSingularUInt64Field(value: &self.maxSize) }()
+      case 7: try { try decoder.decodeSingularBoolField(value: &self.addInit) }()
       default: break
       }
     }
@@ -3133,6 +3145,9 @@ extension Arcbox_V1_ImportMachineImageRequest: SwiftProtobuf.Message, SwiftProto
     if self.maxSize != 0 {
       try visitor.visitSingularUInt64Field(value: self.maxSize, fieldNumber: 6)
     }
+    if self.addInit != false {
+      try visitor.visitSingularBoolField(value: self.addInit, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -3143,6 +3158,7 @@ extension Arcbox_V1_ImportMachineImageRequest: SwiftProtobuf.Message, SwiftProto
     if lhs.distro != rhs.distro {return false}
     if lhs.release != rhs.release {return false}
     if lhs.maxSize != rhs.maxSize {return false}
+    if lhs.addInit != rhs.addInit {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

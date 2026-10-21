@@ -13,6 +13,7 @@ struct MachineImagesSheet: View {
     @State private var importName = ""
     @State private var importFile: URL?
     @State private var dockerImage = ""
+    @State private var addInit = true
     @State private var showFilePicker = false
 
     enum ImportKind: String, CaseIterable, Identifiable {
@@ -26,7 +27,7 @@ struct MachineImagesSheet: View {
         case .file: importFile.map(MachineImageImportSource.file)
         case .docker:
             dockerImage.trimmingCharacters(in: .whitespaces).isEmpty
-                ? nil : .docker(dockerImage.trimmingCharacters(in: .whitespaces))
+                ? nil : .docker(dockerImage.trimmingCharacters(in: .whitespaces), addInit: addInit)
         }
     }
 
@@ -133,6 +134,8 @@ struct MachineImagesSheet: View {
                 }
             case .docker:
                 TextField("Image", text: $dockerImage, prompt: Text("ubuntu:24.04"))
+                Toggle("Install an init system", isOn: $addInit)
+                    .help("Builds a temporary image with systemd (OpenRC on Alpine) installed, then imports it")
             }
             TextField("Name", text: $importName, prompt: Text("my-ubuntu"))
             if !importName.isEmpty && !isValidMachineImageName(importName) {
@@ -141,7 +144,7 @@ struct MachineImagesSheet: View {
                     .foregroundStyle(.orange)
             }
             Text(
-                "The root filesystem must contain /sbin/init (systemd or OpenRC) built for this Mac. Docker images usually have none: add one with `abctl machine image import docker:<image> --add-init`."
+                "The root filesystem must contain /sbin/init (systemd or OpenRC) built for this Mac. Docker images usually have none; keep \"Install an init system\" on to add one."
             )
             .font(.system(size: 11))
             .foregroundStyle(AppColors.textSecondary)
