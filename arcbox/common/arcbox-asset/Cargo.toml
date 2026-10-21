@@ -12,6 +12,7 @@ authors.workspace = true
 default = []
 # Async download + SHA-256 verification.
 download = [
+    "dep:arcbox-fakeip",
     "dep:reqwest",
     "dep:sha2",
     "dep:tokio",
@@ -20,7 +21,8 @@ download = [
 
 [dependencies]
 thiserror = { workspace = true }
-reqwest = { version = "0.12", optional = true, features = ["rustls-tls", "stream"] }
+reqwest = { version = "0.12", optional = true, features = ["rustls-tls", "stream", "socks"] }
+arcbox-fakeip = { workspace = true, optional = true }
 sha2 = { version = "0.10", optional = true }
 tokio = { version = "1", features = ["fs", "io-util"], optional = true }
 futures-util = { version = "0.3", optional = true }
@@ -30,4 +32,6 @@ workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+sha2 = "0.10"
+arcbox-fakeip = { workspace = true }
 tokio = { version = "1", features = ["net", "rt-multi-thread", "macros", "fs", "io-util"] }

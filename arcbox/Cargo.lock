@@ -276,6 +276,7 @@ dependencies = [
 name = "arcbox-asset"
 version = "0.10.4"
 dependencies = [
+ "arcbox-fakeip",
  "futures-util",
  "reqwest",
  "sha2 0.10.9",
@@ -521,6 +522,7 @@ dependencies = [
 name = "arcbox-core"
 version = "0.10.4"
 dependencies = [
+ "arcbox-asset",
  "arcbox-atomic-file",
  "arcbox-computer",
  "arcbox-connect",
@@ -889,6 +891,7 @@ dependencies = [
 name = "arcbox-image"
 version = "0.10.4"
 dependencies = [
+ "arcbox-asset",
  "arcbox-boot",
  "arcbox-constants",
  "arcbox-error",

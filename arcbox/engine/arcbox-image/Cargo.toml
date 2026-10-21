@@ -14,6 +14,7 @@ arcbox-constants = { workspace = true }
 arcbox-error = { workspace = true }
 dirs = { workspace = true }
 reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "json"] }
+arcbox-asset = { workspace = true, features = ["download"] }
 semver = "1.0.28"
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -144,7 +144,8 @@ pub(super) async fn fetch_disk(
     file.set_len(disk.uncompressed_size)?;
     let total_compressed: u64 = disk.chunks.iter().map(|c| c.size).sum();
 
-    let client = reqwest::Client::new();
+    let client =
+        arcbox_asset::http::client().map_err(|e| CoreError::macos(format!("HTTP client: {e}")))?;
     let budget = Arc::new(Semaphore::new(BUFFER_BUDGET as usize));
     let mut tasks = JoinSet::new();
     for (index, chunk) in disk.chunks.iter().enumerate() {

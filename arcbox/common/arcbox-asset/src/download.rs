@@ -51,7 +51,7 @@ pub async fn download_and_verify(
     name: &str,
     on_progress: impl Fn(u64, Option<u64>) + Send + Sync,
 ) -> Result<()> {
-    let client = reqwest::Client::builder()
+    let client = crate::http::client_builder()
         .timeout(std::time::Duration::from_secs(HTTP_TIMEOUT_SECS))
         .user_agent(USER_AGENT)
         .build()
@@ -117,7 +117,7 @@ pub async fn download_and_verify(
 /// Useful for fetching manifests or metadata files whose checksums are
 /// validated after parsing.
 pub async fn download_raw(url: &str, dest: &Path) -> Result<()> {
-    let client = reqwest::Client::builder()
+    let client = crate::http::client_builder()
         .timeout(std::time::Duration::from_secs(HTTP_TIMEOUT_SECS))
         .user_agent(USER_AGENT)
         .build()

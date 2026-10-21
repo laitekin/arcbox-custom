@@ -181,7 +181,10 @@ impl RemoteLocation {
     pub async fn fetch_bytes(&self) -> Result<Vec<u8>> {
         match self {
             Self::Http(url) => {
-                let resp = reqwest::get(url.clone())
+                let resp = arcbox_asset::http::client()
+                    .map_err(|e| ImageError::image(format!("fetch {url}: {e}")))?
+                    .get(url.clone())
+                    .send()
                     .await
                     .and_then(reqwest::Response::error_for_status)
                     .map_err(|e| ImageError::image(format!("fetch {url}: {e}")))?;

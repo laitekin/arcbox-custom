@@ -52,6 +52,7 @@ toml_edit = "0.25.15"
 arcbox-local-ca.workspace = true
 arcbox-storage.workspace = true
 zeroize = "1.8"
+arcbox-asset = { workspace = true, features = ["download"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 arcbox-route.workspace = true

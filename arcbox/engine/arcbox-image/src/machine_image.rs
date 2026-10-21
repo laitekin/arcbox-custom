@@ -461,7 +461,10 @@ async fn fetch_rootfs(
 
     match location {
         RemoteLocation::Http(url) => {
-            let mut resp = reqwest::get(url.clone())
+            let mut resp = arcbox_asset::http::client()
+                .map_err(|e| ImageError::image(format!("download {url}: {e}")))?
+                .get(url.clone())
+                .send()
                 .await
                 .and_then(reqwest::Response::error_for_status)
                 .map_err(|e| ImageError::image(format!("download {url}: {e}")))?;

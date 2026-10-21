@@ -393,7 +393,10 @@ impl BootAssetProvider {
     /// is malformed, or `Err` on network/parse failure.
     pub async fn fetch_latest_version(&self) -> Result<Option<String>> {
         let url = format!("{}/latest.json", self.config.cdn_base_url);
-        let resp = reqwest::get(&url)
+        let resp = arcbox_asset::http::client()
+            .map_err(|e| ImageError::config(format!("failed to fetch latest version: {e}")))?
+            .get(&url)
+            .send()
             .await
             .map_err(|e| ImageError::config(format!("failed to fetch latest version: {e}")))?;
         let body: serde_json::Value = resp

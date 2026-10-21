@@ -17,6 +17,8 @@ pub mod progress;
 
 #[cfg(feature = "download")]
 pub mod download;
+#[cfg(feature = "download")]
+pub mod http;
 
 pub use arch::current_arch;
 pub use error::{AssetError, Result};

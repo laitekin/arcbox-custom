@@ -56,7 +56,10 @@ pub(super) async fn download_ipsw(
     let part = dest.with_extension("part");
     let _ = std::fs::remove_file(&part);
 
-    let mut resp = reqwest::get(url)
+    let mut resp = arcbox_asset::http::client()
+        .map_err(|e| CoreError::macos(format!("download {url}: {e}")))?
+        .get(url)
+        .send()
         .await
         .and_then(reqwest::Response::error_for_status)
         .map_err(|e| CoreError::macos(format!("download {url}: {e}")))?;
