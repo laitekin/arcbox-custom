@@ -1,5 +1,8 @@
 //! Saved SOCKS5 profiles, credential isolation, and persistent machine choices.
 
+mod mutations;
+#[cfg(test)]
+mod tests;
 
 use std::collections::BTreeMap;
 
