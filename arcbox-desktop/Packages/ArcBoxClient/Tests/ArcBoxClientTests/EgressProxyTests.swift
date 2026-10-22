@@ -3,6 +3,19 @@ import Foundation
 import Testing
 
 @Suite struct EgressProxySettingsTests {
+    @Test func remoteDNSRoundTripsWithoutChangingTheCredentialAccount() {
+        let local = EgressProxySettings(proto: reported("socks5://alice@proxy.example:1080"))
+        var remote = local
+        remote.remoteDNS = true
+        #expect(!local.remoteDNS)
+        #expect(remote.url == "socks5h://alice@proxy.example:1080")
+        #expect(remote.sameAccount(as: local))
+        #expect(EgressProxySettings(proto: remote.proto).remoteDNS)
+        let remembered = EgressProxyQuickToggle.remembered(remote)
+        let restored = EgressProxyQuickToggle.on(EgressProxyQuickToggle.off(remote), remembered: remembered)
+        #expect(restored.remoteDNS)
+        #expect(restored.url == remote.url)
+    }
     private func reported(_ url: String, mode: Arcbox_V1_EgressProxyMode = .custom) -> Arcbox_V1_EgressProxySettings {
         var settings = Arcbox_V1_EgressProxySettings()
         settings.mode = mode

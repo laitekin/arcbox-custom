@@ -65,6 +65,17 @@ struct NetworkSettingsView: View {
                     }
                 }
                 TextField("Server", text: $model.draft.host, prompt: Text("proxy.example.com"))
+                if model.draft.proxyProtocol == .socks5 {
+                    Toggle("Resolve DNS through the proxy", isOn: $model.draft.remoteDNS)
+                        .toggleStyle(.checkbox)
+                    Text(
+                        model.draft.remoteDNS
+                            ? "External names use 1.1.1.1 or 8.8.8.8 through the SOCKS5 TCP tunnel. ArcBox names stay local; bypassed domains use this Mac's DNS."
+                            : "DNS uses this Mac's resolver. Turn on proxy DNS to resolve external names through SOCKS5."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
                 TextField("Port", text: $model.draft.port, prompt: Text("1080"))
                 TextField("User name", text: $model.draft.username, prompt: Text("Optional"))
                 if !model.draft.username.isEmpty {
@@ -95,9 +106,11 @@ struct NetworkSettingsView: View {
         } header: {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Outbound proxy")
-                Text("Applies to containers, image pulls and builds, and Linux machines. Changes reach new connections at once.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                Text(
+                    "Applies to containers, image pulls and builds, and Linux machines. Changes reach new connections at once."
+                )
+                .font(.callout)
+                .foregroundStyle(.secondary)
             }
         }
     }
@@ -118,11 +131,11 @@ struct NetworkSettingsView: View {
                 TextEditor(text: $model.excludeText)
                     .font(.body.monospaced())
                     .frame(minHeight: 54)
-                Text("One host per line; .example.com also covers its subdomains.")
+                Text("One entry per line: example.com, .internal, 10.0.0.0/8, or * for all traffic.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Picker("UDP (DNS, QUIC)", selection: $model.draft.udp) {
+            Picker("UDP (QUIC, custom DNS)", selection: $model.draft.udp) {
                 ForEach(EgressUdpPolicy.allCases) { policy in
                     Text(policy.label).tag(policy)
                 }

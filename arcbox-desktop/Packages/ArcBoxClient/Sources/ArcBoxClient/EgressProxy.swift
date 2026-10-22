@@ -119,6 +119,8 @@ public enum EgressProxyPasswordChange: Equatable, Sendable {
 public struct EgressProxySettings: Equatable, Sendable {
     public var mode: EgressProxyMode = .system
     public var proxyProtocol: EgressProxyProtocol = .socks5
+    /// SOCKS5 gateway DNS through the proxy (`socks5h`), instead of the Mac's resolver.
+    public var remoteDNS = true
     public var host = ""
     public var port = ""
     public var username = ""
@@ -145,6 +147,7 @@ public struct EgressProxySettings: Equatable, Sendable {
         }
         if mode == .custom, let parsed = Self.parse(url: proto.url) {
             proxyProtocol = parsed.proxyProtocol
+            remoteDNS = parsed.remoteDNS
             host = parsed.host
             port = parsed.port
             username = parsed.username
@@ -190,7 +193,7 @@ public struct EgressProxySettings: Equatable, Sendable {
 
     /// The password-free proxy URL (`socks5://user@host:port`).
     public var url: String {
-        let scheme = proxyProtocol.rawValue
+        let scheme = proxyProtocol == .socks5 && remoteDNS ? "socks5h" : proxyProtocol.rawValue
         let trimmedHost = host.trimmingCharacters(in: .whitespaces)
         let hostPart = trimmedHost.contains(":") ? "[\(trimmedHost)]" : trimmedHost
         let user =
@@ -229,8 +232,10 @@ public struct EgressProxySettings: Equatable, Sendable {
     }
 
     /// Splits `scheme://[user@]host:port` (IPv6 in brackets).
-    static func parse(url: String) -> (
-        proxyProtocol: EgressProxyProtocol, host: String, port: String, username: String
+    static func parse(
+        url: String
+    ) -> (
+        proxyProtocol: EgressProxyProtocol, host: String, port: String, username: String, remoteDNS: Bool
     )? {
         guard let schemeEnd = url.range(of: "://") else { return nil }
         let scheme = url[..<schemeEnd.lowerBound].lowercased()
@@ -251,7 +256,7 @@ public struct EgressProxySettings: Equatable, Sendable {
             host = String(host.dropFirst().dropLast())
         }
         let port = String(rest[rest.index(after: colon)...])
-        return (proxyProtocol, host, port, username)
+        return (proxyProtocol, host, port, username, scheme == "socks5h")
     }
 }
 
@@ -342,6 +347,7 @@ public enum EgressProxyQuickToggle {
         var custom = settings
         custom.mode = .custom
         custom.proxyProtocol = parsed.proxyProtocol
+        custom.remoteDNS = parsed.remoteDNS
         custom.host = parsed.host
         custom.port = parsed.port
         custom.username = parsed.username
