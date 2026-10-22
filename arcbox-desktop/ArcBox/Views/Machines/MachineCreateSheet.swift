@@ -122,7 +122,7 @@ struct MachineCreateSheet: View {
                     Picker("Outbound proxy", selection: $proxyChoice) {
                         Text("Follow default").tag("")
                         Text("Direct").tag("direct")
-                        ForEach(savedProxies) { Text($0.name).tag($0.id) }
+                        ForEach(savedProxies) { Text($0.menuLabel).tag($0.id) }
                     }
                     Text("Saved proxies are managed in Settings → Network.").font(.caption).foregroundStyle(.secondary)
                 }

@@ -21,7 +21,7 @@ struct MachineProxySection: View {
                     Picker("Proxy for this machine", selection: $choice) {
                         Text("Follow default").tag("")
                         Text("Direct").tag("direct")
-                        ForEach(library.profiles) { Text($0.name).tag($0.id) }
+                        ForEach(library.profiles) { Text($0.menuLabel).tag($0.id) }
                         if !savedChoice.isEmpty && savedChoice != "direct"
                             && !library.profiles.contains(where: { $0.id == savedChoice })
                         {

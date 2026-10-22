@@ -56,6 +56,7 @@ final class ProxyLibraryModel {
 final class ProxyProfileEditorModel {
     let id: String
     let original: EgressProxySettings?
+    private var previousSuggestion: String? = nil
     var name: String
     var urlInput = ""
     var draft: EgressProxySettings
@@ -73,6 +74,7 @@ final class ProxyProfileEditorModel {
         draft = profile?.settings ?? EgressProxySettings()
         draft.mode = .custom
         excludeText = draft.exclude.joined(separator: "\n")
+        previousSuggestion = profile?.settings.endpointLabel
     }
 
     var hasStoredPassword: Bool {
@@ -98,7 +100,8 @@ final class ProxyProfileEditorModel {
             draft.icmp = previous.icmp
             draft.profileID = id
             password = imported.password ?? ""
-            if name.trimmingCharacters(in: .whitespaces).isEmpty { name = "\(draft.host):\(draft.port)" }
+            name = SocksURLImport.suggestedName(for: draft, currentName: name, previousSuggestion: previousSuggestion)
+            previousSuggestion = draft.endpointLabel
             urlInput = ""
             steps = []
             error = nil

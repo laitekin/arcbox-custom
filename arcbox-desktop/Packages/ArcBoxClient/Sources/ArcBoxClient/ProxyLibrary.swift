@@ -17,6 +17,9 @@ public struct SavedProxyProfile: Identifiable, Sendable {
     }
 
     public var isInUse: Bool { isDefault || !machines.isEmpty }
+    public var menuLabel: String {
+        name == settings.endpointLabel ? name : "\(name) (\(settings.endpointLabel))"
+    }
 }
 
 /// Transient import result; the password is write-only on save/test.
@@ -26,6 +29,15 @@ public struct ImportedSocksProxy {
 }
 
 public enum SocksURLImport {
+    /// Refresh automatic names on repeated imports, preserving a custom name.
+    public static func suggestedName(
+        for settings: EgressProxySettings, currentName: String, previousSuggestion: String?
+    ) -> String {
+        if currentName.trimmingCharacters(in: .whitespaces).isEmpty || currentName == previousSuggestion {
+            return settings.endpointLabel
+        }
+        return currentName
+    }
     public enum ImportError: LocalizedError {
         case invalid, credentials
         public var errorDescription: String? {

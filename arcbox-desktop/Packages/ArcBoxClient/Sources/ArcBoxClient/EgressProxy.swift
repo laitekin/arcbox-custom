@@ -139,6 +139,11 @@ public struct EgressProxySettings: Equatable, Sendable {
 
     public init() {}
 
+    public var endpointLabel: String {
+        let server = host.contains(":") ? "[\(host)]" : host
+        return "\(server):\(port)"
+    }
+
     /// The settings a daemon reported.
     public init(proto: Arcbox_V1_EgressProxySettings) {
         switch proto.mode {

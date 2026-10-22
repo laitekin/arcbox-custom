@@ -3,6 +3,27 @@ import Foundation
 import Testing
 
 @Suite struct ProxyLibraryTests {
+    @Test func importedNamesFollowTheEndpointUnlessTheUserChoseACustomName() throws {
+        let first = try SocksURLImport.parse("socks5://127.0.0.1:7897").settings
+        let firstName = SocksURLImport.suggestedName(for: first, currentName: "", previousSuggestion: nil)
+        #expect(firstName == "127.0.0.1:7897")
+        let second = try SocksURLImport.parse("socks5://198.51.100.8:20000").settings
+        #expect(
+            SocksURLImport.suggestedName(for: second, currentName: firstName, previousSuggestion: first.endpointLabel)
+                == "198.51.100.8:20000")
+        #expect(
+            SocksURLImport.suggestedName(for: second, currentName: "My proxy", previousSuggestion: first.endpointLabel)
+                == "My proxy")
+    }
+
+    @Test func selectorsShowTheActualEndpointAlongsideCustomNames() throws {
+        var wire = Arcbox_V1_ProxyProfile()
+        wire.name = "My proxy"
+        wire.settings = try SocksURLImport.parse("socks5://[::1]:1080").settings.proto
+        #expect(SavedProxyProfile(proto: wire).menuLabel == "My proxy ([::1]:1080)")
+        wire.name = "[::1]:1080"
+        #expect(SavedProxyProfile(proto: wire).menuLabel == "[::1]:1080")
+    }
     @Test func importsEncodedCredentialsIPv6AndRemoteDNSWithoutEchoingThePassword() throws {
         let imported = try SocksURLImport.parse("socks5h://ali%40ce:p%40ss%3A%2F@[::1]:1081")
         #expect(imported.settings.host == "::1")

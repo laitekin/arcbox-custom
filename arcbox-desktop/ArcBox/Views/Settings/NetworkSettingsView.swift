@@ -61,7 +61,7 @@ struct NetworkSettingsView: View {
                 Text("Follow macOS").tag("system")
                 Text("Direct").tag("direct")
                 Text("Custom proxy").tag("custom")
-                ForEach(library.profiles) { Text($0.name).tag($0.id) }
+                ForEach(library.profiles) { Text($0.menuLabel).tag($0.id) }
                 if !model.draft.profileID.isEmpty
                     && !library.profiles.contains(where: { $0.id == model.draft.profileID })
                 {
