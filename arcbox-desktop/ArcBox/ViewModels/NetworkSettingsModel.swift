@@ -1,5 +1,6 @@
 import ArcBoxClient
 import Foundation
+import GRPCCore
 import OSLog
 
 /// Drives Settings > Network: the guest egress proxy, its password, and the

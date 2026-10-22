@@ -1,5 +1,6 @@
 import ArcBoxClient
 import Foundation
+import GRPCCore
 import OSLog
 
 /// Drives the machine images sheet: the local registry and imports into it.
