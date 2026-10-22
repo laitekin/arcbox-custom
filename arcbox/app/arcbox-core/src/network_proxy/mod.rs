@@ -8,11 +8,12 @@
 //! already open keep the transport they started with.
 
 pub mod credentials;
+pub mod library;
 #[cfg(target_os = "macos")]
 mod system_watch;
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use arcbox_fakeip::proxy_auth::ProxyAuth;
 use arcbox_fakeip::proxy_detect::{ProxyConfig, ProxyEnvironment};
@@ -78,6 +79,8 @@ pub struct ProxySettingsView {
     pub credential_store: &'static str,
     /// Generation of the published snapshot; bumps on every change.
     pub revision: u64,
+    /// The selected saved proxy, or empty for an inline/system/direct default.
+    pub profile_id: String,
 }
 
 /// The daemon's egress proxy controller. See the module docs.
@@ -89,6 +92,8 @@ pub struct NetworkProxy {
     /// The persisted preferences; the lock also serializes writers so two
     /// concurrent changes cannot interleave their file and store writes.
     current: Mutex<ProxyPreferences>,
+    routes: arcbox_fakeip::proxy_routes::ProxyRoutes,
+    library: RwLock<library::ProxyLibrary>,
 }
 
 impl NetworkProxy {
@@ -132,10 +137,12 @@ impl NetworkProxy {
             revision: 0,
         });
         Self {
+            routes: arcbox_fakeip::proxy_routes::ProxyRoutes::new(state.clone()),
             state,
             credentials,
             config_path,
             current: Mutex::new(preferences),
+            library: RwLock::new(library::ProxyLibrary::default()),
         }
     }
 
@@ -252,7 +259,15 @@ impl NetworkProxy {
             Ok::<_, CoreError>(())
         });
         let persisted = changed.and_then(|()| {
-            crate::config::persist::set_network_proxy(&self.config_path, &preferences)
+            let mut library = self
+                .library
+                .read()
+                .expect("proxy library lock poisoned")
+                .clone();
+            library.default_profile.clear();
+            crate::config::persist::set_proxy_library(&self.config_path, &preferences, &library)?;
+            *self.library.write().expect("proxy library lock poisoned") = library;
+            Ok(())
         });
         if let Err(e) = persisted {
             for (target, previous) in restore.into_iter().rev() {
@@ -301,7 +316,7 @@ impl NetworkProxy {
 
     fn publish(&self, preferences: &ProxyPreferences, environment: Option<ProxyEnvironment>) {
         let revision = self.state.load().revision + 1;
-        self.state.store(ProxySnapshot {
+        self.routes.publish_default(ProxySnapshot {
             environment,
             udp: preferences.udp,
             icmp: preferences.icmp,
@@ -310,8 +325,19 @@ impl NetworkProxy {
     }
 
     fn view(&self, preferences: ProxyPreferences) -> ProxySettingsView {
-        let has_password = credential_account(&preferences.policy)
-            .is_some_and(|account| matches!(self.credentials.get(&account), Ok(Some(_))));
+        let profile_id = self
+            .library
+            .read()
+            .expect("proxy library lock poisoned")
+            .default_profile
+            .clone();
+        let account = if profile_id.is_empty() {
+            credential_account(&preferences.policy)
+        } else {
+            Some(library::account(&profile_id))
+        };
+        let has_password =
+            account.is_some_and(|account| matches!(self.credentials.get(&account), Ok(Some(_))));
         let snapshot = self.state.load();
         ProxySettingsView {
             preferences,
@@ -319,6 +345,7 @@ impl NetworkProxy {
             effective: describe(snapshot.environment.as_ref()),
             credential_store: self.credentials.kind(),
             revision: snapshot.revision,
+            profile_id,
         }
     }
 

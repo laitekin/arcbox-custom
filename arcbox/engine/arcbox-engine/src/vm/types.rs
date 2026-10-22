@@ -83,6 +83,8 @@ pub struct HostNetwork {
     pub dns_hosts: Option<std::sync::Arc<arcbox_dns::LocalHostsTable>>,
     /// Shared live policy, including direct mode; installed even before a proxy is set.
     pub proxy: arcbox_fakeip::proxy_state::ProxyState,
+    /// Optional per-machine overrides, selected before the VM starts.
+    pub proxy_routes: Option<arcbox_fakeip::proxy_routes::ProxyRoutes>,
 }
 
 /// Shared directory configuration for `VirtioFS`.

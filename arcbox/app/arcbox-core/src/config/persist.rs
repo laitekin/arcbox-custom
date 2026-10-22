@@ -77,6 +77,23 @@ pub fn set_network_proxy(
     path: &Path,
     preferences: &crate::network_proxy::ProxyPreferences,
 ) -> Result<()> {
+    set_network_proxy_impl(path, preferences, None)
+}
+
+/// Atomically stores the default, saved proxies, and machine references.
+pub fn set_proxy_library(
+    path: &Path,
+    preferences: &crate::network_proxy::ProxyPreferences,
+    library: &crate::network_proxy::library::ProxyLibrary,
+) -> Result<()> {
+    set_network_proxy_impl(path, preferences, Some(library))
+}
+
+fn set_network_proxy_impl(
+    path: &Path,
+    preferences: &crate::network_proxy::ProxyPreferences,
+    library: Option<&crate::network_proxy::library::ProxyLibrary>,
+) -> Result<()> {
     use arcbox_fakeip::proxy_state::{IcmpPolicy, UdpPolicy};
 
     let udp = match preferences.udp {
@@ -100,6 +117,15 @@ pub fn set_network_proxy(
         set_value(network, "proxy_exclude", Value::Array(exclude));
         set_value(network, "udp", Value::from(udp));
         set_value(network, "icmp", Value::from(icmp));
+        if let Some(library) = library {
+            let serialized = toml::to_string(library).map_err(|e| {
+                CoreError::config(format!("could not serialize proxy library: {e}"))
+            })?;
+            network["proxy_library"] = serialized
+                .parse::<DocumentMut>()
+                .map_err(|e| CoreError::config(format!("could not format proxy library: {e}")))?
+                .into_item();
+        }
         Ok(())
     })
 }

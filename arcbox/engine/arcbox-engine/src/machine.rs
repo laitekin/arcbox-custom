@@ -821,7 +821,11 @@ impl MachineManager {
             .is_some();
 
         // Start underlying VM
-        self.vm_manager.start(&vm_id, self.host_network.clone())?;
+        let mut network = self.host_network.clone();
+        if let Some(routes) = &network.proxy_routes {
+            network.proxy = routes.for_machine(name);
+        }
+        self.vm_manager.start(&vm_id, network)?;
 
         // Update machine state
         let started_at = Utc::now();

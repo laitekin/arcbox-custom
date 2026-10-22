@@ -370,6 +370,7 @@ mod tests {
             effective: vec![],
             credential_store: "memory",
             revision: 3,
+            profile_id: String::new(),
         });
         assert_eq!(back.url, "socks5://alice@10.0.0.2:1080");
         assert_eq!(back.revision, 3);

@@ -298,11 +298,13 @@ impl Runtime {
             crate::network_proxy::credentials::default_store(config.profile, &config.data_dir),
             crate::config::writable_user_config_path(),
         ));
+        network_proxy.load_library(config.network.proxy_library.clone())?;
         // The daemon's own downloads follow the same live policy.
         arcbox_asset::http::install_proxy(network_proxy.state());
         let host_network = HostNetwork {
             dns_hosts: Some(network_manager.local_hosts_table()),
             proxy: network_proxy.state(),
+            proxy_routes: Some(network_proxy.routes()),
         };
 
         let machine_manager = Arc::new(MachineManager::new(

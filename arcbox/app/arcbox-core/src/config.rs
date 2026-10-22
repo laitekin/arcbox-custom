@@ -360,6 +360,8 @@ pub struct NetworkConfig {
     /// What happens to guest ICMP echo, which no proxy can carry: `direct`
     /// or `block`.
     pub icmp: IcmpPolicy,
+    /// Saved host-side proxies and per-machine choices. Never contains passwords.
+    pub proxy_library: crate::network_proxy::library::ProxyLibrary,
 }
 
 impl NetworkConfig {
@@ -385,6 +387,7 @@ impl Default for NetworkConfig {
             proxy_exclude: Vec::new(),
             udp: UdpPolicy::default(),
             icmp: IcmpPolicy::default(),
+            proxy_library: Default::default(),
         }
     }
 }
