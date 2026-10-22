@@ -173,3 +173,51 @@ fn failed_persistence_restores_credentials_and_the_running_policy() {
     assert_eq!(port(&proxy.routes().for_machine("first")), Some(1080));
     assert_eq!(proxy.saved_proxies().unwrap()[0].name, "A");
 }
+
+#[test]
+fn dns_toggle_keeps_credentials_but_changed_accounts_require_a_new_password() {
+    let dir = tempfile::tempdir().unwrap();
+    let proxy = controller(&dir, Arc::new(MemoryCredentialStore::default()));
+    let a = proxy
+        .save_proxy(
+            "",
+            "A",
+            preferences("socks5://u:p@127.0.0.1:1080"),
+            PasswordChange::Keep,
+        )
+        .unwrap();
+    assert!(
+        proxy
+            .save_proxy(
+                &a.id,
+                "Renamed",
+                preferences("socks5h://u@127.0.0.1:1080"),
+                PasswordChange::Keep
+            )
+            .unwrap()
+            .settings
+            .has_password
+    );
+    assert!(
+        proxy
+            .save_proxy(
+                &a.id,
+                "Changed account",
+                preferences("socks5h://other@127.0.0.1:1080"),
+                PasswordChange::Keep
+            )
+            .is_err()
+    );
+    assert!(proxy.set_machine_proxy("default", &a.id).is_err());
+    assert!(proxy.set_machine_proxy("first", "missing-id").is_err());
+    assert!(
+        proxy
+            .save_proxy(
+                "",
+                "RENAMED",
+                preferences("socks5://127.0.0.1:1080"),
+                PasswordChange::Keep
+            )
+            .is_err()
+    );
+}

@@ -2709,6 +2709,9 @@ public struct Arcbox_V1_EgressProxySettings: Sendable {
   /// Output only: bumps every time the applied settings change.
   public var revision: UInt64 = 0
 
+  /// Selected saved profile; empty for an inline/system/direct default.
+  public var profileID: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2779,12 +2782,160 @@ public struct Arcbox_V1_TestEgressProxyRequest: Sendable {
   /// Target `host:port` to tunnel to; empty means www.gstatic.com:443.
   public var target: String = String()
 
+  /// Saved profile whose credential to use when testing an edited draft.
+  public var profileID: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
   fileprivate var _settings: Arcbox_V1_EgressProxySettings? = nil
   fileprivate var _password: String? = nil
+}
+
+public struct Arcbox_V1_ProxyProfile: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var id: String = String()
+
+  public var name: String = String()
+
+  /// Never contains a password; profile_id is this profile's immutable ID.
+  public var settings: Arcbox_V1_EgressProxySettings {
+    get {_settings ?? Arcbox_V1_EgressProxySettings()}
+    set {_settings = newValue}
+  }
+  /// Returns true if `settings` has been explicitly set.
+  public var hasSettings: Bool {self._settings != nil}
+  /// Clears the value of `settings`. Subsequent reads from it will return its default value.
+  public mutating func clearSettings() {self._settings = nil}
+
+  public var machines: [String] = []
+
+  public var isDefault: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _settings: Arcbox_V1_EgressProxySettings? = nil
+}
+
+public struct Arcbox_V1_ProxyLibrary: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var profiles: [Arcbox_V1_ProxyProfile] = []
+
+  public var defaultProfileID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Arcbox_V1_SaveProxyProfileRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Empty creates a profile. Otherwise edits that immutable ID.
+  public var id: String = String()
+
+  public var name: String = String()
+
+  public var settings: Arcbox_V1_EgressProxySettings {
+    get {_settings ?? Arcbox_V1_EgressProxySettings()}
+    set {_settings = newValue}
+  }
+  /// Returns true if `settings` has been explicitly set.
+  public var hasSettings: Bool {self._settings != nil}
+  /// Clears the value of `settings`. Subsequent reads from it will return its default value.
+  public mutating func clearSettings() {self._settings = nil}
+
+  /// Write only; absent keeps the stored password, empty clears it.
+  public var password: String {
+    get {_password ?? String()}
+    set {_password = newValue}
+  }
+  /// Returns true if `password` has been explicitly set.
+  public var hasPassword: Bool {self._password != nil}
+  /// Clears the value of `password`. Subsequent reads from it will return its default value.
+  public mutating func clearPassword() {self._password = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _settings: Arcbox_V1_EgressProxySettings? = nil
+  fileprivate var _password: String? = nil
+}
+
+public struct Arcbox_V1_ProxyProfileRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var id: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Arcbox_V1_MachineProxyRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var machine: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Arcbox_V1_SetMachineProxyRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var machine: String = String()
+
+  /// Empty inherits the default; "direct" bypasses proxies; otherwise a profile ID.
+  public var choice: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Arcbox_V1_MachineProxyAssignment: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var machine: String = String()
+
+  public var choice: String = String()
+
+  public var effective: Arcbox_V1_EgressProxySettings {
+    get {_effective ?? Arcbox_V1_EgressProxySettings()}
+    set {_effective = newValue}
+  }
+  /// Returns true if `effective` has been explicitly set.
+  public var hasEffective: Bool {self._effective != nil}
+  /// Clears the value of `effective`. Subsequent reads from it will return its default value.
+  public mutating func clearEffective() {self._effective = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _effective: Arcbox_V1_EgressProxySettings? = nil
 }
 
 /// One finished step of a proxy test.
@@ -6280,7 +6431,7 @@ extension Arcbox_V1_StorageRecoveryProgress.Phase: SwiftProtobuf._ProtoNameProvi
 
 extension Arcbox_V1_EgressProxySettings: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".EgressProxySettings"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}mode\0\u{1}url\0\u{3}has_password\0\u{1}exclude\0\u{1}udp\0\u{1}icmp\0\u{1}effective\0\u{3}credential_store\0\u{1}revision\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}mode\0\u{1}url\0\u{3}has_password\0\u{1}exclude\0\u{1}udp\0\u{1}icmp\0\u{1}effective\0\u{3}credential_store\0\u{1}revision\0\u{3}profile_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -6297,6 +6448,7 @@ extension Arcbox_V1_EgressProxySettings: SwiftProtobuf.Message, SwiftProtobuf._M
       case 7: try { try decoder.decodeRepeatedStringField(value: &self.effective) }()
       case 8: try { try decoder.decodeSingularStringField(value: &self.credentialStore) }()
       case 9: try { try decoder.decodeSingularUInt64Field(value: &self.revision) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.profileID) }()
       default: break
       }
     }
@@ -6330,6 +6482,9 @@ extension Arcbox_V1_EgressProxySettings: SwiftProtobuf.Message, SwiftProtobuf._M
     if self.revision != 0 {
       try visitor.visitSingularUInt64Field(value: self.revision, fieldNumber: 9)
     }
+    if !self.profileID.isEmpty {
+      try visitor.visitSingularStringField(value: self.profileID, fieldNumber: 10)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -6343,6 +6498,7 @@ extension Arcbox_V1_EgressProxySettings: SwiftProtobuf.Message, SwiftProtobuf._M
     if lhs.effective != rhs.effective {return false}
     if lhs.credentialStore != rhs.credentialStore {return false}
     if lhs.revision != rhs.revision {return false}
+    if lhs.profileID != rhs.profileID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -6389,7 +6545,7 @@ extension Arcbox_V1_SetEgressProxyRequest: SwiftProtobuf.Message, SwiftProtobuf.
 
 extension Arcbox_V1_TestEgressProxyRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".TestEgressProxyRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}settings\0\u{1}password\0\u{1}target\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}settings\0\u{1}password\0\u{1}target\0\u{3}profile_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -6400,6 +6556,7 @@ extension Arcbox_V1_TestEgressProxyRequest: SwiftProtobuf.Message, SwiftProtobuf
       case 1: try { try decoder.decodeSingularMessageField(value: &self._settings) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self._password) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.target) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.profileID) }()
       default: break
       }
     }
@@ -6419,6 +6576,9 @@ extension Arcbox_V1_TestEgressProxyRequest: SwiftProtobuf.Message, SwiftProtobuf
     if !self.target.isEmpty {
       try visitor.visitSingularStringField(value: self.target, fieldNumber: 3)
     }
+    if !self.profileID.isEmpty {
+      try visitor.visitSingularStringField(value: self.profileID, fieldNumber: 4)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -6426,6 +6586,284 @@ extension Arcbox_V1_TestEgressProxyRequest: SwiftProtobuf.Message, SwiftProtobuf
     if lhs._settings != rhs._settings {return false}
     if lhs._password != rhs._password {return false}
     if lhs.target != rhs.target {return false}
+    if lhs.profileID != rhs.profileID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_ProxyProfile: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ProxyProfile"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}name\0\u{1}settings\0\u{1}machines\0\u{3}is_default\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._settings) }()
+      case 4: try { try decoder.decodeRepeatedStringField(value: &self.machines) }()
+      case 5: try { try decoder.decodeSingularBoolField(value: &self.isDefault) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.id.isEmpty {
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 2)
+    }
+    try { if let v = self._settings {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    } }()
+    if !self.machines.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.machines, fieldNumber: 4)
+    }
+    if self.isDefault != false {
+      try visitor.visitSingularBoolField(value: self.isDefault, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_ProxyProfile, rhs: Arcbox_V1_ProxyProfile) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.name != rhs.name {return false}
+    if lhs._settings != rhs._settings {return false}
+    if lhs.machines != rhs.machines {return false}
+    if lhs.isDefault != rhs.isDefault {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_ProxyLibrary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ProxyLibrary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}profiles\0\u{3}default_profile_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.profiles) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.defaultProfileID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.profiles.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.profiles, fieldNumber: 1)
+    }
+    if !self.defaultProfileID.isEmpty {
+      try visitor.visitSingularStringField(value: self.defaultProfileID, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_ProxyLibrary, rhs: Arcbox_V1_ProxyLibrary) -> Bool {
+    if lhs.profiles != rhs.profiles {return false}
+    if lhs.defaultProfileID != rhs.defaultProfileID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_SaveProxyProfileRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SaveProxyProfileRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}name\0\u{1}settings\0\u{1}password\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._settings) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self._password) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.id.isEmpty {
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 2)
+    }
+    try { if let v = self._settings {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    } }()
+    try { if let v = self._password {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 4)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_SaveProxyProfileRequest, rhs: Arcbox_V1_SaveProxyProfileRequest) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.name != rhs.name {return false}
+    if lhs._settings != rhs._settings {return false}
+    if lhs._password != rhs._password {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_ProxyProfileRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ProxyProfileRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.id.isEmpty {
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_ProxyProfileRequest, rhs: Arcbox_V1_ProxyProfileRequest) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_MachineProxyRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".MachineProxyRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}machine\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.machine) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.machine.isEmpty {
+      try visitor.visitSingularStringField(value: self.machine, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_MachineProxyRequest, rhs: Arcbox_V1_MachineProxyRequest) -> Bool {
+    if lhs.machine != rhs.machine {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_SetMachineProxyRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetMachineProxyRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}machine\0\u{1}choice\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.machine) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.choice) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.machine.isEmpty {
+      try visitor.visitSingularStringField(value: self.machine, fieldNumber: 1)
+    }
+    if !self.choice.isEmpty {
+      try visitor.visitSingularStringField(value: self.choice, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_SetMachineProxyRequest, rhs: Arcbox_V1_SetMachineProxyRequest) -> Bool {
+    if lhs.machine != rhs.machine {return false}
+    if lhs.choice != rhs.choice {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_MachineProxyAssignment: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".MachineProxyAssignment"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}machine\0\u{1}choice\0\u{1}effective\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.machine) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.choice) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._effective) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.machine.isEmpty {
+      try visitor.visitSingularStringField(value: self.machine, fieldNumber: 1)
+    }
+    if !self.choice.isEmpty {
+      try visitor.visitSingularStringField(value: self.choice, fieldNumber: 2)
+    }
+    try { if let v = self._effective {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_MachineProxyAssignment, rhs: Arcbox_V1_MachineProxyAssignment) -> Bool {
+    if lhs.machine != rhs.machine {return false}
+    if lhs.choice != rhs.choice {return false}
+    if lhs._effective != rhs._effective {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

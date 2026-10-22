@@ -133,6 +133,7 @@ pub async fn execute(cmd: NetworkCommands, format: OutputFormat) -> Result<()> {
             let client = client();
             let mut settings = get(&client).await?;
             settings.mode = pb::EgressProxyMode::EGRESS_PROXY_MODE_SYSTEM.into();
+            settings.profile_id.clear();
             settings.url.clear();
             let settings = client
                 .set_proxy(pb::SetEgressProxyRequest {
@@ -199,6 +200,7 @@ async fn set(args: SetArgs, format: OutputFormat) -> Result<()> {
     }
     let same_proxy = settings.mode.as_known() == Some(mode) && settings.url == url;
     settings.mode = mode.into();
+    settings.profile_id.clear();
     settings.url.clone_from(&url);
     if args.no_exclude {
         settings.exclude.clear();

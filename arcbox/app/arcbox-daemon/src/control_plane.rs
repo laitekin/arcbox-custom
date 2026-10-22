@@ -532,6 +532,11 @@ mod tests {
             "arcbox.v1.EgressProxyService/GetProxy",
             "arcbox.v1.EgressProxyService/SetProxy",
             "arcbox.v1.EgressProxyService/TestProxy",
+            "arcbox.v1.ProxyLibraryService/ListProfiles",
+            "arcbox.v1.ProxyLibraryService/SaveProfile",
+            "arcbox.v1.ProxyLibraryService/RemoveProfile",
+            "arcbox.v1.ProxyLibraryService/GetMachineProxy",
+            "arcbox.v1.ProxyLibraryService/SetMachineProxy",
             "arcbox.v1.MachineImageService/List",
             "arcbox.v1.MachineImageService/Import",
             // Post-migration additions live under the same guarantee: a

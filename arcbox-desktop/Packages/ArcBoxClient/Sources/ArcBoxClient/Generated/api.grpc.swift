@@ -6625,10 +6625,8 @@ extension Arcbox_V1_EgressProxyService {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > EgressProxyService manages where guest TCP and UDP egress is sent. A
-    /// > change is persisted to config.toml (and the password to the credential
-    /// > store) and applies to the next flow of every running VM; flows already
-    /// > open keep the proxy they started with.
+    /// > EgressProxyService manages guest TCP and UDP egress. Changes persist on
+    /// > the Mac and apply to new connections; existing connections keep their route.
     public protocol StreamingServiceProtocol: GRPCCore.RegistrableRPCService {
         /// Handle the "GetProxy" method.
         ///
@@ -6698,10 +6696,8 @@ extension Arcbox_V1_EgressProxyService {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > EgressProxyService manages where guest TCP and UDP egress is sent. A
-    /// > change is persisted to config.toml (and the password to the credential
-    /// > store) and applies to the next flow of every running VM; flows already
-    /// > open keep the proxy they started with.
+    /// > EgressProxyService manages guest TCP and UDP egress. Changes persist on
+    /// > the Mac and apply to new connections; existing connections keep their route.
     public protocol ServiceProtocol: Arcbox_V1_EgressProxyService.StreamingServiceProtocol {
         /// Handle the "GetProxy" method.
         ///
@@ -6769,10 +6765,8 @@ extension Arcbox_V1_EgressProxyService {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > EgressProxyService manages where guest TCP and UDP egress is sent. A
-    /// > change is persisted to config.toml (and the password to the credential
-    /// > store) and applies to the next flow of every running VM; flows already
-    /// > open keep the proxy they started with.
+    /// > EgressProxyService manages guest TCP and UDP egress. Changes persist on
+    /// > the Mac and apply to new connections; existing connections keep their route.
     public protocol SimpleServiceProtocol: Arcbox_V1_EgressProxyService.ServiceProtocol {
         /// Handle the "GetProxy" method.
         ///
@@ -6969,10 +6963,8 @@ extension Arcbox_V1_EgressProxyService {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > EgressProxyService manages where guest TCP and UDP egress is sent. A
-    /// > change is persisted to config.toml (and the password to the credential
-    /// > store) and applies to the next flow of every running VM; flows already
-    /// > open keep the proxy they started with.
+    /// > EgressProxyService manages guest TCP and UDP egress. Changes persist on
+    /// > the Mac and apply to new connections; existing connections keep their route.
     public protocol ClientProtocol: Sendable {
         /// Call the "GetProxy" method.
         ///
@@ -7055,10 +7047,8 @@ extension Arcbox_V1_EgressProxyService {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > EgressProxyService manages where guest TCP and UDP egress is sent. A
-    /// > change is persisted to config.toml (and the password to the credential
-    /// > store) and applies to the next flow of every running VM; flows already
-    /// > open keep the proxy they started with.
+    /// > EgressProxyService manages guest TCP and UDP egress. Changes persist on
+    /// > the Mac and apply to new connections; existing connections keep their route.
     public struct Client<Transport>: ClientProtocol where Transport: GRPCCore.ClientTransport {
         private let client: GRPCCore.GRPCClient<Transport>
 
@@ -7364,6 +7354,1096 @@ extension Arcbox_V1_EgressProxyService.ClientProtocol {
             metadata: metadata
         )
         return try await self.testProxy(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+}
+
+// MARK: - arcbox.v1.ProxyLibraryService
+
+/// Namespace containing generated types for the "arcbox.v1.ProxyLibraryService" service.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+public enum Arcbox_V1_ProxyLibraryService {
+    /// Service descriptor for the "arcbox.v1.ProxyLibraryService" service.
+    public static let descriptor = GRPCCore.ServiceDescriptor(fullyQualifiedService: "arcbox.v1.ProxyLibraryService")
+    /// Namespace for method metadata.
+    public enum Method {
+        /// Namespace for "ListProfiles" metadata.
+        public enum ListProfiles {
+            /// Request type for "ListProfiles".
+            public typealias Input = Arcbox_V1_Empty
+            /// Response type for "ListProfiles".
+            public typealias Output = Arcbox_V1_ProxyLibrary
+            /// Descriptor for "ListProfiles".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "arcbox.v1.ProxyLibraryService"),
+                method: "ListProfiles"
+            )
+        }
+        /// Namespace for "SaveProfile" metadata.
+        public enum SaveProfile {
+            /// Request type for "SaveProfile".
+            public typealias Input = Arcbox_V1_SaveProxyProfileRequest
+            /// Response type for "SaveProfile".
+            public typealias Output = Arcbox_V1_ProxyProfile
+            /// Descriptor for "SaveProfile".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "arcbox.v1.ProxyLibraryService"),
+                method: "SaveProfile"
+            )
+        }
+        /// Namespace for "RemoveProfile" metadata.
+        public enum RemoveProfile {
+            /// Request type for "RemoveProfile".
+            public typealias Input = Arcbox_V1_ProxyProfileRequest
+            /// Response type for "RemoveProfile".
+            public typealias Output = Arcbox_V1_Empty
+            /// Descriptor for "RemoveProfile".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "arcbox.v1.ProxyLibraryService"),
+                method: "RemoveProfile"
+            )
+        }
+        /// Namespace for "GetMachineProxy" metadata.
+        public enum GetMachineProxy {
+            /// Request type for "GetMachineProxy".
+            public typealias Input = Arcbox_V1_MachineProxyRequest
+            /// Response type for "GetMachineProxy".
+            public typealias Output = Arcbox_V1_MachineProxyAssignment
+            /// Descriptor for "GetMachineProxy".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "arcbox.v1.ProxyLibraryService"),
+                method: "GetMachineProxy"
+            )
+        }
+        /// Namespace for "SetMachineProxy" metadata.
+        public enum SetMachineProxy {
+            /// Request type for "SetMachineProxy".
+            public typealias Input = Arcbox_V1_SetMachineProxyRequest
+            /// Response type for "SetMachineProxy".
+            public typealias Output = Arcbox_V1_MachineProxyAssignment
+            /// Descriptor for "SetMachineProxy".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "arcbox.v1.ProxyLibraryService"),
+                method: "SetMachineProxy"
+            )
+        }
+        /// Descriptors for all methods in the "arcbox.v1.ProxyLibraryService" service.
+        public static let descriptors: [GRPCCore.MethodDescriptor] = [
+            ListProfiles.descriptor,
+            SaveProfile.descriptor,
+            RemoveProfile.descriptor,
+            GetMachineProxy.descriptor,
+            SetMachineProxy.descriptor
+        ]
+    }
+}
+
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension GRPCCore.ServiceDescriptor {
+    /// Service descriptor for the "arcbox.v1.ProxyLibraryService" service.
+    public static let arcbox_v1_ProxyLibraryService = GRPCCore.ServiceDescriptor(fullyQualifiedService: "arcbox.v1.ProxyLibraryService")
+}
+
+// MARK: arcbox.v1.ProxyLibraryService (server)
+
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_ProxyLibraryService {
+    /// Streaming variant of the service protocol for the "arcbox.v1.ProxyLibraryService" service.
+    ///
+    /// This protocol is the lowest-level of the service protocols generated for this service
+    /// giving you the most flexibility over the implementation of your service. This comes at
+    /// the cost of more verbose and less strict APIs. Each RPC requires you to implement it in
+    /// terms of a request stream and response stream. Where only a single request or response
+    /// message is expected, you are responsible for enforcing this invariant is maintained.
+    ///
+    /// Where possible, prefer using the stricter, less-verbose ``ServiceProtocol``
+    /// or ``SimpleServiceProtocol`` instead.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Saved SOCKS5 profiles and per-Linux-machine outbound choices.
+    public protocol StreamingServiceProtocol: GRPCCore.RegistrableRPCService {
+        /// Handle the "ListProfiles" method.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Arcbox_V1_Empty` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Arcbox_V1_ProxyLibrary` messages.
+        func listProfiles(
+            request: GRPCCore.StreamingServerRequest<Arcbox_V1_Empty>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_ProxyLibrary>
+
+        /// Handle the "SaveProfile" method.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Arcbox_V1_SaveProxyProfileRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Arcbox_V1_ProxyProfile` messages.
+        func saveProfile(
+            request: GRPCCore.StreamingServerRequest<Arcbox_V1_SaveProxyProfileRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_ProxyProfile>
+
+        /// Handle the "RemoveProfile" method.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Arcbox_V1_ProxyProfileRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Arcbox_V1_Empty` messages.
+        func removeProfile(
+            request: GRPCCore.StreamingServerRequest<Arcbox_V1_ProxyProfileRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_Empty>
+
+        /// Handle the "GetMachineProxy" method.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Arcbox_V1_MachineProxyRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Arcbox_V1_MachineProxyAssignment` messages.
+        func getMachineProxy(
+            request: GRPCCore.StreamingServerRequest<Arcbox_V1_MachineProxyRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_MachineProxyAssignment>
+
+        /// Handle the "SetMachineProxy" method.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Arcbox_V1_SetMachineProxyRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Arcbox_V1_MachineProxyAssignment` messages.
+        func setMachineProxy(
+            request: GRPCCore.StreamingServerRequest<Arcbox_V1_SetMachineProxyRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_MachineProxyAssignment>
+    }
+
+    /// Service protocol for the "arcbox.v1.ProxyLibraryService" service.
+    ///
+    /// This protocol is higher level than ``StreamingServiceProtocol`` but lower level than
+    /// the ``SimpleServiceProtocol``, it provides access to request and response metadata and
+    /// trailing response metadata. If you don't need these then consider using
+    /// the ``SimpleServiceProtocol``. If you need fine grained control over your RPCs then
+    /// use ``StreamingServiceProtocol``.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Saved SOCKS5 profiles and per-Linux-machine outbound choices.
+    public protocol ServiceProtocol: Arcbox_V1_ProxyLibraryService.StreamingServiceProtocol {
+        /// Handle the "ListProfiles" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_Empty` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Arcbox_V1_ProxyLibrary` message.
+        func listProfiles(
+            request: GRPCCore.ServerRequest<Arcbox_V1_Empty>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_ProxyLibrary>
+
+        /// Handle the "SaveProfile" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_SaveProxyProfileRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Arcbox_V1_ProxyProfile` message.
+        func saveProfile(
+            request: GRPCCore.ServerRequest<Arcbox_V1_SaveProxyProfileRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_ProxyProfile>
+
+        /// Handle the "RemoveProfile" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_ProxyProfileRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Arcbox_V1_Empty` message.
+        func removeProfile(
+            request: GRPCCore.ServerRequest<Arcbox_V1_ProxyProfileRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_Empty>
+
+        /// Handle the "GetMachineProxy" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_MachineProxyRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Arcbox_V1_MachineProxyAssignment` message.
+        func getMachineProxy(
+            request: GRPCCore.ServerRequest<Arcbox_V1_MachineProxyRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_MachineProxyAssignment>
+
+        /// Handle the "SetMachineProxy" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_SetMachineProxyRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Arcbox_V1_MachineProxyAssignment` message.
+        func setMachineProxy(
+            request: GRPCCore.ServerRequest<Arcbox_V1_SetMachineProxyRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_MachineProxyAssignment>
+    }
+
+    /// Simple service protocol for the "arcbox.v1.ProxyLibraryService" service.
+    ///
+    /// This is the highest level protocol for the service. The API is the easiest to use but
+    /// doesn't provide access to request or response metadata. If you need access to these
+    /// then use ``ServiceProtocol`` instead.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Saved SOCKS5 profiles and per-Linux-machine outbound choices.
+    public protocol SimpleServiceProtocol: Arcbox_V1_ProxyLibraryService.ServiceProtocol {
+        /// Handle the "ListProfiles" method.
+        ///
+        /// - Parameters:
+        ///   - request: A `Arcbox_V1_Empty` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Arcbox_V1_ProxyLibrary` to respond with.
+        func listProfiles(
+            request: Arcbox_V1_Empty,
+            context: GRPCCore.ServerContext
+        ) async throws -> Arcbox_V1_ProxyLibrary
+
+        /// Handle the "SaveProfile" method.
+        ///
+        /// - Parameters:
+        ///   - request: A `Arcbox_V1_SaveProxyProfileRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Arcbox_V1_ProxyProfile` to respond with.
+        func saveProfile(
+            request: Arcbox_V1_SaveProxyProfileRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Arcbox_V1_ProxyProfile
+
+        /// Handle the "RemoveProfile" method.
+        ///
+        /// - Parameters:
+        ///   - request: A `Arcbox_V1_ProxyProfileRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Arcbox_V1_Empty` to respond with.
+        func removeProfile(
+            request: Arcbox_V1_ProxyProfileRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Arcbox_V1_Empty
+
+        /// Handle the "GetMachineProxy" method.
+        ///
+        /// - Parameters:
+        ///   - request: A `Arcbox_V1_MachineProxyRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Arcbox_V1_MachineProxyAssignment` to respond with.
+        func getMachineProxy(
+            request: Arcbox_V1_MachineProxyRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Arcbox_V1_MachineProxyAssignment
+
+        /// Handle the "SetMachineProxy" method.
+        ///
+        /// - Parameters:
+        ///   - request: A `Arcbox_V1_SetMachineProxyRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Arcbox_V1_MachineProxyAssignment` to respond with.
+        func setMachineProxy(
+            request: Arcbox_V1_SetMachineProxyRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Arcbox_V1_MachineProxyAssignment
+    }
+}
+
+// Default implementation of 'registerMethods(with:)'.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_ProxyLibraryService.StreamingServiceProtocol {
+    public func registerMethods<Transport>(with router: inout GRPCCore.RPCRouter<Transport>) where Transport: GRPCCore.ServerTransport {
+        router.registerHandler(
+            forMethod: Arcbox_V1_ProxyLibraryService.Method.ListProfiles.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_Empty>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_ProxyLibrary>(),
+            handler: { request, context in
+                try await self.listProfiles(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Arcbox_V1_ProxyLibraryService.Method.SaveProfile.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_SaveProxyProfileRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_ProxyProfile>(),
+            handler: { request, context in
+                try await self.saveProfile(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Arcbox_V1_ProxyLibraryService.Method.RemoveProfile.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_ProxyProfileRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_Empty>(),
+            handler: { request, context in
+                try await self.removeProfile(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Arcbox_V1_ProxyLibraryService.Method.GetMachineProxy.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_MachineProxyRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_MachineProxyAssignment>(),
+            handler: { request, context in
+                try await self.getMachineProxy(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Arcbox_V1_ProxyLibraryService.Method.SetMachineProxy.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_SetMachineProxyRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_MachineProxyAssignment>(),
+            handler: { request, context in
+                try await self.setMachineProxy(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+    }
+}
+
+// Default implementation of streaming methods from 'StreamingServiceProtocol'.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_ProxyLibraryService.ServiceProtocol {
+    public func listProfiles(
+        request: GRPCCore.StreamingServerRequest<Arcbox_V1_Empty>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_ProxyLibrary> {
+        let response = try await self.listProfiles(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func saveProfile(
+        request: GRPCCore.StreamingServerRequest<Arcbox_V1_SaveProxyProfileRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_ProxyProfile> {
+        let response = try await self.saveProfile(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func removeProfile(
+        request: GRPCCore.StreamingServerRequest<Arcbox_V1_ProxyProfileRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_Empty> {
+        let response = try await self.removeProfile(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func getMachineProxy(
+        request: GRPCCore.StreamingServerRequest<Arcbox_V1_MachineProxyRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_MachineProxyAssignment> {
+        let response = try await self.getMachineProxy(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func setMachineProxy(
+        request: GRPCCore.StreamingServerRequest<Arcbox_V1_SetMachineProxyRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_MachineProxyAssignment> {
+        let response = try await self.setMachineProxy(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+}
+
+// Default implementation of methods from 'ServiceProtocol'.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_ProxyLibraryService.SimpleServiceProtocol {
+    public func listProfiles(
+        request: GRPCCore.ServerRequest<Arcbox_V1_Empty>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_ProxyLibrary> {
+        return GRPCCore.ServerResponse<Arcbox_V1_ProxyLibrary>(
+            message: try await self.listProfiles(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func saveProfile(
+        request: GRPCCore.ServerRequest<Arcbox_V1_SaveProxyProfileRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_ProxyProfile> {
+        return GRPCCore.ServerResponse<Arcbox_V1_ProxyProfile>(
+            message: try await self.saveProfile(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func removeProfile(
+        request: GRPCCore.ServerRequest<Arcbox_V1_ProxyProfileRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_Empty> {
+        return GRPCCore.ServerResponse<Arcbox_V1_Empty>(
+            message: try await self.removeProfile(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func getMachineProxy(
+        request: GRPCCore.ServerRequest<Arcbox_V1_MachineProxyRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_MachineProxyAssignment> {
+        return GRPCCore.ServerResponse<Arcbox_V1_MachineProxyAssignment>(
+            message: try await self.getMachineProxy(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func setMachineProxy(
+        request: GRPCCore.ServerRequest<Arcbox_V1_SetMachineProxyRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_MachineProxyAssignment> {
+        return GRPCCore.ServerResponse<Arcbox_V1_MachineProxyAssignment>(
+            message: try await self.setMachineProxy(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+}
+
+// MARK: arcbox.v1.ProxyLibraryService (client)
+
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_ProxyLibraryService {
+    /// Generated client protocol for the "arcbox.v1.ProxyLibraryService" service.
+    ///
+    /// You don't need to implement this protocol directly, use the generated
+    /// implementation, ``Client``.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Saved SOCKS5 profiles and per-Linux-machine outbound choices.
+    public protocol ClientProtocol: Sendable {
+        /// Call the "ListProfiles" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_Empty` message.
+        ///   - serializer: A serializer for `Arcbox_V1_Empty` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_ProxyLibrary` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func listProfiles<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_Empty>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_Empty>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_ProxyLibrary>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_ProxyLibrary>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "SaveProfile" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_SaveProxyProfileRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_SaveProxyProfileRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_ProxyProfile` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func saveProfile<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_SaveProxyProfileRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_SaveProxyProfileRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_ProxyProfile>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_ProxyProfile>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "RemoveProfile" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_ProxyProfileRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_ProxyProfileRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_Empty` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func removeProfile<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_ProxyProfileRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_ProxyProfileRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_Empty>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_Empty>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "GetMachineProxy" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_MachineProxyRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_MachineProxyRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_MachineProxyAssignment` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func getMachineProxy<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_MachineProxyRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_MachineProxyRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_MachineProxyAssignment>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_MachineProxyAssignment>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "SetMachineProxy" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_SetMachineProxyRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_SetMachineProxyRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_MachineProxyAssignment` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func setMachineProxy<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_SetMachineProxyRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_SetMachineProxyRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_MachineProxyAssignment>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_MachineProxyAssignment>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+    }
+
+    /// Generated client for the "arcbox.v1.ProxyLibraryService" service.
+    ///
+    /// The ``Client`` provides an implementation of ``ClientProtocol`` which wraps
+    /// a `GRPCCore.GRPCCClient`. The underlying `GRPCClient` provides the long-lived
+    /// means of communication with the remote peer.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Saved SOCKS5 profiles and per-Linux-machine outbound choices.
+    public struct Client<Transport>: ClientProtocol where Transport: GRPCCore.ClientTransport {
+        private let client: GRPCCore.GRPCClient<Transport>
+
+        /// Creates a new client wrapping the provided `GRPCCore.GRPCClient`.
+        ///
+        /// - Parameters:
+        ///   - client: A `GRPCCore.GRPCClient` providing a communication channel to the service.
+        public init(wrapping client: GRPCCore.GRPCClient<Transport>) {
+            self.client = client
+        }
+
+        /// Call the "ListProfiles" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_Empty` message.
+        ///   - serializer: A serializer for `Arcbox_V1_Empty` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_ProxyLibrary` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func listProfiles<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_Empty>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_Empty>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_ProxyLibrary>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_ProxyLibrary>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Arcbox_V1_ProxyLibraryService.Method.ListProfiles.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "SaveProfile" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_SaveProxyProfileRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_SaveProxyProfileRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_ProxyProfile` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func saveProfile<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_SaveProxyProfileRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_SaveProxyProfileRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_ProxyProfile>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_ProxyProfile>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Arcbox_V1_ProxyLibraryService.Method.SaveProfile.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "RemoveProfile" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_ProxyProfileRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_ProxyProfileRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_Empty` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func removeProfile<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_ProxyProfileRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_ProxyProfileRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_Empty>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_Empty>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Arcbox_V1_ProxyLibraryService.Method.RemoveProfile.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "GetMachineProxy" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_MachineProxyRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_MachineProxyRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_MachineProxyAssignment` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func getMachineProxy<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_MachineProxyRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_MachineProxyRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_MachineProxyAssignment>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_MachineProxyAssignment>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Arcbox_V1_ProxyLibraryService.Method.GetMachineProxy.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "SetMachineProxy" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_SetMachineProxyRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_SetMachineProxyRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_MachineProxyAssignment` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func setMachineProxy<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_SetMachineProxyRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_SetMachineProxyRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_MachineProxyAssignment>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_MachineProxyAssignment>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Arcbox_V1_ProxyLibraryService.Method.SetMachineProxy.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+    }
+}
+
+// Helpers providing default arguments to 'ClientProtocol' methods.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_ProxyLibraryService.ClientProtocol {
+    /// Call the "ListProfiles" method.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Arcbox_V1_Empty` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func listProfiles<Result>(
+        request: GRPCCore.ClientRequest<Arcbox_V1_Empty>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_ProxyLibrary>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.listProfiles(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_Empty>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_ProxyLibrary>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SaveProfile" method.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Arcbox_V1_SaveProxyProfileRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func saveProfile<Result>(
+        request: GRPCCore.ClientRequest<Arcbox_V1_SaveProxyProfileRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_ProxyProfile>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.saveProfile(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_SaveProxyProfileRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_ProxyProfile>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "RemoveProfile" method.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Arcbox_V1_ProxyProfileRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func removeProfile<Result>(
+        request: GRPCCore.ClientRequest<Arcbox_V1_ProxyProfileRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_Empty>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.removeProfile(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_ProxyProfileRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_Empty>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "GetMachineProxy" method.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Arcbox_V1_MachineProxyRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func getMachineProxy<Result>(
+        request: GRPCCore.ClientRequest<Arcbox_V1_MachineProxyRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_MachineProxyAssignment>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.getMachineProxy(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_MachineProxyRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_MachineProxyAssignment>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SetMachineProxy" method.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Arcbox_V1_SetMachineProxyRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func setMachineProxy<Result>(
+        request: GRPCCore.ClientRequest<Arcbox_V1_SetMachineProxyRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_MachineProxyAssignment>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.setMachineProxy(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_SetMachineProxyRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_MachineProxyAssignment>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+}
+
+// Helpers providing sugared APIs for 'ClientProtocol' methods.
+@available(macOS 15.0, iOS 18.0, watchOS 11.0, tvOS 18.0, visionOS 2.0, *)
+extension Arcbox_V1_ProxyLibraryService.ClientProtocol {
+    /// Call the "ListProfiles" method.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func listProfiles<Result>(
+        _ message: Arcbox_V1_Empty,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_ProxyLibrary>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Arcbox_V1_Empty>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.listProfiles(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SaveProfile" method.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func saveProfile<Result>(
+        _ message: Arcbox_V1_SaveProxyProfileRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_ProxyProfile>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Arcbox_V1_SaveProxyProfileRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.saveProfile(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "RemoveProfile" method.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func removeProfile<Result>(
+        _ message: Arcbox_V1_ProxyProfileRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_Empty>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Arcbox_V1_ProxyProfileRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.removeProfile(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "GetMachineProxy" method.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func getMachineProxy<Result>(
+        _ message: Arcbox_V1_MachineProxyRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_MachineProxyAssignment>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Arcbox_V1_MachineProxyRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.getMachineProxy(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SetMachineProxy" method.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func setMachineProxy<Result>(
+        _ message: Arcbox_V1_SetMachineProxyRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_MachineProxyAssignment>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Arcbox_V1_SetMachineProxyRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.setMachineProxy(
             request: request,
             options: options,
             onResponse: handleResponse

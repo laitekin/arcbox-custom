@@ -71,13 +71,23 @@ impl pb::EgressProxyService for EgressProxyServiceImpl {
             .settings
             .as_option()
             .ok_or_else(|| ConnectError::invalid_argument("settings are required"))?;
+        let controller = self.controller()?;
+        if !settings.profile_id.is_empty() {
+            let id = settings.profile_id.clone();
+            let view = blocking(move || {
+                controller
+                    .select_default_proxy(&id)
+                    .map_err(|e| ConnectError::invalid_argument(e.to_string()))
+            })
+            .await?;
+            return Response::ok(settings_to_proto(view));
+        }
         let preferences = preferences_from_proto(settings)?;
         let password = match req.password {
             None => PasswordChange::Keep,
             Some(password) if password.is_empty() => PasswordChange::Clear,
             Some(password) => PasswordChange::Set(Zeroizing::new(password)),
         };
-        let controller = self.controller()?;
         let view = blocking(move || {
             controller
                 .apply(preferences, password)
@@ -100,6 +110,7 @@ impl pb::EgressProxyService for EgressProxyServiceImpl {
             .map(preferences_from_proto)
             .transpose()?;
         let password = req.password.map(Zeroizing::new);
+        let profile_id = req.profile_id;
         let controller = self.controller()?;
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
@@ -107,9 +118,13 @@ impl pb::EgressProxyService for EgressProxyServiceImpl {
             let environment = match draft {
                 None => Ok(controller.state().load().environment.clone()),
                 Some(draft) => tokio::task::spawn_blocking(move || {
-                    controller
-                        .resolve_draft(&draft, password.as_deref().map(String::as_str))
-                        .map_err(|e| e.to_string())
+                    let password = password.as_deref().map(String::as_str);
+                    (if profile_id.is_empty() {
+                        controller.resolve_draft(&draft, password)
+                    } else {
+                        controller.resolve_profile_draft(&profile_id, &draft, password)
+                    })
+                    .map_err(|e| e.to_string())
                 })
                 .await
                 .unwrap_or_else(|e| Err(format!("proxy test task failed: {e}"))),
@@ -170,7 +185,7 @@ fn parse_target(target: &str) -> Result<(String, u16), ConnectError> {
     Ok((host.to_string(), port))
 }
 
-fn preferences_from_proto(
+pub(super) fn preferences_from_proto(
     settings: &pb::EgressProxySettings,
 ) -> Result<ProxyPreferences, ConnectError> {
     let policy = match settings.mode.as_known() {
@@ -210,7 +225,7 @@ fn preferences_from_proto(
     })
 }
 
-fn settings_to_proto(view: ProxySettingsView) -> pb::EgressProxySettings {
+pub(super) fn settings_to_proto(view: ProxySettingsView) -> pb::EgressProxySettings {
     let preferences = view.preferences;
     let (mode, url) = match &preferences.policy {
         ProxyPolicy::System => (pb::EgressProxyMode::EGRESS_PROXY_MODE_SYSTEM, String::new()),
@@ -240,6 +255,7 @@ fn settings_to_proto(view: ProxySettingsView) -> pb::EgressProxySettings {
         effective: view.effective,
         credential_store: view.credential_store.to_string(),
         revision: view.revision,
+        profile_id: view.profile_id,
         ..Default::default()
     }
 }

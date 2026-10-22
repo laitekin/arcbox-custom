@@ -1178,10 +1178,8 @@ message StorageRecoveryProgress {
 // Egress Proxy Service
 // =============================================================================
 
-// EgressProxyService manages where guest TCP and UDP egress is sent. A
-// change is persisted to config.toml (and the password to the credential
-// store) and applies to the next flow of every running VM; flows already
-// open keep the proxy they started with.
+// EgressProxyService manages guest TCP and UDP egress. Changes persist on
+// the Mac and apply to new connections; existing connections keep their route.
 service EgressProxyService {
     // Gets the current settings. Never returns a password.
     rpc GetProxy(Empty) returns (EgressProxySettings);
@@ -1253,6 +1251,8 @@ message EgressProxySettings {
     string credential_store = 8;
     // Output only: bumps every time the applied settings change.
     uint64 revision = 9;
+    // Selected saved profile; empty for an inline/system/direct default.
+    string profile_id = 10;
 }
 
 // Request to change the egress proxy settings.
@@ -1273,6 +1273,53 @@ message TestEgressProxyRequest {
     optional string password = 2;
     // Target `host:port` to tunnel to; empty means www.gstatic.com:443.
     string target = 3;
+    // Saved profile whose credential to use when testing an edited draft.
+    string profile_id = 4;
+}
+
+// Saved SOCKS5 profiles and per-Linux-machine outbound choices.
+service ProxyLibraryService {
+    rpc ListProfiles(Empty) returns (ProxyLibrary);
+    rpc SaveProfile(SaveProxyProfileRequest) returns (ProxyProfile);
+    rpc RemoveProfile(ProxyProfileRequest) returns (Empty);
+    rpc GetMachineProxy(MachineProxyRequest) returns (MachineProxyAssignment);
+    rpc SetMachineProxy(SetMachineProxyRequest) returns (MachineProxyAssignment);
+}
+
+message ProxyProfile {
+    string id = 1;
+    string name = 2;
+    // Never contains a password; profile_id is this profile's immutable ID.
+    EgressProxySettings settings = 3;
+    repeated string machines = 4;
+    bool is_default = 5;
+}
+
+message ProxyLibrary {
+    repeated ProxyProfile profiles = 1;
+    string default_profile_id = 2;
+}
+
+message SaveProxyProfileRequest {
+    // Empty creates a profile. Otherwise edits that immutable ID.
+    string id = 1;
+    string name = 2;
+    EgressProxySettings settings = 3;
+    // Write only; absent keeps the stored password, empty clears it.
+    optional string password = 4;
+}
+
+message ProxyProfileRequest { string id = 1; }
+message MachineProxyRequest { string machine = 1; }
+message SetMachineProxyRequest {
+    string machine = 1;
+    // Empty inherits the default; "direct" bypasses proxies; otherwise a profile ID.
+    string choice = 2;
+}
+message MachineProxyAssignment {
+    string machine = 1;
+    string choice = 2;
+    EgressProxySettings effective = 3;
 }
 
 // A stage of the proxy test.

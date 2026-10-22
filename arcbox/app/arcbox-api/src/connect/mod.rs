@@ -33,6 +33,7 @@ mod machine_image;
 mod macos;
 mod migration;
 mod process;
+mod proxy_library;
 mod sandbox_errors;
 mod sandbox_resume;
 mod snapshot;
@@ -268,7 +269,9 @@ pub fn router(runtime: SharedRuntime) -> connectrpc::Router {
 #[must_use]
 pub fn router_with_system(runtime: SharedRuntime, system: SystemServiceImpl) -> connectrpc::Router {
     let egress_proxy = EgressProxyServiceImpl::new(system.early_runtime());
+    let library = proxy_library::ProxyLibraryServiceImpl::new(system.early_runtime());
     router(runtime)
+        .add_service(Arc::new(library))
         .add_service(Arc::new(egress_proxy))
         .add_service(Arc::new(system))
 }

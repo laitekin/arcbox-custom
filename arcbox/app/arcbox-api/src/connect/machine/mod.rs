@@ -223,10 +223,23 @@ impl pb::MachineService for MachineServiceImpl {
         // A forced removal stops a running machine first: a synchronous VM
         // call, preceded by a wait for the host to release the machine's
         // root mount. Keep both off the async workers.
+        let removed_name = req.id.clone();
         tokio::task::spawn_blocking(move || manager.remove(&req.id, req.force))
             .await
             .map_err(|e| ConnectError::internal(format!("remove task panicked: {e}")))?
             .map_err(ApiError::from)?;
+
+        let controller = std::sync::Arc::clone(runtime.network_proxy());
+        if controller
+            .proxy_library()
+            .machines
+            .contains_key(&removed_name)
+        {
+            tokio::task::spawn_blocking(move || controller.set_machine_proxy(&removed_name, ""))
+                .await
+                .map_err(|e| ConnectError::internal(format!("proxy cleanup task failed: {e}")))?
+                .map_err(ApiError::from)?;
+        }
 
         Response::ok(pb::Empty::default())
     }
