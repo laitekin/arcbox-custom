@@ -1,6 +1,6 @@
 # 隔离机器方案设计
 
-状态：已确认采用**严格隔离**；P1 已实现（见 §10），P2–P5 待做　　日期：2026-10-22
+状态：已确认采用**严格隔离**；P1–P5 已实现（见 §10），待在 Mac 上验收　　日期：2026-10-22
 
 ## 1. 目标
 
@@ -198,3 +198,47 @@ P1 到 P2 可以在 Linux 上开发和做单元测试；P3 及所有实机验收
 - SSH agent 转发在 ArcBox 中只对 System VM 里的 Docker 容器生效，不会进入机器，所以 §5.2 中这一项不需要改。
 - 「必须使用已保存的代理」目前只在界面上强制，daemon 端的强制属于 P2。
 - 需要在 Mac 上验收：隔离机器能正常启动；机器里执行 `mount -t virtiofs users /mnt` 失败；agent 日志写进 `machines/<name>/guest-share`。
+
+### P2：网络策略（已完成）
+
+| 部分 | 实现 |
+|---|---|
+| 策略核心 | `arcbox-fakeip::isolation::allows_destination`：拒绝网关（即 Mac 本机）、`0/8`、环回地址、私有网段、`100.64/10`、链路本地地址、组播和 `240/4`；允许公网地址和 Fake-IP 网段 `198.18/15`（由代理按域名解析）。`ProxySnapshot.isolated` 由 `ProxyRoutes::set_isolated` 按机器设置，之后无论默认代理还是机器自己的代理怎么变，这个标记都保留 |
+| TCP | `splicetcp::DefaultEgress`：隔离机器忽略绕过列表，必须走代理；没有可用代理，或目标被拒绝时，立即返回空连接（向机器回 RST） |
+| UDP / ICMP | `arcbox-proxy`：UDP 只能经 SOCKS5 UDP 转发，策略是 Direct 或 Block、只有 HTTP 代理、目标被拒绝时一律丢弃；ICMP 全部丢弃 |
+| DNS | `arcbox-net`：隔离机器的查询一律经 SOCKS5 隧道发往 1.1.1.1 或 8.8.8.8（不管远程 DNS 开关和绕过列表）；没有 SOCKS5 时不返回结果；跳过本地名字解析 |
+| IPv6 | 数据通路本来就整体丢弃 IPv6（已有测试覆盖） |
+| 接线 | 引擎启动机器时调用 `machine_network`：有逐机器路由时标记隔离；没有逐机器路由时，也给隔离机器单独一份带标记的策略，绝不共用默认策略 |
+| 规则 | `SetMachineProxy` 拒绝把隔离机器设成「直连」或「跟随默认」；`SetIsolation(true)` 要求机器已经指定了已保存的代理；CLI 新增 `abctl machine proxy <机器> [default|direct|<代理名或 ID>]`，`create` 新增 `--proxy` |
+
+### P3：严格网络（已完成）
+
+- `VmmConfig.isolated_network`：隔离机器**不挂桥接网卡**（VZ 和 HV 两种后端都改了）。ArcBox 自己的网络栈启动失败时，**机器直接启动失败**，不再退回 Apple NAT。
+- 端口转发：机器记录里保存 `port_forwards`；`SetPortForwards` 修改后对运行中的机器立即生效；机器启动时绑定，停止和删除时释放，复用 Docker 端口发布用的入站中继，只监听 `127.0.0.1`。CLI 是 `abctl machine forward <机器> <机器端口> [--host-port N] [--udp] [--remove]`。
+- 守护进程：Mac 端的 NFS 挂载显式排除隔离机器（隔离机器没有桥接地址，本来也挂不上）。
+
+### P4：身份（已完成）
+
+- 隔离机器在创建或开启隔离时，生成一个**带真实厂商前缀的 MAC**（Intel 或 Realtek 的 OUI）和一个新的 `machine-id`；克隆出来的机器会重新生成这两项，不复制源机器的转发端口。
+- 时区和语言：`CreateMachineRequest.timezone/locale`、`SetIdentity`（只能在停止状态下修改）。引擎把 `arcbox.machine_id=`、`arcbox.timezone=`、`arcbox.locale=` 写进内核启动参数；guest agent 每次启动时写入 `/etc/machine-id`（`/var/lib/dbus/machine-id` 是普通文件时也一并写），把 `/etc/localtime` 链接到对应时区（镜像里没有这个时区就保留原样），并写 `/etc/timezone`、`/etc/locale.conf`、`/etc/default/locale`。CLI 是 `abctl machine identity <机器> [--timezone] [--locale]`，以及创建时的 `--timezone/--locale`。
+- 名字校验：拒绝含 `..`、空格、`=` 等字符的时区或语言名，防止路径穿越和篡改启动参数。
+
+### P5：桌面与验证（已完成）
+
+- Info 页的「Isolation」区：清单显示文件、网络、代理和身份都已覆盖；可以设置时区和语言（停机时）并显示网卡地址；机器运行时可点「Run Check」，在机器里实际尝试挂载 Mac 目录、数第二张网卡、连接 Mac 和局域网、ping、查看出口 IP 以及网卡地址，逐项显示通过或失败。
+- 新增「Forwarded ports」区：添加或删除转发、一键「Add VNC (5901)」、对 VNC 端口提供「Open VNC」按钮（打开 `vnc://localhost:端口`）。
+- e2e：`tests/e2e/tests/machine_isolation.rs`（需在 Mac 上运行，默认 ignored）实测上面每一项，并验证转发端口能连上机器里的 HTTP 服务。
+
+### 验证情况
+
+- Linux 上：引擎、API、CLI、agent、fakeip、splicetcp、arcbox-net、arcbox-proxy 的单元测试全部通过。以下失败与本次改动无关，未改动时同样失败：arcbox-proxy 的 ICMP 回显测试（云环境发不出 ping）；arcbox-core 的 `host_mount`、`storage_recovery::preserve` 两项（macOS 的挂载表格式、`clonefile`）。
+- macOS 代码：在 Linux 上用 `--target aarch64-apple-darwin` 对 arcbox-net、arcbox-vmm（含 `vmnet` 特性）、arcbox-engine、arcbox-api、arcbox-core 做了类型检查（C/Swift 构建脚本用空库替代，只检查不链接）。arcbox-daemon 依赖 `libproc` 的绑定生成，在 Linux 上做不了这项检查。
+- Swift：逻辑代码在 Linux 上用临时包编译测试通过；SwiftUI 视图未编译。
+- 自检脚本已在 Linux 上实际运行，语法和输出格式都正确。
+
+### 需要在 Mac 上验收
+
+1. `make run` 编译运行；新建隔离机器、指定代理、启动，点「Run Check」应全部通过（出口 IP 应是代理的地址）。
+2. 运行 e2e：`cargo test -p arcbox-e2e --test machine_isolation -- --ignored`。
+3. 机器镜像里的 agent 来自启动资源（boot assets）。身份信息（machine-id、时区、语言）要等使用本仓库重新构建的 agent 才会生效；网络和文件隔离都在 Mac 端执行，不依赖 agent。
+4. VNC：机器里的 VNC 服务必须监听所有网卡（TigerVNC 加 `-localhost no`），再在「Forwarded ports」里添加 5901。
