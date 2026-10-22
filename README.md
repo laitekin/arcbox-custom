@@ -35,6 +35,7 @@
 | F4 镜像库、导入（归档 / squashfs / Docker，含自动安装 init）、`create --image`、导出携带镜像 | 已实现并测试；磁盘镜像（qcow2 等）明确拒绝 |
 | e2e：代理覆盖（容器/UDP/pull/机器/Pod）、镜像导入全流程 | 已编写，需在 Mac e2e 环境运行 |
 | R6 网关 DNS | 自定义 SOCKS5 可开启远程 DNS（`socks5h`），认证失败不回退直连；[行为与验证](arcbox/docs/logs/2026-10-22-orbstack-socks-dns.md) |
+| 机器详情页：资源编辑与剪贴板 | 主窗口「机器 › Info」可改 CPU/内存上限（重启生效，带「立即重启」）、显示客体内存占用与负载；Mac 与机器 X 桌面（VNC 等）之间收发剪贴板文本（需 xclip 或 xsel）。剪贴板脚本已在 Xvfb 上验证，界面未在 Mac 上运行 |
 
 逐项清单见 [`TODO-PRD.md`](TODO-PRD.md)。
 

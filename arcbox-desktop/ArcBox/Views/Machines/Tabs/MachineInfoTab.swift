@@ -30,12 +30,9 @@ struct MachineInfoTab: View {
                     }
                 }
 
-                // Resources section
-                section("Resources") {
-                    InfoRow(label: "CPU", value: "\(machine.cpuCores) cores")
-                    InfoRow(label: "Memory", value: "\(machine.memoryGB) GB")
-                    InfoRow(label: "Disk", value: "\(machine.diskGB) GB")
-                }
+                MachineResourcesSection(machine: machine)
+
+                MachineClipboardSection(machine: machine)
 
                 // Network section (Inspect-only fields)
                 if !machine.gateway.isEmpty || !machine.macAddress.isEmpty

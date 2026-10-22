@@ -139,6 +139,40 @@ extension MachinesViewModel {
         }
     }
 
+    /// Saves a machine's CPU and memory limits. Returns the daemon's answer,
+    /// or `nil` after surfacing the error in `lastError`.
+    func setMachineResources(
+        _ id: String,
+        draft: MachineResourceDraft,
+        client: ArcBoxClient?
+    ) async -> Arcbox_V1_SetMachineResourcesResponse? {
+        guard let client else {
+            lastError = "ArcBox daemon is unavailable."
+            return nil
+        }
+        do {
+            let response = try await client.machines.setResources(
+                draft.request(machine: id),
+                options: ArcBoxClient.defaultCallOptions
+            )
+            if response.restartRequired {
+                resourceRestartPending.insert(id)
+            }
+            await loadMachines(client: client)
+            return response
+        } catch {
+            reportError(error, operation: "set resources")
+            return nil
+        }
+    }
+
+    /// Stops and starts a machine so it boots with its saved limits.
+    func restartMachine(_ id: String, client: ArcBoxClient?) async {
+        await stopMachine(id, client: client)
+        guard lastError == nil else { return }
+        await startMachine(id, client: client)
+    }
+
     func startMachine(_ id: String, client: ArcBoxClient?) async {
         lastError = nil
         guard let client else { return }
@@ -155,6 +189,9 @@ extension MachinesViewModel {
             if !ArcBoxClient.rpcMessage(error, contains: "already running") {
                 reportError(error, operation: "start")
             }
+        }
+        if lastError == nil {
+            resourceRestartPending.remove(id)
         }
         setTransitioning(id, false)
         await loadMachines(client: client)
@@ -176,6 +213,9 @@ extension MachinesViewModel {
             if !ArcBoxClient.rpcMessage(error, contains: "not running") {
                 reportError(error, operation: "stop")
             }
+        }
+        if lastError == nil {
+            resourceRestartPending.remove(id)
         }
         setTransitioning(id, false)
         await loadMachines(client: client)

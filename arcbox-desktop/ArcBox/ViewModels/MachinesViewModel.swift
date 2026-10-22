@@ -25,6 +25,9 @@ class MachinesViewModel {
     var lastSuccessfulListLoad: ContinuousClock.Instant?
     let listLoadGate = SingleFlightLoadGate()
     var showCreateSheet: Bool = false
+    /// Machines whose saved CPU or memory limits apply only at their next
+    /// start. Cleared when the machine stops or starts.
+    var resourceRestartPending: Set<String> = []
 
     /// User-visible error from the last failed operation.
     var lastError: String?
