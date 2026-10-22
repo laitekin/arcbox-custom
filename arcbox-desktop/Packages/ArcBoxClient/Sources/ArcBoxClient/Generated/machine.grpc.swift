@@ -125,6 +125,18 @@ public enum Arcbox_V1_MachineService {
                 method: "SetResources"
             )
         }
+        /// Namespace for "SetIsolation" metadata.
+        public enum SetIsolation {
+            /// Request type for "SetIsolation".
+            public typealias Input = Arcbox_V1_SetMachineIsolationRequest
+            /// Response type for "SetIsolation".
+            public typealias Output = Arcbox_V1_Empty
+            /// Descriptor for "SetIsolation".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "arcbox.v1.MachineService"),
+                method: "SetIsolation"
+            )
+        }
         /// Namespace for "SetDefault" metadata.
         public enum SetDefault {
             /// Request type for "SetDefault".
@@ -255,6 +267,7 @@ public enum Arcbox_V1_MachineService {
             Export.descriptor,
             Import.descriptor,
             SetResources.descriptor,
+            SetIsolation.descriptor,
             SetDefault.descriptor,
             List.descriptor,
             Inspect.descriptor,
@@ -477,6 +490,27 @@ extension Arcbox_V1_MachineService {
             request: GRPCCore.StreamingServerRequest<Arcbox_V1_SetMachineResourcesRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_SetMachineResourcesResponse>
+
+        /// Handle the "SetIsolation" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Isolates a stopped machine from the Mac, or lifts its isolation (see
+        /// > CreateMachineRequest.isolated). It applies at the machine's next start;
+        /// > a running machine is refused, so it never keeps shares its record
+        /// > says it does not have.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Arcbox_V1_SetMachineIsolationRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Arcbox_V1_Empty` messages.
+        func setIsolation(
+            request: GRPCCore.StreamingServerRequest<Arcbox_V1_SetMachineIsolationRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_Empty>
 
         /// Handle the "SetDefault" method.
         ///
@@ -867,6 +901,27 @@ extension Arcbox_V1_MachineService {
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_SetMachineResourcesResponse>
 
+        /// Handle the "SetIsolation" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Isolates a stopped machine from the Mac, or lifts its isolation (see
+        /// > CreateMachineRequest.isolated). It applies at the machine's next start;
+        /// > a running machine is refused, so it never keeps shares its record
+        /// > says it does not have.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_SetMachineIsolationRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Arcbox_V1_Empty` message.
+        func setIsolation(
+            request: GRPCCore.ServerRequest<Arcbox_V1_SetMachineIsolationRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_Empty>
+
         /// Handle the "SetDefault" method.
         ///
         /// > Source IDL Documentation:
@@ -1254,6 +1309,27 @@ extension Arcbox_V1_MachineService {
             context: GRPCCore.ServerContext
         ) async throws -> Arcbox_V1_SetMachineResourcesResponse
 
+        /// Handle the "SetIsolation" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Isolates a stopped machine from the Mac, or lifts its isolation (see
+        /// > CreateMachineRequest.isolated). It applies at the machine's next start;
+        /// > a running machine is refused, so it never keeps shares its record
+        /// > says it does not have.
+        ///
+        /// - Parameters:
+        ///   - request: A `Arcbox_V1_SetMachineIsolationRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Arcbox_V1_Empty` to respond with.
+        func setIsolation(
+            request: Arcbox_V1_SetMachineIsolationRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Arcbox_V1_Empty
+
         /// Handle the "SetDefault" method.
         ///
         /// > Source IDL Documentation:
@@ -1544,6 +1620,17 @@ extension Arcbox_V1_MachineService.StreamingServiceProtocol {
             }
         )
         router.registerHandler(
+            forMethod: Arcbox_V1_MachineService.Method.SetIsolation.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_SetMachineIsolationRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_Empty>(),
+            handler: { request, context in
+                try await self.setIsolation(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
             forMethod: Arcbox_V1_MachineService.Method.SetDefault.descriptor,
             deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_SetDefaultMachineRequest>(),
             serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_Empty>(),
@@ -1741,6 +1828,17 @@ extension Arcbox_V1_MachineService.ServiceProtocol {
         context: GRPCCore.ServerContext
     ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_SetMachineResourcesResponse> {
         let response = try await self.setResources(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func setIsolation(
+        request: GRPCCore.StreamingServerRequest<Arcbox_V1_SetMachineIsolationRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Arcbox_V1_Empty> {
+        let response = try await self.setIsolation(
             request: GRPCCore.ServerRequest(stream: request),
             context: context
         )
@@ -1947,6 +2045,19 @@ extension Arcbox_V1_MachineService.SimpleServiceProtocol {
     ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_SetMachineResourcesResponse> {
         return GRPCCore.ServerResponse<Arcbox_V1_SetMachineResourcesResponse>(
             message: try await self.setResources(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func setIsolation(
+        request: GRPCCore.ServerRequest<Arcbox_V1_SetMachineIsolationRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Arcbox_V1_Empty> {
+        return GRPCCore.ServerResponse<Arcbox_V1_Empty>(
+            message: try await self.setIsolation(
                 request: request.message,
                 context: context
             ),
@@ -2332,6 +2443,32 @@ extension Arcbox_V1_MachineService {
             deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_SetMachineResourcesResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_SetMachineResourcesResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "SetIsolation" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Isolates a stopped machine from the Mac, or lifts its isolation (see
+        /// > CreateMachineRequest.isolated). It applies at the machine's next start;
+        /// > a running machine is refused, so it never keeps shares its record
+        /// > says it does not have.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_SetMachineIsolationRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_SetMachineIsolationRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_Empty` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func setIsolation<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_SetMachineIsolationRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_SetMachineIsolationRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_Empty>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_Empty>) async throws -> Result
         ) async throws -> Result where Result: Sendable
 
         /// Call the "SetDefault" method.
@@ -2902,6 +3039,43 @@ extension Arcbox_V1_MachineService {
             try await self.client.unary(
                 request: request,
                 descriptor: Arcbox_V1_MachineService.Method.SetResources.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "SetIsolation" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Isolates a stopped machine from the Mac, or lifts its isolation (see
+        /// > CreateMachineRequest.isolated). It applies at the machine's next start;
+        /// > a running machine is refused, so it never keeps shares its record
+        /// > says it does not have.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Arcbox_V1_SetMachineIsolationRequest` message.
+        ///   - serializer: A serializer for `Arcbox_V1_SetMachineIsolationRequest` messages.
+        ///   - deserializer: A deserializer for `Arcbox_V1_Empty` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func setIsolation<Result>(
+            request: GRPCCore.ClientRequest<Arcbox_V1_SetMachineIsolationRequest>,
+            serializer: some GRPCCore.MessageSerializer<Arcbox_V1_SetMachineIsolationRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Arcbox_V1_Empty>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_Empty>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Arcbox_V1_MachineService.Method.SetIsolation.descriptor,
                 serializer: serializer,
                 deserializer: deserializer,
                 options: options,
@@ -3531,6 +3705,38 @@ extension Arcbox_V1_MachineService.ClientProtocol {
         )
     }
 
+    /// Call the "SetIsolation" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Isolates a stopped machine from the Mac, or lifts its isolation (see
+    /// > CreateMachineRequest.isolated). It applies at the machine's next start;
+    /// > a running machine is refused, so it never keeps shares its record
+    /// > says it does not have.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Arcbox_V1_SetMachineIsolationRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func setIsolation<Result>(
+        request: GRPCCore.ClientRequest<Arcbox_V1_SetMachineIsolationRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_Empty>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.setIsolation(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Arcbox_V1_SetMachineIsolationRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Arcbox_V1_Empty>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
     /// Call the "SetDefault" method.
     ///
     /// > Source IDL Documentation:
@@ -4128,6 +4334,42 @@ extension Arcbox_V1_MachineService.ClientProtocol {
             metadata: metadata
         )
         return try await self.setResources(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SetIsolation" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Isolates a stopped machine from the Mac, or lifts its isolation (see
+    /// > CreateMachineRequest.isolated). It applies at the machine's next start;
+    /// > a running machine is refused, so it never keeps shares its record
+    /// > says it does not have.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func setIsolation<Result>(
+        _ message: Arcbox_V1_SetMachineIsolationRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Arcbox_V1_Empty>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Arcbox_V1_SetMachineIsolationRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.setIsolation(
             request: request,
             options: options,
             onResponse: handleResponse

@@ -64,6 +64,8 @@ struct MachineViewModel: Identifiable, Hashable {
     var architecture: String
     var ipAddress: String?
     var createdAt: Date
+    /// Isolated from the Mac: no share of its files (see `SetIsolation`).
+    var isolated: Bool
 
     // Detail fields populated by Inspect (empty until loaded).
     var gateway: String = ""
@@ -100,6 +102,7 @@ struct MachineViewModel: Identifiable, Hashable {
         self.architecture = ""
         self.ipAddress = summary.ipAddress.isEmpty ? nil : summary.ipAddress
         self.createdAt = Date(timeIntervalSince1970: TimeInterval(summary.created))
+        self.isolated = summary.isolated
     }
 
     /// Merge Inspect-only fields into a summary-built view model.
@@ -109,6 +112,7 @@ struct MachineViewModel: Identifiable, Hashable {
         macAddress = info.network.macAddress
         dnsServers = info.network.dnsServers
         mounts = info.mounts.map(MachineMountViewModel.init(from:))
+        isolated = info.isolated
         if info.hasStartedAt, info.startedAt.seconds > 0 {
             startedAt = Date(timeIntervalSince1970: TimeInterval(info.startedAt.seconds))
         }

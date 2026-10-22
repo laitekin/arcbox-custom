@@ -5,6 +5,7 @@ import SwiftUI
 /// switch for new connections without a restart.
 struct MachineProxySection: View {
     let machine: String
+    var isolated = false
     @Environment(\.arcboxClient) private var client
     @Environment(AppViewModel.self) private var appVM
     @State private var library = ProxyLibraryModel()
@@ -41,7 +42,7 @@ struct MachineProxySection: View {
         let choice = library.machineChoices[machine] ?? ""
         let isSaving = library.savingMachines.contains(machine)
         HStack(spacing: 10) {
-            MachineProxyPicker(choice: choice, profiles: library.profiles) { next in
+            MachineProxyPicker(choice: choice, profiles: library.profiles, isolated: isolated) { next in
                 Task {
                     clearTest()
                     await library.setMachine(machine, choice: next, client: client)

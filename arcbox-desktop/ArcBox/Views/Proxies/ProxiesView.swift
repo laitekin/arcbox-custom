@@ -293,9 +293,10 @@ struct ProxiesView: View {
     private func machineRow(_ machine: MachineViewModel) -> some View {
         let choice = library.machineChoices[machine.id]
         return HStack(spacing: 10) {
-            Image(systemName: "desktopcomputer")
+            Image(systemName: machine.isolated ? "lock.shield" : "desktopcomputer")
                 .foregroundStyle(machine.isRunning ? .green : .secondary)
-                .accessibilityLabel(machine.isRunning ? "Running" : "Stopped")
+                .accessibilityLabel(
+                    (machine.isRunning ? "Running" : "Stopped") + (machine.isolated ? ", isolated" : ""))
             VStack(alignment: .leading, spacing: 2) {
                 Text(machine.name)
                 if let effective = library.machineEffective[machine.id] {
@@ -315,6 +316,7 @@ struct ProxiesView: View {
                 MachineProxyPicker(
                     choice: choice,
                     profiles: library.profiles,
+                    isolated: machine.isolated,
                     onChange: { next in Task { await library.setMachine(machine.id, choice: next, client: client) } }
                 )
                 .disabled(library.savingMachines.contains(machine.id))
@@ -342,10 +344,12 @@ struct ProxiesView: View {
 }
 
 /// A machine's proxy menu: follow the default, direct, or a saved proxy.
-/// Picking applies at once.
+/// An isolated machine is offered saved proxies only. Picking applies at
+/// once.
 struct MachineProxyPicker: View {
     let choice: String
     let profiles: [SavedProxyProfile]
+    var isolated = false
     let onChange: (String) -> Void
 
     var body: some View {
@@ -356,8 +360,18 @@ struct MachineProxyPicker: View {
                 set: { if $0 != choice { onChange($0) } }
             )
         ) {
-            Text("Follow default").tag("")
-            Text("Direct").tag(ProxyChoice.direct)
+            if isolated {
+                // Kept only while it is the current choice, so the menu shows
+                // it; picking a saved proxy replaces it for good.
+                if choice.isEmpty {
+                    Text("Follow default — choose a saved proxy").tag("")
+                } else if choice == ProxyChoice.direct {
+                    Text("Direct — choose a saved proxy").tag(ProxyChoice.direct)
+                }
+            } else {
+                Text("Follow default").tag("")
+                Text("Direct").tag(ProxyChoice.direct)
+            }
             if !profiles.isEmpty {
                 Divider()
                 ForEach(profiles) { Text($0.menuLabel).tag($0.id) }

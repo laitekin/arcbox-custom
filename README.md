@@ -37,6 +37,7 @@
 | R6 网关 DNS | 自定义 SOCKS5 可开启远程 DNS（`socks5h`），认证失败不回退直连；[行为与验证](arcbox/docs/logs/2026-10-22-orbstack-socks-dns.md) |
 | 机器详情页：资源编辑与剪贴板 | 主窗口「机器 › Info」可改 CPU/内存上限（重启生效，带「立即重启」）、显示客体内存占用与负载；Mac 与机器 X 桌面（VNC 等）之间收发剪贴板文本（需 xclip 或 xsel）。剪贴板脚本已在 Xvfb 上验证，界面未在 Mac 上运行 |
 | 主窗口「代理」页 | 侧边栏 System › Proxies：默认代理一键切换、已保存代理（测试结果摘要、设为默认、编辑/复制/删除）、各机器代理分配，选择即生效；机器 Info 页代理选择即生效并可测试；导入时粘贴 URL 自动填充。逻辑在 Linux 上测试，界面未在 Mac 上运行 |
+| 隔离机器 P1：文件隔离 | 新建时可选「隔离」，或停机后用 `abctl machine isolate` 切换：不共享 Mac 的 `/Users`、`/private` 和 ArcBox 数据目录；界面上强制只能用已保存的代理。网络隔离在后续阶段完成；[方案](arcbox/docs/plans/2026-10-22-isolated-machines.md)。Linux 上测试通过，未在 Mac 上运行 |
 
 逐项清单见 [`TODO-PRD.md`](TODO-PRD.md)。
 

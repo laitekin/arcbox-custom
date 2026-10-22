@@ -30,6 +30,8 @@ struct MachineInfoTab: View {
                     }
                 }
 
+                MachineIsolationSection(machine: machine)
+
                 MachineResourcesSection(machine: machine)
 
                 MachineClipboardSection(machine: machine)
@@ -52,7 +54,7 @@ struct MachineInfoTab: View {
                 }
 
                 // Shared folders
-                MachineProxySection(machine: machine.id)
+                MachineProxySection(machine: machine.id, isolated: machine.isolated)
 
                 if !machine.mounts.isEmpty {
                     section("Shared Folders") {

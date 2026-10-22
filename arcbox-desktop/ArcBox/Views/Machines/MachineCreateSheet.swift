@@ -20,6 +20,7 @@ struct MachineCreateSheet: View {
     @State private var selectedImage = ""
     @State private var savedProxies: [SavedProxyProfile] = []
     @State private var proxyChoice = ""
+    @State private var isolated = false
 
     enum ImageSource: String, CaseIterable, Identifiable {
         case distribution = "Distribution"
@@ -42,7 +43,11 @@ struct MachineCreateSheet: View {
             case .distribution: !selectedRelease.isEmpty
             case .local: !selectedImage.isEmpty
             }
-        return client != nil && !isCreating && !trimmedName.isEmpty && imageChosen
+        return client != nil && !isCreating && !trimmedName.isEmpty && imageChosen && isolationBlocker == nil
+    }
+
+    private var isolationBlocker: String? {
+        MachineIsolation.createBlocker(isolated: isolated, proxyChoice: proxyChoice, profiles: savedProxies)
     }
 
     private var trimmedName: String {
@@ -118,13 +123,33 @@ struct MachineCreateSheet: View {
                     Stepper("Disk: \(diskGiB) GB", value: $diskGiB, in: 10...500, step: 10)
                 }
 
+                Section("Isolation") {
+                    Toggle("Isolate from my Mac", isOn: $isolated)
+                    Text(
+                        isolated
+                            ? "The machine gets no access to your Mac's files and must use a saved proxy."
+                            : "The machine can read and write your Mac's /Users and /private."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+
                 Section("Network") {
                     Picker("Outbound proxy", selection: $proxyChoice) {
-                        Text("Follow default").tag("")
-                        Text("Direct").tag("direct")
+                        if !isolated {
+                            Text("Follow default").tag("")
+                            Text("Direct").tag("direct")
+                        } else if proxyChoice.isEmpty {
+                            Text("Choose a saved proxy").tag("")
+                        }
                         ForEach(savedProxies) { Text($0.menuLabel).tag($0.id) }
                     }
-                    Text("Saved proxies are managed in Settings → Network.").font(.caption).foregroundStyle(.secondary)
+                    if let isolationBlocker {
+                        Text(isolationBlocker).font(.caption).foregroundStyle(.orange)
+                    } else {
+                        Text("Saved proxies are managed on the Proxies page.").font(.caption).foregroundStyle(
+                            .secondary)
+                    }
                 }
 
                 if let errorMessage {
@@ -158,7 +183,7 @@ struct MachineCreateSheet: View {
             }
             .padding(16)
         }
-        .frame(width: 440, height: 460)
+        .frame(width: 440, height: 540)
         .interactiveDismissDisabled(isCreating)
         .task {
             distros = await MachineImageCatalog.fetch(client: client)
@@ -179,6 +204,11 @@ struct MachineCreateSheet: View {
         }
         .onChange(of: selectedDistro) {
             normalizeSelection()
+        }
+        .onChange(of: isolated) { _, isolated in
+            if isolated {
+                proxyChoice = MachineIsolation.proxyChoice(afterIsolating: proxyChoice, profiles: savedProxies)
+            }
         }
     }
 
@@ -202,6 +232,7 @@ struct MachineCreateSheet: View {
         spec.memoryGiB = UInt64(memoryGiB)
         spec.diskGiB = UInt64(diskGiB)
         spec.proxyChoice = proxyChoice
+        spec.isolated = isolated
         if source == .local {
             spec.distro = ""
             spec.version = ""

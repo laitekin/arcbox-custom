@@ -14,6 +14,8 @@ struct MachineCreateSpec {
     var image = ""
     /// Empty inherits the default; `direct`, or a saved proxy ID.
     var proxyChoice = ""
+    /// Isolate the machine from the Mac's files.
+    var isolated = false
 }
 
 extension MachinesViewModel {
@@ -108,6 +110,7 @@ extension MachinesViewModel {
         request.memory = spec.memoryGiB << 30
         request.diskSize = spec.diskGiB << 30
         request.image = spec.image
+        request.isolated = spec.isolated
         do {
             // Create pulls the distro image from the CDN on first use.
             let response = try await client.machines.create(
@@ -163,6 +166,28 @@ extension MachinesViewModel {
         } catch {
             reportError(error, operation: "set resources")
             return nil
+        }
+    }
+
+    /// Isolates a stopped machine from the Mac's files, or lifts it; the
+    /// change applies at its next start. Returns whether it was saved.
+    @discardableResult
+    func setMachineIsolation(_ id: String, isolated: Bool, client: ArcBoxClient?) async -> Bool {
+        guard let client else {
+            lastError = "ArcBox daemon is unavailable."
+            return false
+        }
+        var request = Arcbox_V1_SetMachineIsolationRequest()
+        request.id = id
+        request.isolated = isolated
+        do {
+            _ = try await client.machines.setIsolation(request, options: ArcBoxClient.defaultCallOptions)
+            updateMachine(id) { $0.isolated = isolated }
+            await loadMachines(client: client)
+            return true
+        } catch {
+            reportError(error, operation: "set isolation")
+            return false
         }
     }
 

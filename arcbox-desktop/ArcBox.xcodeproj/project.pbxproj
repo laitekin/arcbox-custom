@@ -11,6 +11,7 @@
 		03AB091DAB7FD7F059C90480 /* ImagesListViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13FD9C27ABD090B7DBA435AA /* ImagesListViewController.swift */; };
 		05EFDA7AAB590520BC711D4C /* OnboardingMigrationPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F0BF05531582B5E276A5E2 /* OnboardingMigrationPage.swift */; };
 		0720D45362971FA9338BAA53 /* SwiftTermView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEA74DBE71D29DEB680F08E7 /* SwiftTermView.swift */; };
+		0792A4BF8D348B3BE9A0E45D /* MachineIsolationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C359EC148A985659E620BC4 /* MachineIsolationTests.swift */; };
 		07A382D149C73C697CAA1601 /* SandboxRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE564AAFEC0EF6D094409728 /* SandboxRowView.swift */; };
 		08DDBA6E0000548FEF44EB7B /* StatsFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47B33A34931421365A5BCAE6 /* StatsFormat.swift */; };
 		0999A1C28C17EFD150E56CF8 /* MachinesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ECCF18CC36CC3579EE2B5B9 /* MachinesView.swift */; };
@@ -157,6 +158,7 @@
 		71FE37D46B4D2D51BEEA35D9 /* ImagesViewModel+Docker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2022AA30CA121A0876D0B9D5 /* ImagesViewModel+Docker.swift */; };
 		725EE1E8C4BABAF5AB3B9D20 /* AppPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6086EE41E95B43852A8D5D92 /* AppPreferences.swift */; };
 		72CCF0BC7FEAEB988595757C /* NewNetworkSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF7C1F10630FCFA65B832FA9 /* NewNetworkSheet.swift */; };
+		7328D17A9EB88E06C3D3B3FE /* MachineIsolationSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B998625B8B9066929B29703 /* MachineIsolationSection.swift */; };
 		7329C817F923872FC238D8B3 /* ContainersViewModel+BatchOperations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 545D230723A80CB5C011B57E /* ContainersViewModel+BatchOperations.swift */; };
 		73E1E5FC3E40AD0760A21AC0 /* PodModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A37BB3605830EBE3A1625452 /* PodModel.swift */; };
 		73E4A9C464FC582871449D04 /* ProxyLibraryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A63DB0149250F3384472AD /* ProxyLibraryTests.swift */; };
@@ -272,6 +274,7 @@
 		C8181916F2EBD889B0C8046B /* MachineTerminalSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8632512053E9C750CAA97F9 /* MachineTerminalSession.swift */; };
 		C8C56406446AE0906E11100C /* InfoTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ED1683EF0A3490B8B7B5CF6 /* InfoTableView.swift */; };
 		C94515858BC220B73B93EC5D /* ArcBoxClientErrorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DC5F65FECB2F80BA3AF1D84 /* ArcBoxClientErrorTests.swift */; };
+		C95CD2C3FF6A41E5F69A72B3 /* MachineIsolation.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDFF9DEDDE61D745246A9DBD /* MachineIsolation.swift */; };
 		C9850114DD3E3F1B3C22E09D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 68009FEC4A2F0EB046ACCA4C /* Assets.xcassets */; };
 		C9DE020C046663275EC9767F /* ContainerLogsFilterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4146DF71A57F8A1ED79D8947 /* ContainerLogsFilterTests.swift */; };
 		CA1E5B5C6F01C55FC45ACD08 /* LoadPhaseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 427404757AD7EE566CCB96DE /* LoadPhaseTests.swift */; };
@@ -397,6 +400,7 @@
 		1AA95AC5D50913E004A15328 /* MachineImagesModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MachineImagesModel.swift; sourceTree = "<group>"; };
 		1B18FDEC4B5AE8513C98D7B4 /* SandboxDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SandboxDetailView.swift; sourceTree = "<group>"; };
 		1B80964B0A136E03F5FDA0FE /* SandboxesViewModel+PortsFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SandboxesViewModel+PortsFiles.swift"; sourceTree = "<group>"; };
+		1C359EC148A985659E620BC4 /* MachineIsolationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MachineIsolationTests.swift; sourceTree = "<group>"; };
 		1C649765AA76CFCBFC3302DA /* DeepLinkRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLinkRouter.swift; sourceTree = "<group>"; };
 		1CAB2F9B3B914ED84A8FC80F /* ProxyChoiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyChoiceTests.swift; sourceTree = "<group>"; };
 		1CB46AB0A8DB6C47F74A9D3C /* OffscreenHostScrollingSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OffscreenHostScrollingSupport.swift; sourceTree = "<group>"; };
@@ -501,6 +505,7 @@
 		699A57392F1D9366CFA78BAF /* VolumesViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VolumesViewModel.swift; sourceTree = "<group>"; };
 		6AC42E91F0BCACABF173B87F /* DockerTerminalSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockerTerminalSession.swift; sourceTree = "<group>"; };
 		6ADF9F8FFB694C45042664E8 /* DeepLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLink.swift; sourceTree = "<group>"; };
+		6B998625B8B9066929B29703 /* MachineIsolationSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MachineIsolationSection.swift; sourceTree = "<group>"; };
 		6BA3F59E109F9836BD7D35B9 /* NetworkSettingsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkSettingsModel.swift; sourceTree = "<group>"; };
 		6BAA25DBCDC3E69B079695A9 /* Local.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Local.xcconfig; sourceTree = "<group>"; };
 		6DFE1C88F20E40C1A36A384C /* CreateOperationErrorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateOperationErrorTests.swift; sourceTree = "<group>"; };
@@ -689,6 +694,7 @@
 		FB364896F740E811FBE1B04D /* ContainerLogsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContainerLogsTab.swift; sourceTree = "<group>"; };
 		FD3F7340F01FCBD83DD39C0B /* StorageNotificationRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageNotificationRules.swift; sourceTree = "<group>"; };
 		FDE313F40E79E409C942B1EE /* AboutWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutWindow.swift; sourceTree = "<group>"; };
+		FDFF9DEDDE61D745246A9DBD /* MachineIsolation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MachineIsolation.swift; sourceTree = "<group>"; };
 		FE8CBE9D4BAB5AB3D4413F80 /* ArcBoxUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ArcBoxUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FEA9D33B25DF9BB204D4B637 /* DaemonNotificationRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonNotificationRules.swift; sourceTree = "<group>"; };
 		FF809FDC72658A4C1838D856 /* K8sExecCredentialTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = K8sExecCredentialTests.swift; sourceTree = "<group>"; };
@@ -806,6 +812,7 @@
 				BD8BD8A4B6EEE9722D54739D /* ImageModel.swift */,
 				5A4AA61258823B0E929F4520 /* LoadPhase.swift */,
 				84AD3358CCBFD1DD7C5A56C5 /* MachineClipboard.swift */,
+				FDFF9DEDDE61D745246A9DBD /* MachineIsolation.swift */,
 				8AD5CF45B00B80D85A778AB4 /* MachineModel.swift */,
 				4DA5E0AC4738ECB0F9060CCF /* MachineResources.swift */,
 				E8632512053E9C750CAA97F9 /* MachineTerminalSession.swift */,
@@ -1186,6 +1193,7 @@
 				B9C7ADBBD83C5F92EEBAAD88 /* MachineDetailView.swift */,
 				81FCCED6F39D73E946107243 /* MachineEmptyStateView.swift */,
 				A6194659790AA4DDEC6A809E /* MachineImagesSheet.swift */,
+				6B998625B8B9066929B29703 /* MachineIsolationSection.swift */,
 				2AD49042434F448BEFBD1A6B /* MachineProxySection.swift */,
 				AFDDE3938FB52A5787E21BA5 /* MachineResourcesSection.swift */,
 				8357344FFAC2AB6F56EE95EC /* MachinesListViewController.swift */,
@@ -1391,6 +1399,7 @@
 				C9F4E99670A28483DBAA6CC8 /* LayerStackTests.swift */,
 				427404757AD7EE566CCB96DE /* LoadPhaseTests.swift */,
 				100F8312160AEA1F62F0DB61 /* LogPrivacyLintRuleTests.swift */,
+				1C359EC148A985659E620BC4 /* MachineIsolationTests.swift */,
 				F0647CCB67160C2509345B5E /* MachineModelTests.swift */,
 				9E0FB89D56D66AED4B8AD04E /* MachineResourcesTests.swift */,
 				769B6260DD087F5B16E7407D /* MachinesListViewControllerTests.swift */,
@@ -1748,6 +1757,8 @@
 				2934CD8460AF709D5E693CDA /* MachineImagesModel.swift in Sources */,
 				584976F648CF214A1B2E0D86 /* MachineImagesSheet.swift in Sources */,
 				BFA2E94DC17244A06D187331 /* MachineInfoTab.swift in Sources */,
+				C95CD2C3FF6A41E5F69A72B3 /* MachineIsolation.swift in Sources */,
+				7328D17A9EB88E06C3D3B3FE /* MachineIsolationSection.swift in Sources */,
 				415470083B7CD53FB22C4E88 /* MachineModel.swift in Sources */,
 				62C700A9545F0C8944815593 /* MachineProxySection.swift in Sources */,
 				2F119A0D79C58DD5C3437659 /* MachineResources.swift in Sources */,
@@ -1932,6 +1943,7 @@
 				8127661373B4B0D6B1423F67 /* LayeredRootFSTests.swift in Sources */,
 				CA1E5B5C6F01C55FC45ACD08 /* LoadPhaseTests.swift in Sources */,
 				2EB062B1093D6873AC615C6E /* LogPrivacyLintRuleTests.swift in Sources */,
+				0792A4BF8D348B3BE9A0E45D /* MachineIsolationTests.swift in Sources */,
 				CCD9ABC3F69FE5DA233E85EC /* MachineModelTests.swift in Sources */,
 				930DC585462C41CEC286ADF3 /* MachineResourcesTests.swift in Sources */,
 				42D2999F4DD68126333F94ED /* MachinesListViewControllerTests.swift in Sources */,

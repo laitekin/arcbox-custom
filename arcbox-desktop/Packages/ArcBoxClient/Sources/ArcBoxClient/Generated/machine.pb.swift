@@ -147,6 +147,12 @@ public struct Arcbox_V1_CreateMachineRequest: Sendable {
   /// nothing is downloaded.
   public var image: String = String()
 
+  /// Isolate the machine from the Mac: it gets no share of the Mac's
+  /// /Users or /private and no share of the daemon's data directory, only a
+  /// directory of its own. Mounts listed above are still shared. See
+  /// SetIsolation to change it later.
+  public var isolated: Bool = false
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -517,6 +523,23 @@ public struct Arcbox_V1_SetMachineResourcesResponse: Sendable {
   public init() {}
 }
 
+/// Request to change a machine's isolation.
+public struct Arcbox_V1_SetMachineIsolationRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Machine ID or name.
+  public var id: String = String()
+
+  /// Whether the machine is isolated from the Mac.
+  public var isolated: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// Request to set or clear the default machine.
 public struct Arcbox_V1_SetDefaultMachineRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -566,6 +589,9 @@ public struct Arcbox_V1_MachineSummary: Sendable {
 
   /// Distribution release (e.g., "noble").
   public var distroVersion: String = String()
+
+  /// The machine is isolated from the Mac (CreateMachineRequest.isolated).
+  public var isolated: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -674,6 +700,12 @@ public struct Arcbox_V1_MachineInfo: @unchecked Sendable {
   public var mounts: [Arcbox_V1_DirectoryMount] {
     get {_storage._mounts}
     set {_uniqueStorage()._mounts = newValue}
+  }
+
+  /// The machine is isolated from the Mac (CreateMachineRequest.isolated).
+  public var isolated: Bool {
+    get {_storage._isolated}
+    set {_uniqueStorage()._isolated = newValue}
   }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -1238,7 +1270,7 @@ extension Arcbox_V1_ImportMachineImagePhase: SwiftProtobuf._ProtoNameProviding {
 
 extension Arcbox_V1_CreateMachineRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CreateMachineRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}cpus\0\u{1}memory\0\u{3}disk_size\0\u{1}distro\0\u{1}version\0\u{1}arch\0\u{1}mounts\0\u{3}ssh_public_key\0\u{1}kernel\0\u{2}\u{2}cmdline\0\u{1}image\0\u{c}\u{b}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}cpus\0\u{1}memory\0\u{3}disk_size\0\u{1}distro\0\u{1}version\0\u{1}arch\0\u{1}mounts\0\u{3}ssh_public_key\0\u{1}kernel\0\u{2}\u{2}cmdline\0\u{1}image\0\u{1}isolated\0\u{c}\u{b}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1258,6 +1290,7 @@ extension Arcbox_V1_CreateMachineRequest: SwiftProtobuf.Message, SwiftProtobuf._
       case 10: try { try decoder.decodeSingularStringField(value: &self.kernel) }()
       case 12: try { try decoder.decodeSingularStringField(value: &self.cmdline) }()
       case 13: try { try decoder.decodeSingularStringField(value: &self.image) }()
+      case 14: try { try decoder.decodeSingularBoolField(value: &self.isolated) }()
       default: break
       }
     }
@@ -1300,6 +1333,9 @@ extension Arcbox_V1_CreateMachineRequest: SwiftProtobuf.Message, SwiftProtobuf._
     if !self.image.isEmpty {
       try visitor.visitSingularStringField(value: self.image, fieldNumber: 13)
     }
+    if self.isolated != false {
+      try visitor.visitSingularBoolField(value: self.isolated, fieldNumber: 14)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1316,6 +1352,7 @@ extension Arcbox_V1_CreateMachineRequest: SwiftProtobuf.Message, SwiftProtobuf._
     if lhs.kernel != rhs.kernel {return false}
     if lhs.cmdline != rhs.cmdline {return false}
     if lhs.image != rhs.image {return false}
+    if lhs.isolated != rhs.isolated {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2030,6 +2067,41 @@ extension Arcbox_V1_SetMachineResourcesResponse: SwiftProtobuf.Message, SwiftPro
   }
 }
 
+extension Arcbox_V1_SetMachineIsolationRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetMachineIsolationRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}isolated\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.isolated) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.id.isEmpty {
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
+    }
+    if self.isolated != false {
+      try visitor.visitSingularBoolField(value: self.isolated, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_SetMachineIsolationRequest, rhs: Arcbox_V1_SetMachineIsolationRequest) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.isolated != rhs.isolated {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 extension Arcbox_V1_SetDefaultMachineRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SetDefaultMachineRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0")
@@ -2062,7 +2134,7 @@ extension Arcbox_V1_SetDefaultMachineRequest: SwiftProtobuf.Message, SwiftProtob
 
 extension Arcbox_V1_MachineSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".MachineSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}name\0\u{1}state\0\u{1}cpus\0\u{1}memory\0\u{3}disk_size\0\u{3}ip_address\0\u{1}created\0\u{1}distro\0\u{3}distro_version\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}name\0\u{1}state\0\u{1}cpus\0\u{1}memory\0\u{3}disk_size\0\u{3}ip_address\0\u{1}created\0\u{1}distro\0\u{3}distro_version\0\u{1}isolated\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2080,6 +2152,7 @@ extension Arcbox_V1_MachineSummary: SwiftProtobuf.Message, SwiftProtobuf._Messag
       case 8: try { try decoder.decodeSingularInt64Field(value: &self.created) }()
       case 9: try { try decoder.decodeSingularStringField(value: &self.distro) }()
       case 10: try { try decoder.decodeSingularStringField(value: &self.distroVersion) }()
+      case 11: try { try decoder.decodeSingularBoolField(value: &self.isolated) }()
       default: break
       }
     }
@@ -2116,6 +2189,9 @@ extension Arcbox_V1_MachineSummary: SwiftProtobuf.Message, SwiftProtobuf._Messag
     if !self.distroVersion.isEmpty {
       try visitor.visitSingularStringField(value: self.distroVersion, fieldNumber: 10)
     }
+    if self.isolated != false {
+      try visitor.visitSingularBoolField(value: self.isolated, fieldNumber: 11)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -2130,6 +2206,7 @@ extension Arcbox_V1_MachineSummary: SwiftProtobuf.Message, SwiftProtobuf._Messag
     if lhs.created != rhs.created {return false}
     if lhs.distro != rhs.distro {return false}
     if lhs.distroVersion != rhs.distroVersion {return false}
+    if lhs.isolated != rhs.isolated {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2167,7 +2244,7 @@ extension Arcbox_V1_InspectMachineRequest: SwiftProtobuf.Message, SwiftProtobuf.
 
 extension Arcbox_V1_MachineInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".MachineInfo"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}name\0\u{1}state\0\u{1}hardware\0\u{1}network\0\u{1}storage\0\u{1}os\0\u{1}created\0\u{3}started_at\0\u{1}mounts\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}name\0\u{1}state\0\u{1}hardware\0\u{1}network\0\u{1}storage\0\u{1}os\0\u{1}created\0\u{3}started_at\0\u{1}mounts\0\u{1}isolated\0")
 
   fileprivate class _StorageClass {
     var _id: String = String()
@@ -2180,6 +2257,7 @@ extension Arcbox_V1_MachineInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageIm
     var _created: Arcbox_V1_Timestamp? = nil
     var _startedAt: Arcbox_V1_Timestamp? = nil
     var _mounts: [Arcbox_V1_DirectoryMount] = []
+    var _isolated: Bool = false
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -2200,6 +2278,7 @@ extension Arcbox_V1_MachineInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageIm
       _created = source._created
       _startedAt = source._startedAt
       _mounts = source._mounts
+      _isolated = source._isolated
     }
   }
 
@@ -2228,6 +2307,7 @@ extension Arcbox_V1_MachineInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageIm
         case 8: try { try decoder.decodeSingularMessageField(value: &_storage._created) }()
         case 9: try { try decoder.decodeSingularMessageField(value: &_storage._startedAt) }()
         case 10: try { try decoder.decodeRepeatedMessageField(value: &_storage._mounts) }()
+        case 11: try { try decoder.decodeSingularBoolField(value: &_storage._isolated) }()
         default: break
         }
       }
@@ -2270,6 +2350,9 @@ extension Arcbox_V1_MachineInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageIm
       if !_storage._mounts.isEmpty {
         try visitor.visitRepeatedMessageField(value: _storage._mounts, fieldNumber: 10)
       }
+      if _storage._isolated != false {
+        try visitor.visitSingularBoolField(value: _storage._isolated, fieldNumber: 11)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -2289,6 +2372,7 @@ extension Arcbox_V1_MachineInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageIm
         if _storage._created != rhs_storage._created {return false}
         if _storage._startedAt != rhs_storage._startedAt {return false}
         if _storage._mounts != rhs_storage._mounts {return false}
+        if _storage._isolated != rhs_storage._isolated {return false}
         return true
       }
       if !storagesAreEqual {return false}

@@ -579,7 +579,8 @@ private final class MachineTableCellView: NSTableCellView, ResourceListActionDis
         onDelete: @escaping @MainActor () -> Void
     ) {
         nameLabel.stringValue = machine.name
-        detailLabel.stringValue = "\(machine.distro.version), \(machine.cpuCores) cores"
+        let detail = "\(machine.distro.version), \(machine.cpuCores) cores"
+        detailLabel.stringValue = machine.isolated ? "Isolated · \(detail)" : detail
         iconColor =
             machine.isRunning
             ? Self.color(for: machine.distro.name)
@@ -618,6 +619,7 @@ private final class MachineTableCellView: NSTableCellView, ResourceListActionDis
         setAccessibilityLabel(
             "\(machine.name), \(machine.distro.displayName) \(machine.distro.version), "
                 + "\(machine.cpuCores) cores, \(machine.state.label)"
+                + (machine.isolated ? ", isolated" : "")
         )
         updateColors()
     }
