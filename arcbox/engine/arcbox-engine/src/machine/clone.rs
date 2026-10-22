@@ -55,7 +55,12 @@ impl MachineManager {
                 memory_mb: info.memory_mb,
                 kernel: info.kernel.clone(),
                 cmdline: info.cmdline.clone(),
-                shared_dirs: vm_shared_dirs(&self.data_dir, &info.mounts),
+                shared_dirs: vm_shared_dirs(
+                    &self.data_dir,
+                    &machine_dir,
+                    &info.mounts,
+                    info.isolated,
+                ),
                 block_devices: info.block_devices.clone(),
                 backend: info.backend,
                 nested_virt: info.nested_virt,
@@ -154,6 +159,7 @@ fn cloned_record(
         created_at: Utc::now(),
         started_at: None,
         mounts: src.mounts.clone(),
+        isolated: src.isolated,
     }
 }
 

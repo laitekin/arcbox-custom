@@ -140,6 +140,7 @@ impl pb::MachineService for MachineServiceImpl {
             backend: arcbox_core::VmBackend::default(),
             enable_rosetta: false,
             nested_virt: false,
+            isolated: req.isolated,
         };
 
         runtime
@@ -301,6 +302,20 @@ impl pb::MachineService for MachineServiceImpl {
         })
     }
 
+    async fn set_isolation(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, pb::SetMachineIsolationRequest>,
+    ) -> ServiceResult<pb::Empty> {
+        let req = request.to_owned_message();
+        let runtime = self.runtime.ready()?;
+        runtime
+            .machine_manager()
+            .set_isolated(&req.id, req.isolated)
+            .map_err(refusal)?;
+        Response::ok(pb::Empty::default())
+    }
+
     async fn set_default(
         &self,
         _ctx: RequestContext,
@@ -336,6 +351,7 @@ impl pb::MachineService for MachineServiceImpl {
                 created: m.created_at.timestamp(),
                 distro: m.distro.unwrap_or_default(),
                 distro_version: m.distro_version.unwrap_or_default(),
+                isolated: m.isolated,
                 ..Default::default()
             })
             .collect();
@@ -433,6 +449,7 @@ impl pb::MachineService for MachineServiceImpl {
                     ..Default::default()
                 })
                 .collect(),
+            isolated: machine.isolated,
             ..Default::default()
         };
         Response::ok(resp)

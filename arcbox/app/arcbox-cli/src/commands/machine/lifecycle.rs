@@ -1,12 +1,12 @@
 //! Machine lifecycle beyond create, start, stop and remove: clone, export,
-//! import, resize and the default machine.
+//! import, resize, isolation and the default machine.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use arcbox_connect::v1::{
     CloneMachineRequest, ExportMachineRequest, ImportMachineRequest, ListMachinesRequest,
-    SetDefaultMachineRequest, SetMachineResourcesRequest,
+    SetDefaultMachineRequest, SetMachineIsolationRequest, SetMachineResourcesRequest,
 };
 use clap::Args;
 
@@ -62,6 +62,15 @@ pub struct ResizeArgs {
     /// Memory in MiB, 512 through the host's physical memory
     #[arg(long, group = "size", value_name = "MIB")]
     pub memory: Option<u64>,
+}
+
+#[derive(Args)]
+pub struct IsolateArgs {
+    /// Machine name; must be stopped
+    pub name: String,
+    /// Lift the isolation: share the Mac's /Users and /private again
+    #[arg(long)]
+    pub off: bool,
 }
 
 #[derive(Args)]
@@ -175,6 +184,32 @@ pub async fn execute_resize(args: ResizeArgs) -> Result<()> {
             "It is running with its previous size. Restart it to apply the new one:\n  \
              abctl machine stop {} && abctl machine start {}",
             args.name, args.name
+        );
+    }
+    Ok(())
+}
+
+pub async fn execute_isolate(args: IsolateArgs) -> Result<()> {
+    let isolated = !args.off;
+    machine_client()
+        .set_isolation(SetMachineIsolationRequest {
+            id: args.name.clone(),
+            isolated,
+            ..Default::default()
+        })
+        .await
+        .map_err(|error| machine_lifecycle(error, &args.name, "change the isolation of"))?;
+    if isolated {
+        println!(
+            "Machine '{}' is isolated: from its next start it gets no share of the Mac's \
+             files, only a directory of its own (mounts you added stay shared)",
+            args.name
+        );
+    } else {
+        println!(
+            "Machine '{}' is no longer isolated: from its next start it shares the Mac's \
+             /Users and /private again",
+            args.name
         );
     }
     Ok(())

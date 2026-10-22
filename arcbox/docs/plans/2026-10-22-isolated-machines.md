@@ -1,6 +1,6 @@
 # 隔离机器方案设计
 
-状态：设计稿，待确认后实施　　日期：2026-10-22
+状态：已确认采用**严格隔离**；P1 已实现（见 §10），P2–P5 待做　　日期：2026-10-22
 
 ## 1. 目标
 
@@ -181,3 +181,20 @@ P1 到 P2 可以在 Linux 上开发和做单元测试；P3 及所有实机验收
 - Helper 是 root 权限的系统集成服务，负责 Mac 上的 DNS（`.arcbox.local`）和容器路由。release 版 Helper 只接受官方 Team ID 签名的调用方，本地开发版是临时签名，所以被拒绝。
 - 隔离机器的设计**不依赖 Helper**：严格隔离不需要域名和路由，策略都在 daemon 自己的数据通路里执行。
 - 只有「标准隔离 + pf 防火墙」这条可选路线需要 Helper。届时按项目约定使用开发版 Helper 和私有 socket（`make run-helper`，或 `ARCBOX_HELPER_SOCKET=/tmp/arcbox-helper.sock`，见 `.agents/skills/local-dev.md`）。
+
+## 10. 实施记录
+
+### P1：文件隔离与数据模型（已完成）
+
+| 部分 | 实现 |
+|---|---|
+| 协议 | `CreateMachineRequest.isolated`（14）、`MachineSummary.isolated`（11）、`MachineInfo.isolated`（11）；新增 `MachineService.SetIsolation(SetMachineIsolationRequest)`，只接受停止状态的机器 |
+| 引擎 | `MachineConfig`、`MachineInfo`、持久化记录和导出归档都带 `isolated` 字段，旧记录读出来默认为 `false`。`vm_shared_dirs(isolated)`：隔离机器不挂 `users`、`private`；`arcbox` 标签改为指向机器自己的目录 `machines/<name>/guest-share`（启动脚本不在本仓库，保留这个标签更稳妥）。这个目录建不出来时就不挂，**绝不退回共享整个数据目录**。克隆、导出再导入都保留隔离状态。`set_isolated` 只允许在机器停止时调用，并会重建共享目录列表 |
+| CLI | `abctl machine create --isolated`、`abctl machine isolate <name> [--off]`；`status`、`inspect` 显示隔离状态 |
+| 桌面 | 新建机器时可勾选「Isolate from my Mac」，勾选后只能选已保存的代理；机器列表显示「Isolated ·」；Info 页新增「Isolation」区，列出哪些已经隔离、哪些还没有（网络一项明确写「尚未隔离」），并提供停机后切换的按钮；Proxies 页和 Info 页的代理菜单对隔离机器不提供「跟随默认」和「直连」 |
+| 测试 | 引擎 3 项（共享目录列表、目录建不出来时不退回、创建/克隆/切换/持久化/旧记录兼容）；CLI 参数解析 1 项；Swift 5 项。引擎、API、CLI 全部测试通过；Swift 逻辑在 Linux 上用临时包编译测试通过 |
+
+说明：
+- SSH agent 转发在 ArcBox 中只对 System VM 里的 Docker 容器生效，不会进入机器，所以 §5.2 中这一项不需要改。
+- 「必须使用已保存的代理」目前只在界面上强制，daemon 端的强制属于 P2。
+- 需要在 Mac 上验收：隔离机器能正常启动；机器里执行 `mount -t virtiofs users /mnt` 失败；agent 日志写进 `machines/<name>/guest-share`。

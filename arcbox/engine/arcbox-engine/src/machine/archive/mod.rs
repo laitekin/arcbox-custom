@@ -78,4 +78,8 @@ pub struct ArchivedMachine {
     /// re-validated on import.
     #[serde(default)]
     pub mounts: Vec<MachineMount>,
+    /// The machine is isolated from the Mac; an import keeps it so. Absent
+    /// in archives written before the field existed.
+    #[serde(default)]
+    pub isolated: bool,
 }

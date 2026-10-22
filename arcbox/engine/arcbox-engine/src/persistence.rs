@@ -71,6 +71,10 @@ pub struct PersistedMachine {
     /// Host directories shared into the machine.
     #[serde(default)]
     pub mounts: Vec<crate::machine::MachineMount>,
+    /// The machine is isolated from the Mac. Records written before the
+    /// field existed load as `false`, the behavior they were created with.
+    #[serde(default)]
+    pub isolated: bool,
 }
 
 /// Default creation time for backward compatibility with old configs.
@@ -159,6 +163,7 @@ impl From<&MachineInfo> for PersistedMachine {
             created_at: info.created_at,
             started_at: info.started_at,
             mounts: info.mounts.clone(),
+            isolated: info.isolated,
         }
     }
 }
@@ -326,6 +331,7 @@ mod tests {
             name: "test-vm".to_string(),
             started_at: None,
             mounts: Vec::new(),
+            isolated: false,
             state: MachineState::Created,
             vm_id: VmId::new(),
             cpus: 4,
@@ -371,6 +377,7 @@ mod tests {
                 name: name.to_string(),
                 started_at: None,
                 mounts: Vec::new(),
+                isolated: false,
                 state: MachineState::Created,
                 vm_id: VmId::new(),
                 cpus: 2,
@@ -409,6 +416,7 @@ mod tests {
             name: "test-vm".to_string(),
             started_at: None,
             mounts: Vec::new(),
+            isolated: false,
             state: MachineState::Created,
             vm_id: VmId::new(),
             cpus: 2,
@@ -445,6 +453,7 @@ mod tests {
             name: "test-vm".to_string(),
             started_at: None,
             mounts: Vec::new(),
+            isolated: false,
             state: MachineState::Created,
             vm_id: VmId::new(),
             cpus: 2,
@@ -496,6 +505,7 @@ mod tests {
             name: "crash-vm".to_string(),
             started_at: None,
             mounts: Vec::new(),
+            isolated: false,
             state: MachineState::Running,
             vm_id: VmId::new(),
             cpus: 2,

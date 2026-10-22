@@ -1130,3 +1130,114 @@ async fn resize_applies_to_the_next_start_and_says_when_a_restart_is_needed() {
     let err = manager.set_resources("dev", Some(1), None).unwrap_err();
     assert!(err.to_string().contains("Stopping"), "{err}");
 }
+
+fn share_tags(shares: &[SharedDirConfig]) -> Vec<&str> {
+    shares.iter().map(|share| share.tag.as_str()).collect()
+}
+
+#[test]
+fn an_isolated_machine_shares_only_its_own_directory_and_user_mounts() {
+    let temp_dir = tempdir().unwrap();
+    let data_dir = temp_dir.path();
+    let machine_dir = data_dir.join("machines/box");
+    let mounts = vec![MachineMount {
+        host_path: "/Users/me/work".to_string(),
+        guest_path: "/work".to_string(),
+        read_only: true,
+    }];
+
+    let shares = vm_shared_dirs(data_dir, &machine_dir, &mounts, true);
+    assert_eq!(share_tags(&shares), [TAG_ARCBOX, "m0"]);
+    let own = machine_dir.join(ISOLATED_SHARE_DIR);
+    assert_eq!(shares[0].host_path, own.to_string_lossy());
+    assert!(own.is_dir(), "the share is made for the guest to mount");
+    assert!(shares[1].read_only);
+    assert!(
+        !shares
+            .iter()
+            .any(|share| share.host_path == data_dir.to_string_lossy()
+                || share.host_path == MOUNT_USERS
+                || share.host_path == MOUNT_PRIVATE),
+        "no share of the data directory or the Mac's files"
+    );
+
+    let shares = vm_shared_dirs(data_dir, &machine_dir, &mounts, false);
+    assert_eq!(shares[0].host_path, data_dir.to_string_lossy());
+    assert_eq!(shares[0].tag, TAG_ARCBOX);
+    assert_eq!(shares.last().unwrap().tag, "m0");
+}
+
+#[test]
+fn an_isolated_machine_without_its_directory_gets_no_arcbox_share() {
+    let temp_dir = tempdir().unwrap();
+    // A file where the machine directory should be: the share cannot be made.
+    let blocked = temp_dir.path().join("machines");
+    std::fs::write(&blocked, b"").unwrap();
+    let shares = vm_shared_dirs(temp_dir.path(), &blocked.join("box"), &[], true);
+    assert!(
+        shares.is_empty(),
+        "never falls back to the data directory: {shares:?}"
+    );
+}
+
+#[tokio::test]
+async fn isolation_is_created_switched_while_stopped_and_persisted() {
+    let temp_dir = tempdir().unwrap();
+    let manager = test_machine_manager(temp_dir.path());
+    let rootfs_img = temp_dir.path().join("rootfs.squashfs");
+    std::fs::write(&rootfs_img, b"squash").unwrap();
+    manager
+        .create(MachineConfig {
+            name: "sealed".to_string(),
+            disk_gb: 1,
+            distro: Some("alpine".to_string()),
+            rootfs: Some(MachineRootfs {
+                path: rootfs_img,
+                format: "squashfs".to_string(),
+                shim: Some(BootShim {
+                    kernel: temp_dir.path().join("kernel"),
+                    rootfs: temp_dir.path().join("shim.erofs"),
+                }),
+            }),
+            isolated: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let machine = manager.get("sealed").unwrap();
+    assert!(machine.isolated);
+    assert!(manager.persistence.load("sealed").unwrap().isolated);
+    let shares = manager.vm_manager.shared_dirs(&machine.vm_id).unwrap();
+    assert_eq!(share_tags(&shares), [TAG_ARCBOX]);
+
+    // A clone keeps the isolation of its source.
+    manager.clone_machine("sealed", "sealed-copy").unwrap();
+    assert!(manager.get("sealed-copy").unwrap().isolated);
+
+    // Lifting it while stopped restores the shared data directory.
+    manager.set_isolated("sealed", false).unwrap();
+    assert!(!manager.get("sealed").unwrap().isolated);
+    assert!(!manager.persistence.load("sealed").unwrap().isolated);
+    let shares = manager.vm_manager.shared_dirs(&machine.vm_id).unwrap();
+    assert_eq!(shares[0].host_path, temp_dir.path().to_string_lossy());
+
+    // A running machine keeps what it booted with.
+    manager
+        .machines
+        .write()
+        .unwrap()
+        .get_mut("sealed")
+        .unwrap()
+        .state = MachineState::Running;
+    let err = manager.set_isolated("sealed", true).unwrap_err();
+    assert!(err.to_string().contains("stop it first"), "{err}");
+    assert!(!manager.get("sealed").unwrap().isolated);
+    assert!(manager.set_isolated("nope", true).is_err());
+
+    // Records written before the field existed load as not isolated.
+    let legacy: crate::persistence::PersistedMachine = toml::from_str(
+        "name = \"old\"\ncpus = 1\nmemory_mb = 512\ndisk_gb = 1\nstate = \"stopped\"\nvm_id = \"x\"\n",
+    )
+    .unwrap();
+    assert!(!legacy.isolated);
+}

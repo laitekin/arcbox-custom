@@ -161,6 +161,38 @@ impl VmManager {
         Ok(())
     }
 
+    /// Sets the VirtioFS shares a stopped VM boots with.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the VM is not found or is running or starting.
+    pub fn set_shared_dirs(&self, id: &VmId, shared_dirs: Vec<SharedDirConfig>) -> Result<()> {
+        let mut vms = self.vms.write().map_err(|_| EngineError::LockPoisoned)?;
+        let entry = vms
+            .get_mut(id)
+            .ok_or_else(|| EngineError::not_found(id.to_string()))?;
+        if matches!(
+            entry.info.state,
+            MachineState::Running | MachineState::Starting
+        ) {
+            return Err(EngineError::invalid_state(format!(
+                "cannot change shares while VM is {:?}",
+                entry.info.state
+            )));
+        }
+        entry.config.shared_dirs = shared_dirs;
+        Ok(())
+    }
+
+    /// The VirtioFS shares a VM boots with.
+    #[cfg(test)]
+    pub(crate) fn shared_dirs(&self, id: &VmId) -> Result<Vec<SharedDirConfig>> {
+        let vms = self.vms.read().map_err(|_| EngineError::LockPoisoned)?;
+        vms.get(id)
+            .map(|entry| entry.config.shared_dirs.clone())
+            .ok_or_else(|| EngineError::not_found(id.to_string()))
+    }
+
     fn build_vmm_config(entry: &VmEntry) -> VmmConfig {
         let shared_dirs: Vec<VmmSharedDirConfig> = entry
             .config

@@ -80,6 +80,12 @@ service MachineService {
     // SystemService.SetSystemVmResources instead, which restarts it.
     rpc SetResources(SetMachineResourcesRequest) returns (SetMachineResourcesResponse);
 
+    // Isolates a stopped machine from the Mac, or lifts its isolation (see
+    // CreateMachineRequest.isolated). It applies at the machine's next start;
+    // a running machine is refused, so it never keeps shares its record
+    // says it does not have.
+    rpc SetIsolation(SetMachineIsolationRequest) returns (Empty);
+
     // Sets the default machine — the one `abctl machine exec` and
     // `abctl machine ssh` act on when given no name — or clears it with an
     // empty id. The machine must exist. List reports the current one.
@@ -153,6 +159,11 @@ message CreateMachineRequest {
     // version when omitted). When set, distro/version/arch are ignored and
     // nothing is downloaded.
     string image = 13;
+    // Isolate the machine from the Mac: it gets no share of the Mac's
+    // /Users or /private and no share of the daemon's data directory, only a
+    // directory of its own. Mounts listed above are still shared. See
+    // SetIsolation to change it later.
+    bool isolated = 14;
 }
 
 // Request that targets a machine's guest agent.
@@ -334,6 +345,14 @@ message SetMachineResourcesResponse {
     uint64 host_memory = 5;
 }
 
+// Request to change a machine's isolation.
+message SetMachineIsolationRequest {
+    // Machine ID or name.
+    string id = 1;
+    // Whether the machine is isolated from the Mac.
+    bool isolated = 2;
+}
+
 // Request to set or clear the default machine.
 message SetDefaultMachineRequest {
     // Machine ID or name; empty clears the default.
@@ -362,6 +381,8 @@ message MachineSummary {
     string distro = 9;
     // Distribution release (e.g., "noble").
     string distro_version = 10;
+    // The machine is isolated from the Mac (CreateMachineRequest.isolated).
+    bool isolated = 11;
 }
 
 // Request to inspect a machine.
@@ -392,6 +413,8 @@ message MachineInfo {
     Timestamp started_at = 9;
     // Directory mounts.
     repeated DirectoryMount mounts = 10;
+    // The machine is isolated from the Mac (CreateMachineRequest.isolated).
+    bool isolated = 11;
 }
 
 // Machine hardware configuration.

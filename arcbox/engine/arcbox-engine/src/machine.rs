@@ -107,6 +107,8 @@ pub struct MachineInfo {
     pub started_at: Option<DateTime<Utc>>,
     /// Host directories shared into the machine (shim machines).
     pub mounts: Vec<MachineMount>,
+    /// The machine is isolated from the Mac (see [`vm_shared_dirs`]).
+    pub isolated: bool,
 }
 
 /// The outcome of [`MachineManager::set_resources`].
@@ -205,6 +207,10 @@ pub struct MachineConfig {
     /// nested-capable address spaces per host, and a machine that pins one
     /// for nothing eventually makes every later VM start fail.
     pub nested_virt: bool,
+    /// Isolate the machine from the Mac: no `/Users` or `/private` share,
+    /// and its own directory in place of the data directory share. User
+    /// mounts are still honored; they are the user's explicit choice.
+    pub isolated: bool,
 }
 
 impl Default for MachineConfig {
@@ -224,6 +230,7 @@ impl Default for MachineConfig {
             backend: arcbox_vmm::VmBackend::default(),
             enable_rosetta: false,
             nested_virt: false,
+            isolated: false,
         }
     }
 }
@@ -317,23 +324,54 @@ fn mount_tag(index: usize) -> String {
     format!("m{index}")
 }
 
-/// The VirtioFS shares every machine gets, plus one per user mount.
+/// Directory, inside a machine's own directory, that an isolated machine
+/// gets as its `arcbox` share in place of the whole data directory.
+pub const ISOLATED_SHARE_DIR: &str = "guest-share";
+
+/// The VirtioFS shares a machine gets, plus one per user mount.
 ///
 /// The `arcbox` tag shares the data directory (boot assets, logs, runtime);
 /// `users` shares `/Users` so macOS paths work transparently in the guest
 /// (`docker run -v /Users/foo/project:/app` just works), and `private`
 /// shares `/private` for the symlink targets under it. User mounts follow
 /// as `m0`, `m1`, …, the tags the cmdline mount table names.
-fn vm_shared_dirs(data_dir: &std::path::Path, mounts: &[MachineMount]) -> Vec<SharedDirConfig> {
-    let mut shared_dirs = vec![SharedDirConfig::new(
-        data_dir.to_string_lossy().to_string(),
-        TAG_ARCBOX,
-    )];
-    if std::path::Path::new(MOUNT_USERS).is_dir() {
-        shared_dirs.push(SharedDirConfig::new(MOUNT_USERS, TAG_USERS));
-    }
-    if std::path::Path::new(MOUNT_PRIVATE).is_dir() {
-        shared_dirs.push(SharedDirConfig::new(MOUNT_PRIVATE, TAG_PRIVATE));
+///
+/// An isolated machine gets neither `/Users` nor `/private`, and its
+/// `arcbox` tag shares only [`ISOLATED_SHARE_DIR`] in `machine_dir`, so the
+/// guest keeps a place for its logs without seeing other machines' files or
+/// the daemon's. If that directory cannot be made, the tag is left out
+/// rather than falling back to the data directory.
+fn vm_shared_dirs(
+    data_dir: &std::path::Path,
+    machine_dir: &std::path::Path,
+    mounts: &[MachineMount],
+    isolated: bool,
+) -> Vec<SharedDirConfig> {
+    let mut shared_dirs = Vec::new();
+    if isolated {
+        let own = machine_dir.join(ISOLATED_SHARE_DIR);
+        match std::fs::create_dir_all(&own) {
+            Ok(()) => shared_dirs.push(SharedDirConfig::new(
+                own.to_string_lossy().to_string(),
+                TAG_ARCBOX,
+            )),
+            Err(e) => tracing::warn!(
+                path = %own.display(),
+                error = %e,
+                "isolated machine gets no arcbox share: its directory could not be made"
+            ),
+        }
+    } else {
+        shared_dirs.push(SharedDirConfig::new(
+            data_dir.to_string_lossy().to_string(),
+            TAG_ARCBOX,
+        ));
+        if std::path::Path::new(MOUNT_USERS).is_dir() {
+            shared_dirs.push(SharedDirConfig::new(MOUNT_USERS, TAG_USERS));
+        }
+        if std::path::Path::new(MOUNT_PRIVATE).is_dir() {
+            shared_dirs.push(SharedDirConfig::new(MOUNT_PRIVATE, TAG_PRIVATE));
+        }
     }
     for (i, mount) in mounts.iter().enumerate() {
         let mut share = SharedDirConfig::new(mount.host_path.clone(), mount_tag(i));
@@ -483,7 +521,12 @@ impl MachineManager {
                 memory_mb: persisted.memory_mb,
                 kernel: persisted.kernel.clone(),
                 cmdline: persisted.cmdline.clone(),
-                shared_dirs: vm_shared_dirs(&data_dir, &persisted.mounts),
+                shared_dirs: vm_shared_dirs(
+                    &data_dir,
+                    &machines_dir.join(&persisted.name),
+                    &persisted.mounts,
+                    persisted.isolated,
+                ),
                 block_devices: persisted.block_devices.clone(),
                 backend: persisted.backend,
                 nested_virt: persisted.nested_virt,
@@ -514,6 +557,7 @@ impl MachineManager {
                     created_at: persisted.created_at,
                     started_at: persisted.started_at,
                     mounts: persisted.mounts.clone(),
+                    isolated: persisted.isolated,
                 };
                 machines.insert(persisted.name.clone(), info);
             }
@@ -634,7 +678,12 @@ impl MachineManager {
                 validate_mount(mount)?;
             }
         }
-        let shared_dirs = vm_shared_dirs(&self.data_dir, &config.mounts);
+        let shared_dirs = vm_shared_dirs(
+            &self.data_dir,
+            &machine_dir,
+            &config.mounts,
+            config.isolated,
+        );
 
         // Distro machines boot the pulled rootfs image (behind the boot shim
         // when configured) with a sparse per-machine data disk; plain VMs
@@ -746,6 +795,7 @@ impl MachineManager {
             created_at: Utc::now(),
             started_at: None,
             mounts: config.mounts,
+            isolated: config.isolated,
         };
         self.register(&mut machines, info)
     }
@@ -1578,6 +1628,49 @@ impl MachineManager {
         })
     }
 
+    /// Isolates a stopped machine from the Mac, or lifts its isolation.
+    ///
+    /// Rebuilds the VirtioFS shares the machine boots with (see
+    /// [`vm_shared_dirs`]); it takes effect on the next start. The machine
+    /// must be stopped, so a running guest never keeps shares its record
+    /// says it does not have.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the machine is not found or not stopped, or the
+    /// persisted config cannot be updated.
+    pub fn set_isolated(&self, name: &str, isolated: bool) -> Result<()> {
+        let _storage = self.storage_permit(name)?;
+        let mut machines = self
+            .machines
+            .write()
+            .map_err(|_| EngineError::LockPoisoned)?;
+        let machine = machines
+            .get_mut(name)
+            .ok_or_else(|| EngineError::not_found(name.to_string()))?;
+        if !matches!(machine.state, MachineState::Created | MachineState::Stopped) {
+            return Err(EngineError::invalid_state(format!(
+                "machine '{name}' is {}; stop it first",
+                format!("{:?}", machine.state).to_lowercase()
+            )));
+        }
+        if machine.isolated == isolated {
+            return Ok(());
+        }
+        let shared_dirs = vm_shared_dirs(
+            &self.data_dir,
+            &self.machines_dir.join(name),
+            &machine.mounts,
+            isolated,
+        );
+        self.vm_manager
+            .set_shared_dirs(&machine.vm_id, shared_dirs)?;
+        machine.isolated = isolated;
+        self.persistence.update(name, |m| m.isolated = isolated)?;
+        tracing::info!(machine = name, isolated, "machine isolation changed");
+        Ok(())
+    }
+
     /// Switches a stopped machine's hypervisor backend.
     ///
     /// Updates the lazily-built VM config and the in-memory and persisted
@@ -1903,6 +1996,7 @@ impl MachineManager {
             created_at: Utc::now(),
             started_at: None,
             mounts: Vec::new(),
+            isolated: false,
         };
 
         machines.insert(name.to_string(), info);

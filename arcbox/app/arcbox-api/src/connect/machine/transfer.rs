@@ -120,6 +120,7 @@ pub(super) async fn import(
         backend: arcbox_core::VmBackend::default(),
         enable_rosetta: false,
         nested_virt: false,
+        isolated: archived.isolated,
     };
     let manager = Arc::clone(runtime.machine_manager());
     let id = tokio::task::spawn_blocking(move || manager.import(config, &path))

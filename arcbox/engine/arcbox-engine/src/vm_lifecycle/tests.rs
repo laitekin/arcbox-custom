@@ -198,6 +198,7 @@ fn sample_machine(cpus: u32, memory_mb: u64, kernel: &str, cmdline: &str) -> Mac
         created_at: chrono::Utc::now(),
         started_at: None,
         mounts: Vec::new(),
+        isolated: false,
     }
 }
 

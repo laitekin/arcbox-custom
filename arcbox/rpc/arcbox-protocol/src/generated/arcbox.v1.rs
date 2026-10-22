@@ -2079,6 +2079,12 @@ pub struct CreateMachineRequest {
     /// nothing is downloaded.
     #[prost(string, tag = "13")]
     pub image: ::prost::alloc::string::String,
+    /// Isolate the machine from the Mac: it gets no share of the Mac's
+    /// /Users or /private and no share of the daemon's data directory, only a
+    /// directory of its own. Mounts listed above are still shared. See
+    /// SetIsolation to change it later.
+    #[prost(bool, tag = "14")]
+    pub isolated: bool,
 }
 /// Request that targets a machine's guest agent.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -2310,6 +2316,16 @@ pub struct SetMachineResourcesResponse {
     #[prost(uint64, tag = "5")]
     pub host_memory: u64,
 }
+/// Request to change a machine's isolation.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetMachineIsolationRequest {
+    /// Machine ID or name.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// Whether the machine is isolated from the Mac.
+    #[prost(bool, tag = "2")]
+    pub isolated: bool,
+}
 /// Request to set or clear the default machine.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SetDefaultMachineRequest {
@@ -2350,6 +2366,9 @@ pub struct MachineSummary {
     /// Distribution release (e.g., "noble").
     #[prost(string, tag = "10")]
     pub distro_version: ::prost::alloc::string::String,
+    /// The machine is isolated from the Mac (CreateMachineRequest.isolated).
+    #[prost(bool, tag = "11")]
+    pub isolated: bool,
 }
 /// Request to inspect a machine.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -2391,6 +2410,9 @@ pub struct MachineInfo {
     /// Directory mounts.
     #[prost(message, repeated, tag = "10")]
     pub mounts: ::prost::alloc::vec::Vec<DirectoryMount>,
+    /// The machine is isolated from the Mac (CreateMachineRequest.isolated).
+    #[prost(bool, tag = "11")]
+    pub isolated: bool,
 }
 /// Machine hardware configuration.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

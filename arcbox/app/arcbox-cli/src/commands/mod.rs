@@ -374,6 +374,29 @@ mod tests {
         }
     }
 
+    #[test]
+    fn machine_isolation_flags_parse() {
+        use super::{Commands, machine::MachineCommands};
+
+        let cli = Cli::try_parse_from(["abctl", "machine", "create", "box", "--isolated"]).unwrap();
+        let Commands::Machine(MachineCommands::Create(args)) = cli.command else {
+            panic!("expected machine create");
+        };
+        assert!(args.isolated);
+        let cli = Cli::try_parse_from(["abctl", "machine", "create", "box"]).unwrap();
+        let Commands::Machine(MachineCommands::Create(args)) = cli.command else {
+            panic!("expected machine create");
+        };
+        assert!(!args.isolated, "machines are not isolated unless asked");
+
+        let cli = Cli::try_parse_from(["abctl", "machine", "isolate", "box", "--off"]).unwrap();
+        let Commands::Machine(MachineCommands::Isolate(args)) = cli.command else {
+            panic!("expected machine isolate");
+        };
+        assert_eq!(args.name, "box");
+        assert!(args.off);
+    }
+
     fn accepts(args: &[&str], format: &str) -> bool {
         let argv: Vec<_> = ["abctl", "--format", format]
             .into_iter()

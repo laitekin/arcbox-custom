@@ -100,6 +100,8 @@ pub enum MachineCommands {
     Import(lifecycle::ImportArgs),
     /// Change a machine's CPU and memory limits (applied at its next start)
     Resize(lifecycle::ResizeArgs),
+    /// Isolate a stopped machine from the Mac's files, or lift it with --off
+    Isolate(lifecycle::IsolateArgs),
     /// Show or set the machine `exec` and `ssh` use when given no name
     Default(lifecycle::DefaultArgs),
     /// Manage machine images (list, import your own rootfs, remove)
@@ -139,6 +141,10 @@ pub struct CreateArgs {
     /// Custom kernel command line (for advanced users / testing)
     #[arg(long)]
     pub cmdline: Option<String>,
+    /// Isolate the machine from the Mac: no share of /Users, /private or
+    /// ArcBox's data directory (--mount directories are still shared)
+    #[arg(long)]
+    pub isolated: bool,
 }
 
 #[derive(Args)]
@@ -241,6 +247,7 @@ pub async fn execute(cmd: MachineCommands, format: super::OutputFormat) -> Resul
         MachineCommands::Export(args) => lifecycle::execute_export(args).await,
         MachineCommands::Import(args) => lifecycle::execute_import(args).await,
         MachineCommands::Resize(args) => lifecycle::execute_resize(args).await,
+        MachineCommands::Isolate(args) => lifecycle::execute_isolate(args).await,
         MachineCommands::Default(args) => lifecycle::execute_default(args).await,
         MachineCommands::Image(cmd) => image::execute(cmd, format).await,
     }
@@ -269,6 +276,7 @@ async fn execute_create(args: CreateArgs) -> Result<()> {
             kernel: args.kernel.clone().unwrap_or_default(),
             cmdline: args.cmdline.clone().unwrap_or_default(),
             image: args.image.clone().unwrap_or_default(),
+            isolated: args.isolated,
             ..Default::default()
         })
         .await
@@ -281,6 +289,12 @@ async fn execute_create(args: CreateArgs) -> Result<()> {
     }
     println!("  Memory: {} MB", args.memory);
     println!("  Disk:   {} GB", args.disk);
+    if args.isolated {
+        println!("  Isolated: no Mac files shared");
+        if !args.mount.is_empty() {
+            println!("  Note: the --mount directories are shared into it anyway");
+        }
+    }
     println!();
     println!("To start the machine, run:");
     println!("  abctl machine start {}", args.name);
@@ -473,6 +487,7 @@ async fn execute_status(args: StatusArgs) -> Result<()> {
     println!("IP:      {}", or_dash(&machine.network.ip_address));
     println!("Bridge:  {}", or_dash(&machine.network.bridge_ip_address));
     println!("DNS:     {}", or_dash(&machine.network.dns_name));
+    println!("Isolated: {}", if machine.isolated { "yes" } else { "no" });
 
     Ok(())
 }
@@ -504,6 +519,7 @@ async fn execute_inspect(args: InspectArgs) -> Result<()> {
         "kernel": machine.os.kernel.clone(),
         "distro": machine.os.distro.clone(),
         "distro_version": machine.os.version.clone(),
+        "isolated": machine.isolated,
     });
 
     println!(

@@ -495,6 +495,8 @@ impl LifecycleShared {
             // may run a hypervisor. The VZ build honours it only when the
             // host supports nested virtualization.
             nested_virt: true,
+            // The System VM serves Docker bind mounts from the Mac's paths.
+            isolated: false,
         };
 
         tracing::info!(
