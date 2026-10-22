@@ -9,6 +9,7 @@ struct NetworkSettingsView: View {
     @Environment(DaemonManager.self) private var daemonManager
 
     @State private var model = NetworkSettingsModel()
+    @State private var library = ProxyLibraryModel()
     @State private var testTarget = ""
 
     private var client: ArcBoxClient? {
@@ -34,8 +35,9 @@ struct NetworkSettingsView: View {
                     Button("Try Again") { Task { await model.load(client: client) } }
                 }
             case .loaded:
+                ProxyLibrarySection(model: library, client: client) { await model.load(client: client) }
                 proxySection
-                trafficSection
+                if model.draft.profileID.isEmpty { trafficSection }
                 testSection
                 saveSection
             }
@@ -44,7 +46,10 @@ struct NetworkSettingsView: View {
         .scrollContentBackground(.hidden)
         .task(id: daemonManager.state.isRunning && arcboxClient != nil) {
             await model.load(client: client)
+            await library.load(client: client)
         }
+        .onChange(of: model.draft) { model.clearTestResults() }
+        .onChange(of: model.password) { model.clearTestResults() }
     }
 
     // MARK: Sections
@@ -52,13 +57,23 @@ struct NetworkSettingsView: View {
     private var proxySection: some View {
         @Bindable var model = model
         return Section {
-            Picker("Proxy", selection: $model.draft.mode) {
-                ForEach(EgressProxyMode.allCases) { mode in
-                    Text(mode.label).tag(mode)
+            Picker("Default proxy", selection: defaultChoice) {
+                Text("Follow macOS").tag("system")
+                Text("Direct").tag("direct")
+                Text("Custom proxy").tag("custom")
+                ForEach(library.profiles) { Text($0.name).tag($0.id) }
+                if !model.draft.profileID.isEmpty
+                    && !library.profiles.contains(where: { $0.id == model.draft.profileID })
+                {
+                    Text("Saved proxy unavailable").tag(model.draft.profileID)
                 }
             }
 
-            if model.draft.mode == .custom {
+            if !model.draft.profileID.isEmpty {
+                Text("Connection settings are managed in the saved proxy above.").font(.caption).foregroundStyle(
+                    .secondary)
+            }
+            if model.draft.mode == .custom && model.draft.profileID.isEmpty {
                 Picker("Protocol", selection: $model.draft.proxyProtocol) {
                     ForEach(EgressProxyProtocol.allCases) { proto in
                         Text(proto.label).tag(proto)
@@ -113,6 +128,21 @@ struct NetworkSettingsView: View {
                 .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var defaultChoice: Binding<String> {
+        Binding(
+            get: { model.draft.profileID.isEmpty ? model.draft.mode.rawValue : model.draft.profileID },
+            set: { choice in
+                model.password = ""
+                if let profile = library.profiles.first(where: { $0.id == choice }) {
+                    model.draft = profile.settings
+                    model.excludeText = profile.settings.exclude.joined(separator: "\n")
+                } else {
+                    model.draft.profileID = ""
+                    model.draft.mode = EgressProxyMode(rawValue: choice) ?? .system
+                }
+            })
     }
 
     private var passwordPrompt: String {
@@ -187,16 +217,20 @@ struct NetworkSettingsView: View {
                 Spacer()
                 Button("Revert") { model.revert() }
                     .disabled(!model.isDirty || model.isSaving)
-                Button("Apply") { Task { await model.save(client: client) } }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!model.isDirty || model.isSaving || model.validationError != nil)
+                Button("Apply") {
+                    Task {
+                        await model.save(client: client); await library.load(client: client)
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!model.isDirty || model.isSaving || model.validationError != nil)
             }
         }
         .listRowBackground(Color.clear)
     }
 }
 
-private struct ProxyTestStepRow: View {
+struct ProxyTestStepRow: View {
     let step: EgressProxyTestStep
 
     var body: some View {

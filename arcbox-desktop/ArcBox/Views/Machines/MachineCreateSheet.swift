@@ -18,6 +18,8 @@ struct MachineCreateSheet: View {
     @State private var source: ImageSource = .distribution
     @State private var localImages: [LocalMachineImage] = []
     @State private var selectedImage = ""
+    @State private var savedProxies: [SavedProxyProfile] = []
+    @State private var proxyChoice = ""
 
     enum ImageSource: String, CaseIterable, Identifiable {
         case distribution = "Distribution"
@@ -116,6 +118,15 @@ struct MachineCreateSheet: View {
                     Stepper("Disk: \(diskGiB) GB", value: $diskGiB, in: 10...500, step: 10)
                 }
 
+                Section("Network") {
+                    Picker("Outbound proxy", selection: $proxyChoice) {
+                        Text("Follow default").tag("")
+                        Text("Direct").tag("direct")
+                        ForEach(savedProxies) { Text($0.name).tag($0.id) }
+                    }
+                    Text("Saved proxies are managed in Settings → Network.").font(.caption).foregroundStyle(.secondary)
+                }
+
                 if let errorMessage {
                     Section {
                         Text(errorMessage)
@@ -155,6 +166,11 @@ struct MachineCreateSheet: View {
         }
         .task {
             guard let client else { return }
+            if let library = try? await client.proxyLibrary.listProfiles(
+                .init(), options: ArcBoxClient.defaultCallOptions)
+            {
+                savedProxies = library.profiles.map(SavedProxyProfile.init(proto:))
+            }
             let images = try? await client.machineImages.list(
                 .init(), options: ArcBoxClient.defaultCallOptions)
             localImages = (images?.images ?? []).map(LocalMachineImage.init(proto:))
@@ -185,6 +201,7 @@ struct MachineCreateSheet: View {
         spec.cpus = UInt32(cpus)
         spec.memoryGiB = UInt64(memoryGiB)
         spec.diskGiB = UInt64(diskGiB)
+        spec.proxyChoice = proxyChoice
         if source == .local {
             spec.distro = ""
             spec.version = ""

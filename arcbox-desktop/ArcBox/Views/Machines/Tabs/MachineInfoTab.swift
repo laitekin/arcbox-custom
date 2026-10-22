@@ -55,6 +55,8 @@ struct MachineInfoTab: View {
                 }
 
                 // Shared folders
+                MachineProxySection(machine: machine.id)
+
                 if !machine.mounts.isEmpty {
                     section("Shared Folders") {
                         ForEach(machine.mounts) { mount in
