@@ -63,6 +63,7 @@ from memory. Every new file is added to the index below.
 
 ### Architecture
 
+- [代理库与机器出站代理](architecture/proxy-library-machines.md) — SOCKS URL 导入、管理、测试与每台机器的独立选择
 - [Architecture charter — the engine/computer restructure](architecture/charter.md) (active, product scope revised 2026-10-08)
 - [VM stack redesign — the P4b execution design](architecture/vm-stack-redesign.md) (locked, 2026-08-16)
 - [HV backend architecture](architecture/hv-backend.md) (current, 2026-08-13; interrupt flow amended by ADR 0001)

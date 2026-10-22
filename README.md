@@ -68,6 +68,8 @@ make -C arcbox-desktop generate-arcbox-protobuf ARCBOX_DIR=../arcbox   # Swift �
 
 ## 二开功能速览
 
+- 代理库：设置 › 网络 › Import SOCKS URL，粘贴带可选账号密码的 URL，测试后保存；支持多套代理的编辑、测试和删除。默认代理可选择已保存的代理。
+- 每台机器独立代理：新建机器的 Network 或已有机器 Info › Outbound proxy 中选择 Follow default、Direct 或某个已保存代理。运行中可切换，修改代理也会更新引用它的机器；[完整设计与验证](arcbox/docs/architecture/proxy-library-machines.md)。
 - SOCKS5 远程 DNS：设置 › 网络 › Custom proxy › SOCKS5，勾选 “Resolve DNS through the proxy”；或 `abctl network proxy set socks5h://host:1080`。网关 DNS 通过宿主机 SOCKS5 TCP 隧道发送，本地域名保留本地解析。绕过规则支持域名、IP、CIDR 和 `*`。
 
 - 认证代理：`abctl network proxy set socks5://user@host:1080 --password-stdin`，`abctl network proxy test`；桌面版「设置 › 网络」。密码保存在登录钥匙串（或 `ARCBOX_PROXY_CREDENTIALS=file` 时的 0600 文件），`config.toml` 不含密码，修改后对新连接立即生效；菜单栏可一键切换代理开/关。

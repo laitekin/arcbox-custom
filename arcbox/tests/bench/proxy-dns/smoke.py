@@ -17,8 +17,9 @@ import time
 
 
 class Fixture:
-    def __init__(self, domain):
+    def __init__(self, domain, body=b"socks5h-container-dns-ok\n"):
         self.domain = domain
+        self.body = body
         self.seen = []
 
     async def serve(self, reader, writer):
@@ -66,7 +67,7 @@ class Fixture:
             assert host == self.domain and port == 80, "HTTP must reach the proxy by name"
             request = await reader.readuntil(b"\r\n\r\n")
             assert request.startswith(b"GET /proof ")
-            body = b"socks5h-container-dns-ok\n"
+            body = self.body
             writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: " + str(len(body)).encode() + b"\r\nConnection: close\r\n\r\n" + body)
         await writer.drain()
 
