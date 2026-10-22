@@ -45,6 +45,7 @@ from memory. Every new file is added to the index below.
 
 ## Index
 
+- [SOCKS5 远程 DNS 与绕过规则](logs/2026-10-22-orbstack-socks-dns.md) — SOCKS5h、网关 DNS、CIDR、桌面入口与验证
 - [Host-side proxy authentication](logs/2026-10-21-proxy-authentication.md) — credentials, live settings, API/CLI, proxy test, daemon downloads, coverage matrix
 
 ### Reference

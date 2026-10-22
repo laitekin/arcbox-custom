@@ -9,6 +9,7 @@
 //! The implementation handles basic A and AAAA record queries.
 
 mod cache;
+#[cfg(any(target_os = "macos", test))]
 pub(crate) mod proxy;
 mod upstream;
 

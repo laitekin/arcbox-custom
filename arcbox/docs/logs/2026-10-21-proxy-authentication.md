@@ -140,3 +140,9 @@ live fails closed (no tunnel, no file).
 - Teach `arcbox-boot` to take a client (or proxy) so boot assets follow it.
 - Keychain prompts for rebuilt, differently signed daemons need checking on
   a Mac (the file store is the fallback).
+
+## 2026-10-22 update
+
+The gateway DNS gap is now addressed for explicit `socks5h` policies; see
+[SOCKS5 remote DNS and bypass rules](2026-10-22-orbstack-socks-dns.md). The
+coverage table above records the original implementation, not this update.

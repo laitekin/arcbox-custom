@@ -34,7 +34,7 @@
 | F3 代理测试与诊断、守护进程下载走代理 | 已实现并测试 |
 | F4 镜像库、导入（归档 / squashfs / Docker，含自动安装 init）、`create --image`、导出携带镜像 | 已实现并测试；磁盘镜像（qcow2 等）明确拒绝 |
 | e2e：代理覆盖（容器/UDP/pull/机器/Pod）、镜像导入全流程 | 已编写，需在 Mac e2e 环境运行 |
-| R6 网关 DNS 不经代理 | 已确认存在，修复方案待定（见代理文档「Host-side DNS (R6)」） |
+| R6 网关 DNS | 自定义 SOCKS5 可开启远程 DNS（`socks5h`），认证失败不回退直连；[行为与验证](arcbox/docs/logs/2026-10-22-orbstack-socks-dns.md) |
 
 逐项清单见 [`TODO-PRD.md`](TODO-PRD.md)。
 
@@ -67,6 +67,8 @@ make -C arcbox-desktop generate-arcbox-protobuf ARCBOX_DIR=../arcbox   # Swift �
 `cargo xtask protocol verify` 会按 `arcbox.version` 拉取上游 tag 的 proto，因此在本二开仓库中不适用；以上述本地生成结果为准。
 
 ## 二开功能速览
+
+- SOCKS5 远程 DNS：设置 › 网络 › Custom proxy › SOCKS5，勾选 “Resolve DNS through the proxy”；或 `abctl network proxy set socks5h://host:1080`。网关 DNS 通过宿主机 SOCKS5 TCP 隧道发送，本地域名保留本地解析。绕过规则支持域名、IP、CIDR 和 `*`。
 
 - 认证代理：`abctl network proxy set socks5://user@host:1080 --password-stdin`，`abctl network proxy test`；桌面版「设置 › 网络」。密码保存在登录钥匙串（或 `ARCBOX_PROXY_CREDENTIALS=file` 时的 0600 文件），`config.toml` 不含密码，修改后对新连接立即生效；菜单栏可一键切换代理开/关。
 - 自定义镜像：`abctl machine image import ./rootfs.tar.gz --name my-linux`（或 `docker:ubuntu:24.04 --add-init`，由守护进程构建），`abctl machine create dev --image my-linux`；桌面版「机器 › 镜像」与新建机器中的「My Images」。
