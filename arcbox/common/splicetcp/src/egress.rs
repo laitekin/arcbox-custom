@@ -140,7 +140,7 @@ impl DefaultEgress {
         };
 
         // Honor the bypass list (direct for excepted hosts).
-        if env.should_bypass(&host) {
+        if env.should_bypass(&host) || env.should_bypass(&dst_ip.to_string()) {
             return None;
         }
 
@@ -225,6 +225,7 @@ mod tests {
             http_proxy: if http { cfg(3128) } else { None },
             https_proxy: if https { cfg(3129) } else { None },
             socks_proxy: if socks { cfg(1080) } else { None },
+            remote_dns: false,
             bypass_domains: vec![],
         }
     }
@@ -308,6 +309,21 @@ mod tests {
         assert_eq!(
             egress(None).resolve_proxy_target(Ipv4Addr::new(1, 2, 3, 4), 443, None),
             None,
+        );
+    }
+
+    #[test]
+    fn cidr_exclusion_applies_even_when_a_domain_is_known() {
+        let mut proxy = env(false, false, true);
+        proxy.bypass_domains = vec!["10.0.0.0/8".into()];
+        let eg = egress(Some(proxy));
+        assert_eq!(
+            eg.resolve_proxy_target(Ipv4Addr::new(10, 1, 2, 3), 443, Some("intranet.example")),
+            None
+        );
+        assert!(
+            eg.resolve_proxy_target(Ipv4Addr::new(203, 0, 113, 1), 443, Some("public.example"))
+                .is_some()
         );
     }
 }

@@ -8,7 +8,7 @@
 //! `scutil`/`ifconfig` probes are macOS-specific and `cfg`-gated; on other
 //! targets `detect()` returns the environment-variable-only result.
 
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr};
 #[cfg(target_os = "macos")]
 use std::process::Command;
 use std::sync::Arc;
@@ -36,6 +36,9 @@ pub struct ProxyEnvironment {
 
     /// System SOCKS proxy.
     pub socks_proxy: Option<ProxyConfig>,
+
+    /// Forward external gateway DNS through SOCKS5 (`socks5h` policy).
+    pub remote_dns: bool,
 
     /// Domains that bypass the proxy (from ExceptionsList).
     pub bypass_domains: Vec<String>,
@@ -65,6 +68,7 @@ impl ProxyEnvironment {
             http_proxy,
             https_proxy,
             socks_proxy,
+            remote_dns: false,
             bypass_domains,
         };
 
@@ -116,16 +120,26 @@ impl ProxyEnvironment {
     /// Whether traffic to the given domain should bypass the proxy.
     #[must_use]
     pub fn should_bypass(&self, domain: &str) -> bool {
-        let domain_lower = domain.to_lowercase();
+        let domain_lower = domain.trim_end_matches('.').to_ascii_lowercase();
+        let ip = domain_lower.trim_matches(['[', ']']).parse::<IpAddr>().ok();
         for pattern in &self.bypass_domains {
-            let pat = pattern.to_lowercase();
-            if let Some(bare) = pat.strip_prefix("*.") {
-                // bare = "example.com"; match "sub.example.com" or exact "example.com"
+            let pat = pattern.trim().trim_end_matches('.').to_ascii_lowercase();
+            if pat == "*" {
+                return true;
+            }
+            if let Some((network, prefix)) = pat.split_once('/') {
+                if let (Some(ip), Ok(network), Ok(prefix)) =
+                    (ip, network.parse::<IpAddr>(), prefix.parse::<u32>())
+                    && ip_in_network(ip, network, prefix)
+                {
+                    return true;
+                }
+            } else if let Some(bare) = pat.strip_prefix("*.").or_else(|| pat.strip_prefix('.')) {
                 let suffix = format!(".{bare}");
                 if domain_lower.ends_with(suffix.as_str()) || domain_lower == bare {
                     return true;
                 }
-            } else if domain_lower == pat {
+            } else if domain_lower == pat || ip.is_some_and(|ip| pat.parse::<IpAddr>() == Ok(ip)) {
                 return true;
             }
         }
@@ -136,6 +150,59 @@ impl ProxyEnvironment {
     #[must_use]
     pub fn has_usable_proxy(&self) -> bool {
         self.http_proxy.is_some() || self.https_proxy.is_some() || self.socks_proxy.is_some()
+    }
+}
+
+/// Matches CIDRs without resolving names or crossing address families.
+fn ip_in_network(ip: IpAddr, network: IpAddr, prefix: u32) -> bool {
+    match (ip, network) {
+        (IpAddr::V4(ip), IpAddr::V4(network)) if prefix <= 32 => {
+            let mask = u32::MAX.checked_shl(32 - prefix).unwrap_or(0);
+            u32::from(ip) & mask == u32::from(network) & mask
+        }
+        (IpAddr::V6(ip), IpAddr::V6(network)) if prefix <= 128 => {
+            let mask = u128::MAX.checked_shl(128 - prefix).unwrap_or(0);
+            u128::from(ip) & mask == u128::from(network) & mask
+        }
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod bypass_tests {
+    use super::*;
+
+    #[test]
+    fn no_proxy_supports_suffixes_addresses_networks_and_all() {
+        let mut env = ProxyEnvironment {
+            bypass_domains: vec![
+                ".Corp.Example".into(),
+                "10.0.0.0/8".into(),
+                "fd00::/8".into(),
+            ],
+            ..Default::default()
+        };
+        for host in ["corp.example", "API.CORP.EXAMPLE.", "10.8.1.2", "fd01::1"] {
+            assert!(env.should_bypass(host), "{host}");
+        }
+        for host in [
+            "evilcorp.example",
+            "corp.example.attacker.test",
+            "11.0.0.1",
+            "fe80::1",
+        ] {
+            assert!(!env.should_bypass(host), "{host}");
+        }
+        env.bypass_domains = vec!["::1".into(), "192.0.2.5/32".into(), "10.0.0.0/33".into()];
+        assert!(env.should_bypass("[::1]"));
+        assert!(env.should_bypass("192.0.2.5"));
+        assert!(!env.should_bypass("192.0.2.6"));
+        assert!(!env.should_bypass("10.0.0.1"));
+        env.bypass_domains = vec!["0.0.0.0/0".into()];
+        assert!(env.should_bypass("203.0.113.1"));
+        assert!(!env.should_bypass("::1"));
+        env.bypass_domains = vec!["*".into()];
+        assert!(env.should_bypass("anything.example"));
     }
 }
 

@@ -9,6 +9,35 @@ use super::*;
 
 const ACCOUNT: &str = "socks5://alice@10.0.0.2:1080";
 
+#[test]
+fn remote_dns_reuses_the_existing_socks_account_and_survives_reload() {
+    let dir = tempfile::tempdir().unwrap();
+    let (proxy, store) = controller(&dir);
+    store.set(ACCOUNT, "saved-password").unwrap();
+    let remote = "socks5h://alice@10.0.0.2:1080";
+    let view = proxy
+        .apply(preferences(remote), PasswordChange::Keep)
+        .unwrap();
+    assert!(view.has_password);
+    assert_eq!(view.preferences.policy.to_string(), remote);
+    assert_eq!(view.effective, vec![remote]);
+    assert!(
+        proxy
+            .state()
+            .load()
+            .environment
+            .as_ref()
+            .unwrap()
+            .remote_dns
+    );
+    assert_eq!(socks_password(&proxy).as_deref(), Some("saved-password"));
+    let config = std::fs::read_to_string(dir.path().join("config.toml")).unwrap();
+    assert!(config.contains("socks5h://"));
+    assert!(!config.contains("saved-password"));
+    let reloaded = NetworkProxy::new(preferences(remote), store, dir.path().join("config.toml"));
+    assert_eq!(socks_password(&reloaded).as_deref(), Some("saved-password"));
+}
+
 fn preferences(policy: &str) -> ProxyPreferences {
     ProxyPreferences {
         policy: policy.parse().unwrap(),

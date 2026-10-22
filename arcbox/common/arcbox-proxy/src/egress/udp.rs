@@ -218,8 +218,10 @@ impl UdpProxy {
         // same `should_bypass` policy the TCP egress uses.
         let snapshot = self.proxy_state.load();
         let environment = snapshot.environment.as_ref();
-        let bypass =
-            dst_ip == self.gateway_ip || environment.is_some_and(|env| env.should_bypass(&host));
+        let bypass = dst_ip == self.gateway_ip
+            || environment.is_some_and(|env| {
+                env.should_bypass(&host) || env.should_bypass(&dst_ip.to_string())
+            });
         if !bypass
             && (snapshot.udp == UdpPolicy::Block
                 || (snapshot.udp == UdpPolicy::Proxy
@@ -231,7 +233,7 @@ impl UdpProxy {
         let socks = environment
             .filter(|_| snapshot.udp == UdpPolicy::Proxy)
             .and_then(|env| {
-                if dst_ip == self.gateway_ip || env.should_bypass(&host) {
+                if bypass {
                     return None;
                 }
                 env.socks_proxy.as_ref().map(|p| (p.clone(), host.clone()))

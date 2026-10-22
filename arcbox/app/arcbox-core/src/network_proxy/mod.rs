@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use arcbox_fakeip::proxy_auth::ProxyAuth;
 use arcbox_fakeip::proxy_detect::{ProxyConfig, ProxyEnvironment};
-use arcbox_fakeip::proxy_policy::{ProxyPolicy, ProxySettings, ProxyUrl};
+use arcbox_fakeip::proxy_policy::{ProxyPolicy, ProxyScheme, ProxySettings, ProxyUrl};
 use arcbox_fakeip::proxy_state::{IcmpPolicy, ProxySnapshot, ProxyState, UdpPolicy};
 use zeroize::Zeroizing;
 
@@ -328,7 +328,8 @@ impl NetworkProxy {
 }
 
 /// The credential-store account of a custom proxy with a user: its
-/// password-free URL, `scheme://user@host:port`.
+/// password-free URL, `scheme://user@host:port`. SOCKS5 and SOCKS5h share
+/// one account, because DNS routing does not change its credentials.
 fn credential_account(policy: &ProxyPolicy) -> Option<String> {
     match policy {
         ProxyPolicy::Custom(url) if url.server.auth.is_some() => Some(password_free(url)),
@@ -337,8 +338,13 @@ fn credential_account(policy: &ProxyPolicy) -> Option<String> {
 }
 
 fn password_free(url: &ProxyUrl) -> String {
-    // `ProxyUrl`'s Display never includes the password.
-    url.to_string()
+    // DNS routing does not change the proxy account. Preserve credentials
+    // saved before socks5h was a distinct policy.
+    let mut account = url.clone();
+    if account.scheme == ProxyScheme::Socks5h {
+        account.scheme = ProxyScheme::Socks5;
+    }
+    account.to_string()
 }
 
 /// Where [`resolve`] takes a custom proxy's password from.
@@ -413,7 +419,7 @@ pub fn describe(environment: Option<&ProxyEnvironment>) -> Vec<String> {
     };
     let mut out = Vec::new();
     if let Some(p) = &env.socks_proxy {
-        out.push(fmt("socks5", p));
+        out.push(fmt(if env.remote_dns { "socks5h" } else { "socks5" }, p));
     }
     if let Some(p) = &env.https_proxy {
         out.push(fmt("https", p));

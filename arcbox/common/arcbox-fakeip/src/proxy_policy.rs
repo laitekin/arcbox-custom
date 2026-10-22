@@ -84,6 +84,8 @@ pub enum ProxyScheme {
     Https,
     /// SOCKS5; the only protocol that also carries UDP.
     Socks5,
+    /// SOCKS5 with gateway DNS resolved through the proxy.
+    Socks5h,
 }
 
 impl ProxyScheme {
@@ -92,6 +94,7 @@ impl ProxyScheme {
             Self::Http => "http",
             Self::Https => "https",
             Self::Socks5 => "socks5",
+            Self::Socks5h => "socks5h",
         }
     }
 }
@@ -125,7 +128,8 @@ impl FromStr for ProxyUrl {
         let scheme = match scheme.to_ascii_lowercase().as_str() {
             "http" => ProxyScheme::Http,
             "https" => ProxyScheme::Https,
-            "socks5" | "socks5h" | "socks" => ProxyScheme::Socks5,
+            "socks5" | "socks" => ProxyScheme::Socks5,
+            "socks5h" => ProxyScheme::Socks5h,
             _ => return Err(ProxyPolicyError::UnsupportedScheme("unsupported".into())),
         };
         let rest = rest.trim_end_matches('/');
@@ -242,7 +246,10 @@ impl ProxySettings {
             ProxyPolicy::Custom(url) => {
                 let mut env = ProxyEnvironment::default();
                 match url.scheme {
-                    ProxyScheme::Socks5 => env.socks_proxy = Some(url.server.clone()),
+                    ProxyScheme::Socks5 | ProxyScheme::Socks5h => {
+                        env.socks_proxy = Some(url.server.clone());
+                        env.remote_dns = url.scheme == ProxyScheme::Socks5h;
+                    }
                     ProxyScheme::Https => env.https_proxy = Some(url.server.clone()),
                     ProxyScheme::Http => env.http_proxy = Some(url.server.clone()),
                 }
@@ -300,7 +307,9 @@ mod tests {
         assert_eq!(socks.server.port, 1080);
         assert_eq!(socks.to_string(), "socks5://127.0.0.1:1080");
 
-        assert_eq!(url("socks5h://proxy.corp:1080").scheme, ProxyScheme::Socks5);
+        let remote = url("socks5h://proxy.corp:1080");
+        assert_eq!(remote.scheme, ProxyScheme::Socks5h);
+        assert_eq!(remote.to_string(), "socks5h://proxy.corp:1080");
         assert_eq!(url("HTTP://proxy.corp:3128/").scheme, ProxyScheme::Http);
         assert_eq!(url("https://proxy.corp:3129").scheme, ProxyScheme::Https);
 
@@ -359,6 +368,7 @@ mod tests {
             .resolve()
             .expect("a custom proxy is an environment");
         assert!(!env.fake_ip_active);
+        assert!(!env.remote_dns);
         assert!(env.http_proxy.is_none());
         assert!(env.https_proxy.is_none());
         assert_eq!(env.socks_proxy.as_ref().unwrap().port, 1080);
@@ -375,6 +385,15 @@ mod tests {
         let env = http.resolve().unwrap();
         assert_eq!(env.http_proxy.as_ref().unwrap().port, 3128);
         assert!(env.socks_proxy.is_none());
+
+        let remote = ProxySettings {
+            policy: "socks5h://10.0.0.5:1080".parse().unwrap(),
+            exclude: vec![],
+        }
+        .resolve()
+        .unwrap();
+        assert!(remote.remote_dns);
+        assert!(remote.socks_proxy.is_some());
     }
 
     #[test]
