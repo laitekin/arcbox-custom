@@ -40,7 +40,7 @@ final class NetworkSettingsModel {
 
     /// The draft needs a password it does not have: a new user, nothing typed.
     var needsPassword: Bool {
-        draft.mode == .custom && !draft.username.isEmpty && password.isEmpty
+        draft.mode == .custom && draft.profileID.isEmpty && !draft.username.isEmpty && password.isEmpty
             && !(draft.sameAccount(as: saved) && saved.hasPassword)
     }
 
@@ -71,6 +71,8 @@ final class NetworkSettingsModel {
         apply(saved)
         saveError = nil
     }
+
+    func clearTestResults() { if !isTesting { testSteps = []; testError = nil } }
 
     func save(client: ArcBoxClient?) async {
         guard let client, !isSaving, validationError == nil else { return }
@@ -124,6 +126,7 @@ final class NetworkSettingsModel {
             var settings = draft
             settings.exclude = Self.lines(excludeText)
             request.settings = settings.proto
+            request.profileID = settings.profileID
             if !password.isEmpty { request.password = password }
         }
         do {

@@ -12,6 +12,8 @@ struct MachineCreateSpec {
     var diskGiB: UInt64 = 50
     /// A local image (`name@version`) to boot instead of a distro.
     var image = ""
+    /// Empty inherits the default; `direct`, or a saved proxy ID.
+    var proxyChoice = ""
 }
 
 extension MachinesViewModel {
@@ -113,6 +115,21 @@ extension MachinesViewModel {
                 options: ArcBoxClient.machineCreateCallOptions
             )
             Log.machine.info("Created machine \(response.id, privacy: .private(mask: .hash))")
+            if !spec.proxyChoice.isEmpty {
+                var assignment = Arcbox_V1_SetMachineProxyRequest()
+                assignment.machine = response.id
+                assignment.choice = spec.proxyChoice
+                do {
+                    _ = try await client.proxyLibrary.setMachineProxy(
+                        assignment, options: ArcBoxClient.defaultCallOptions)
+                } catch {
+                    await loadMachines(client: client)
+                    lastError =
+                        "The machine was created and left stopped because its proxy could not be assigned. Choose a proxy in Info before starting it: "
+                        + ArcBoxClient.userMessage(for: error)
+                    return response.id
+                }
+            }
             await loadMachines(client: client)
             await startMachine(response.id, client: client)
             return response.id
