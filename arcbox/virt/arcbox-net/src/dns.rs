@@ -324,7 +324,13 @@ impl DnsForwarder {
     /// 2026-10-01, `docs/experiments/2026-10-01-local-domain-negative-answers.md`).
     /// Either form keeps the name from leaking upstream.
     pub fn try_resolve_locally_or_nodata(&self, data: &[u8]) -> Option<Vec<u8>> {
-        let query = DnsQuery::parse(data).ok()?;
+        let query = match DnsQuery::parse(data) {
+            Ok(query) => query,
+            // Modern clients also ask HTTPS/SVCB questions. These must not
+            // leak local host names just because our address parser does not
+            // implement their record types.
+            Err(_) => return self.resolve_other_local_type(data),
+        };
 
         if let Some(ip) = self.resolve_local(&query.name) {
             return self.build_local_response(&query, ip).ok();
@@ -339,6 +345,35 @@ impl DnsForwarder {
 
         // Not a local domain — caller should forward upstream.
         None
+    }
+
+    fn resolve_other_local_type(&self, data: &[u8]) -> Option<Vec<u8>> {
+        use hickory_proto::op::{Message, MessageType, ResponseCode};
+
+        let mut message = Message::from_vec(data).ok()?;
+        if message.metadata.message_type != MessageType::Query || message.queries.len() != 1 {
+            return None;
+        }
+        let name = message.queries[0]
+            .name()
+            .to_ascii()
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
+        let local_domain = self.config.local_domain.as_ref();
+        let is_local = self.resolve_local(&name).is_some()
+            || local_domain
+                .is_some_and(|domain| name == *domain || name.ends_with(&format!(".{domain}")));
+        if !is_local {
+            return None;
+        }
+        message.metadata.message_type = MessageType::Response;
+        message.metadata.authoritative = true;
+        message.metadata.recursion_available = true;
+        message.metadata.response_code = ResponseCode::NoError;
+        message.answers.clear();
+        message.authorities.clear();
+        message.additionals.clear();
+        message.to_vec().ok()
     }
 
     /// Builds a NODATA response: NOERROR with an empty answer section.
@@ -1106,4 +1141,24 @@ mod tests {
             "old default domain should not be handled after domain change"
         );
     }
+
+    #[test]
+    fn local_https_and_svcb_questions_never_reach_an_upstream() {
+        let forwarder = crate::dns::DnsForwarder::new(crate::dns::DnsConfig::default());
+        for qtype in [64_u16, 65] {
+            let mut data = vec![0x12, 0x34, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+            data.extend_from_slice(b"\x07missing\x06arcbox\x05local\0");
+            data.extend_from_slice(&qtype.to_be_bytes());
+            data.extend_from_slice(&[0, 1]);
+            let reply = forwarder.try_resolve_locally_or_nodata(&data).unwrap();
+            let reply = hickory_proto::op::Message::from_vec(&reply).unwrap();
+            assert!(reply.answers.is_empty());
+            assert_eq!(reply.metadata.message_type, hickory_proto::op::MessageType::Response);
+            assert_eq!(
+                reply.metadata.response_code,
+                hickory_proto::op::ResponseCode::NoError
+            );
+        }
+    }
+
 }
