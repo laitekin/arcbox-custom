@@ -11,6 +11,26 @@ final class ProxyLibraryModel {
     private(set) var testSteps: [String: [EgressProxyTestStep]] = [:]
     private(set) var testing: Set<String> = []
     var error: String?
+    /// The default proxy as the daemon reported it; nil until loaded.
+    private(set) var defaultSettings: EgressProxySettings?
+    private(set) var isSavingDefault = false
+    /// Each machine's saved choice: empty follows the default, `direct`, or
+    /// a saved proxy ID.
+    private(set) var machineChoices: [String: String] = [:]
+    /// What each machine's new connections use right now.
+    private(set) var machineEffective: [String: String] = [:]
+    private(set) var savingMachines: Set<String> = []
+
+    /// Drops a proxy's test results, which no longer describe it once edited.
+    func forgetTestResults(_ id: String) { testSteps[id] = nil }
+
+    func profile(_ id: String) -> SavedProxyProfile? { profiles.first { $0.id == id } }
+
+    /// The default as a picker choice: a saved proxy ID, `system`, `direct`,
+    /// or `custom` for a one-off proxy edited in Settings.
+    var defaultChoice: String? {
+        defaultSettings.map { ProxyChoice.defaultChoice(of: $0) }
+    }
 
     func load(client: ArcBoxClient?) async {
         guard let client else { phase = .waiting; return }
@@ -18,9 +38,76 @@ final class ProxyLibraryModel {
         do {
             let result = try await client.proxyLibrary.listProfiles(.init(), options: ArcBoxClient.defaultCallOptions)
             profiles = result.profiles.map(SavedProxyProfile.init(proto:))
-            testSteps = [:]
+            let ids = Set(profiles.map(\.id))
+            testSteps = testSteps.filter { ids.contains($0.key) }
             phase = .loaded
         } catch { phase = .failed(ArcBoxClient.userMessage(for: error)) }
+    }
+
+    func loadDefault(client: ArcBoxClient?) async {
+        guard let client else { return }
+        do {
+            let reply = try await client.egressProxy.getProxy(.init(), options: ArcBoxClient.defaultCallOptions)
+            defaultSettings = EgressProxySettings(proto: reply)
+        } catch { self.error = ArcBoxClient.userMessage(for: error) }
+    }
+
+    /// Makes `choice` the default proxy; it reaches new connections at once.
+    func setDefault(_ choice: String, client: ArcBoxClient?) async {
+        guard let client, let current = defaultSettings, !isSavingDefault,
+            let next = ProxyChoice.settings(forDefault: choice, current: current)
+        else { return }
+        isSavingDefault = true
+        defer { isSavingDefault = false }
+        do {
+            let reply = try await client.egressProxy.setProxy(
+                next.setRequest(password: .keep), options: ArcBoxClient.defaultCallOptions)
+            defaultSettings = EgressProxySettings(proto: reply)
+            error = nil
+        } catch { self.error = ArcBoxClient.userMessage(for: error) }
+        await load(client: client)
+    }
+
+    func loadMachineChoices(_ machines: [String], client: ArcBoxClient?) async {
+        guard let client else { return }
+        for machine in machines {
+            var request = Arcbox_V1_MachineProxyRequest()
+            request.machine = machine
+            if let reply = try? await client.proxyLibrary.getMachineProxy(
+                request, options: ArcBoxClient.defaultCallOptions)
+            {
+                apply(reply, machine: machine)
+            }
+        }
+    }
+
+    /// Assigns a machine's proxy; running machines use it for new
+    /// connections without a restart. Returns whether it was saved.
+    @discardableResult
+    func setMachine(_ machine: String, choice: String, client: ArcBoxClient?) async -> Bool {
+        guard let client, !savingMachines.contains(machine) else { return false }
+        savingMachines.insert(machine)
+        defer { savingMachines.remove(machine) }
+        var request = Arcbox_V1_SetMachineProxyRequest()
+        request.machine = machine
+        request.choice = choice
+        do {
+            let reply = try await client.proxyLibrary.setMachineProxy(
+                request, options: ArcBoxClient.defaultCallOptions)
+            apply(reply, machine: machine)
+            error = nil
+            await load(client: client)
+            return true
+        } catch {
+            self.error = ArcBoxClient.userMessage(for: error)
+            return false
+        }
+    }
+
+    private func apply(_ reply: Arcbox_V1_MachineProxyAssignment, machine: String) {
+        machineChoices[machine] = reply.choice
+        let effective = EgressProxySettings(proto: reply.effective).effective
+        machineEffective[machine] = effective.isEmpty ? "Direct" : effective.joined(separator: ", ")
     }
 
     func remove(_ profile: SavedProxyProfile, client: ArcBoxClient?) async {
@@ -36,6 +123,7 @@ final class ProxyLibraryModel {
         guard let client, !testing.contains(profile.id) else { return }
         testing.insert(profile.id)
         testSteps[profile.id] = []
+        error = nil
         var request = Arcbox_V1_TestEgressProxyRequest()
         request.settings = profile.settings.proto
         request.profileID = profile.id
@@ -59,6 +147,8 @@ final class ProxyProfileEditorModel {
     private var previousSuggestion: String? = nil
     var name: String
     var urlInput = ""
+    /// The endpoint the last pasted URL filled in, to confirm the import.
+    private(set) var lastImported: String?
     var draft: EgressProxySettings
     var password = ""
     var excludeText = ""
@@ -90,6 +180,19 @@ final class ProxyProfileEditorModel {
         return nil
     }
 
+    /// Why Save and Test are unavailable; shown beside the fields.
+    var fieldProblem: String? { validationError }
+
+    /// The user has started describing a proxy, so problems are worth showing.
+    var hasInput: Bool { !draft.host.isEmpty || !draft.port.isEmpty || !draft.username.isEmpty }
+
+    /// Imports the URL field if it holds a complete URL; otherwise leaves it
+    /// alone without complaint.
+    func importIfComplete() {
+        guard (try? SocksURLImport.parse(urlInput)) != nil else { return }
+        importURL()
+    }
+
     @discardableResult
     func importURL() -> Bool {
         do {
@@ -102,6 +205,7 @@ final class ProxyProfileEditorModel {
             password = imported.password ?? ""
             name = SocksURLImport.suggestedName(for: draft, currentName: name, previousSuggestion: previousSuggestion)
             previousSuggestion = draft.endpointLabel
+            lastImported = draft.endpointLabel
             urlInput = ""
             steps = []
             error = nil
@@ -121,7 +225,7 @@ final class ProxyProfileEditorModel {
 
     func save(client: ArcBoxClient?) async -> Bool {
         guard let client, !isSaving, prepare() else { return false }
-        guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { error = "Enter a proxy name."; return false }
+        if name.trimmingCharacters(in: .whitespaces).isEmpty { name = draft.endpointLabel }
         isSaving = true
         defer { isSaving = false }
         var request = Arcbox_V1_SaveProxyProfileRequest()

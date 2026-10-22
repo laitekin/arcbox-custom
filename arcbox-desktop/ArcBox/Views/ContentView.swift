@@ -125,13 +125,13 @@ struct ContentView: View {
     /// zero-width middle pane in the three-column split leaves two internal
     /// dividers stacked beside the sidebar.
     private var usesFullWidthDetail: Bool {
-        appVM.currentNav == .activity
+        appVM.currentNav?.isFullWidth == true
     }
 
     private var resourceDeepLinkAvailability: ResourceDeepLinkAvailability? {
         guard let request = appVM.pendingResourceDeepLink else { return nil }
         switch request.section {
-        case .activity:
+        case .activity, .proxies:
             return nil
         case .containers:
             return ResourceDeepLinkAvailability(
@@ -228,7 +228,7 @@ struct ContentView: View {
         guard let request = appVM.pendingResourceDeepLink else { return }
 
         switch request.section {
-        case .activity:
+        case .activity, .proxies:
             break
         case .containers:
             await containersVM.loadContainersFromDocker(
@@ -252,7 +252,7 @@ struct ContentView: View {
 
     private func selectResource(_ request: AppViewModel.ResourceDeepLink) {
         switch request.section {
-        case .activity:
+        case .activity, .proxies:
             break
         case .containers:
             containersVM.searchText = ""
@@ -300,6 +300,10 @@ struct ContentView: View {
             // Rendered by the two-column branch.
             Color.clear
                 .navigationTitle("Activity")
+        case .proxies:
+            // Rendered by the two-column branch.
+            Color.clear
+                .navigationTitle("Proxies")
         case .containers:
             ContainersListView()
                 .environment(containersVM)
@@ -340,6 +344,9 @@ struct ContentView: View {
         case .activity:
             ActivityView()
                 .environment(activityVM)
+        case .proxies:
+            ProxiesView()
+                .environment(machinesVM)
         case .containers:
             ContainerDetailView()
                 .environment(containersVM)

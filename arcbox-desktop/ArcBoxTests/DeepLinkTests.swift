@@ -56,7 +56,7 @@ final class DeepLinkTests: XCTestCase {
 
     @MainActor func testResolvesValidAndReportsMissingIDsForEveryResourceSection() {
         let (router, appVM) = makeRouter()
-        let resourceSections = NavItem.allCases.filter { $0 != .activity }
+        let resourceSections = NavItem.allCases.filter(\.acceptsResourceID)
 
         for item in resourceSections {
             let validID = "valid-\(item.rawValue)"
@@ -106,6 +106,12 @@ final class DeepLinkTests: XCTestCase {
         XCTAssertEqual(appVM.currentNav, .activity)
         XCTAssertNil(appVM.pendingResourceDeepLink)
         XCTAssertEqual(appVM.deepLinkError, "Activity links don’t support resource IDs.")
+
+        router.handle(URL(string: "arcbox://proxies/resource-id")!)
+
+        XCTAssertEqual(appVM.currentNav, .proxies)
+        XCTAssertNil(appVM.pendingResourceDeepLink)
+        XCTAssertEqual(appVM.deepLinkError, "Proxies links don’t support resource IDs.")
     }
 
     @MainActor func testDecodesPercentEncodedID() {

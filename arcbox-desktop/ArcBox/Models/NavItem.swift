@@ -9,6 +9,7 @@ enum NavItem: String, CaseIterable, Identifiable {
     case services
     case machines
     case sandboxes
+    case proxies
 
     var id: String { rawValue }
 
@@ -23,6 +24,7 @@ enum NavItem: String, CaseIterable, Identifiable {
         case .services: "Services"
         case .machines: "Machines"
         case .sandboxes: "Sandboxes"
+        case .proxies: "Proxies"
         }
     }
 
@@ -37,8 +39,16 @@ enum NavItem: String, CaseIterable, Identifiable {
         case .services: "gearshape.2"
         case .machines: "desktopcomputer"
         case .sandboxes: "server.rack"
+        case .proxies: "network.badge.shield.half.filled"
         }
     }
+
+    /// A page that fills the window beside the sidebar instead of a list and
+    /// a detail column.
+    var isFullWidth: Bool { self == .activity || self == .proxies }
+
+    /// Deep links may name a resource in this section to select.
+    var acceptsResourceID: Bool { !isFullWidth }
 
     /// Sidebar sections
     enum Section: String, CaseIterable, Identifiable {
@@ -52,7 +62,7 @@ enum NavItem: String, CaseIterable, Identifiable {
 
         var items: [NavItem] {
             switch self {
-            case .system: [.activity]
+            case .system: [.activity, .proxies]
             case .docker: [.containers, .volumes, .images, .networks]
             case .kubernetes: [.pods, .services]
             case .linux: [.machines]

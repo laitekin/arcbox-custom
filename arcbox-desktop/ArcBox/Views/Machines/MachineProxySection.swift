@@ -1,88 +1,120 @@
 import ArcBoxClient
 import SwiftUI
 
+/// The machine's outbound proxy. Picking applies at once — running machines
+/// switch for new connections without a restart.
 struct MachineProxySection: View {
     let machine: String
     @Environment(\.arcboxClient) private var client
+    @Environment(AppViewModel.self) private var appVM
     @State private var library = ProxyLibraryModel()
-    @State private var choice = ""
-    @State private var savedChoice = ""
-    @State private var effective = ""
     private enum Phase { case loading, loaded, failed }
     @State private var phase: Phase = .loading
-    @State private var isSaving = false
-    @State private var error: String?
+    @State private var steps: [EgressProxyTestStep] = []
+    @State private var isTesting = false
+    @State private var testExpanded = false
+    @State private var testError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Outbound proxy").font(.system(size: 13, weight: .semibold)).accessibilityAddTraits(.isHeader)
             VStack(alignment: .leading, spacing: 10) {
-                if phase == .loaded {
-                    Picker("Proxy for this machine", selection: $choice) {
-                        Text("Follow default").tag("")
-                        Text("Direct").tag("direct")
-                        ForEach(library.profiles) { Text($0.menuLabel).tag($0.id) }
-                        if !savedChoice.isEmpty && savedChoice != "direct"
-                            && !library.profiles.contains(where: { $0.id == savedChoice })
-                        {
-                            Text("Saved proxy unavailable").tag(savedChoice)
-                        }
-                    }.disabled(isSaving)
-                    Text("In use: \(effective)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                    Text("Applies to new connections without restarting the machine.").font(.caption).foregroundStyle(
-                        .secondary)
-                    HStack {
-                        Button("Refresh") { Task { await load() } }.disabled(isSaving)
-                        Spacer()
-                        Button("Revert") { choice = savedChoice }.disabled(choice == savedChoice || isSaving)
-                        Button(isSaving ? "Applying…" : "Apply") { Task { await save() } }.disabled(
-                            choice == savedChoice || isSaving)
-                    }
-                } else if phase == .loading {
+                switch phase {
+                case .loading:
                     ProgressView().controlSize(.small)
+                case .failed:
+                    ProxyErrorLabel(message: library.error ?? "The proxy assignment could not be loaded.")
+                    Button("Try Again") { Task { await load() } }
+                case .loaded:
+                    loaded
                 }
-                if let error {
-                    Text(error).font(.caption).foregroundStyle(.red)
-                    if phase == .failed { Button("Try Again") { Task { await load() } } }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .infoSectionStyle()
+        }
+        .task(id: machine) { await load() }
+    }
+
+    @ViewBuilder
+    private var loaded: some View {
+        let choice = library.machineChoices[machine] ?? ""
+        let isSaving = library.savingMachines.contains(machine)
+        HStack(spacing: 10) {
+            MachineProxyPicker(choice: choice, profiles: library.profiles) { next in
+                Task {
+                    clearTest()
+                    await library.setMachine(machine, choice: next, client: client)
                 }
-            }.padding(12).infoSectionStyle()
-        }.task(id: machine) { await load() }
+            }
+            .disabled(isSaving || isTesting)
+            if isSaving {
+                ProgressView().controlSize(.small)
+            }
+            Spacer()
+            Button(isTesting ? "Testing…" : "Test") { Task { await test(choice) } }
+                .disabled(isSaving || isTesting || choice == ProxyChoice.direct)
+                .help(choice == ProxyChoice.direct ? "Direct connections have no proxy to test" : "Test this proxy")
+            Button("Manage Proxies…") { appVM.navigate(to: .proxies) }
+        }
+        if let effective = library.machineEffective[machine] {
+            Text("In use: \(effective)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+        }
+        if isTesting || !steps.isEmpty {
+            ProxyTestDisclosure(
+                summary: ProxyTestSummary(steps: steps, isRunning: isTesting),
+                steps: steps,
+                isExpanded: $testExpanded
+            )
+        }
+        if let error = testError ?? library.error {
+            ProxyErrorLabel(message: error)
+        }
     }
 
     private func load() async {
-        guard let client else { error = "ArcBox daemon is unavailable."; phase = .failed; return }
+        guard let client else {
+            library.error = "ArcBox daemon is unavailable."
+            phase = .failed
+            return
+        }
         phase = .loading
-        error = nil
+        clearTest()
+        library.error = nil
         await library.load(client: client)
-        var request = Arcbox_V1_MachineProxyRequest()
-        request.machine = machine
-        do {
-            let result = try await client.proxyLibrary.getMachineProxy(
-                request, options: ArcBoxClient.defaultCallOptions)
-            apply(result)
-        } catch { self.error = ArcBoxClient.userMessage(for: error); phase = .failed }
+        await library.loadMachineChoices([machine], client: client)
+        phase = library.machineChoices[machine] == nil ? .failed : .loaded
     }
 
-    private func save() async {
-        guard let client else { return }
-        isSaving = true
-        defer { isSaving = false }
-        var request = Arcbox_V1_SetMachineProxyRequest()
-        request.machine = machine
-        request.choice = choice
-        do {
-            let result = try await client.proxyLibrary.setMachineProxy(
-                request, options: ArcBoxClient.defaultCallOptions)
-            error = nil
-            apply(result)
-        } catch { self.error = ArcBoxClient.userMessage(for: error) }
+    private func clearTest() {
+        steps = []
+        testError = nil
+        testExpanded = false
     }
 
-    private func apply(_ result: Arcbox_V1_MachineProxyAssignment) {
-        choice = result.choice
-        savedChoice = result.choice
-        let settings = EgressProxySettings(proto: result.effective)
-        effective = settings.effective.isEmpty ? "Direct" : settings.effective.joined(separator: ", ")
-        phase = .loaded
+    /// Tests what the machine is set to: its saved proxy, or the default.
+    private func test(_ choice: String) async {
+        guard let client, !isTesting else { return }
+        isTesting = true
+        clearTest()
+        defer { isTesting = false }
+        var request = Arcbox_V1_TestEgressProxyRequest()
+        if let profile = library.profile(choice) {
+            request.settings = profile.settings.proto
+            request.profileID = profile.id
+        }
+        do {
+            steps = try await client.egressProxy.testProxy(request, options: ArcBoxClient.proxyTestCallOptions) {
+                response in
+                var received: [EgressProxyTestStep] = []
+                for try await event in response.messages {
+                    received.append(EgressProxyTestStep(proto: event))
+                }
+                return received
+            }
+        } catch {
+            testError = ArcBoxClient.userMessage(for: error)
+        }
+        testExpanded = ProxyTestSummary(steps: steps, isRunning: false).isFailure
     }
 }
