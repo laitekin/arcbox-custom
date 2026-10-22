@@ -152,6 +152,9 @@ impl NetworkProxy {
         preferences: &ProxyPreferences,
         password: Option<&str>,
     ) -> Result<Option<ProxyEnvironment>> {
+        // Capture the address and its credential together, before a writer
+        // can replace the profile's password for a different endpoint.
+        let _writer = self.lock();
         let library = self.proxy_library();
         let original = find(&library, id)?;
         let mut draft = original.clone();
@@ -223,7 +226,7 @@ impl NetworkProxy {
     pub fn machine_proxy(&self, name: &str) -> Result<(String, ProxySettingsView)> {
         let library = self.proxy_library();
         let choice = library.machines.get(name).cloned().unwrap_or_default();
-        let settings = if choice == "direct" {
+        let mut settings = if choice == "direct" {
             ProxySettingsView {
                 preferences: ProxyPreferences {
                     policy: ProxyPolicy::None,
@@ -243,6 +246,7 @@ impl NetworkProxy {
             self.profile_view(find(&library, &choice)?, &library)?
                 .settings
         };
+        settings.revision = self.routes.for_machine(name).load().revision;
         Ok((choice, settings))
     }
 }

@@ -1610,6 +1610,9 @@ pub struct EgressProxySettings {
     /// Output only: bumps every time the applied settings change.
     #[prost(uint64, tag = "9")]
     pub revision: u64,
+    /// Selected saved profile; empty for an inline/system/direct default.
+    #[prost(string, tag = "10")]
+    pub profile_id: ::prost::alloc::string::String,
 }
 /// Request to change the egress proxy settings.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -1635,6 +1638,70 @@ pub struct TestEgressProxyRequest {
     /// Target `host:port` to tunnel to; empty means www.gstatic.com:443.
     #[prost(string, tag = "3")]
     pub target: ::prost::alloc::string::String,
+    /// Saved profile whose credential to use when testing an edited draft.
+    #[prost(string, tag = "4")]
+    pub profile_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ProxyProfile {
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    /// Never contains a password; profile_id is this profile's immutable ID.
+    #[prost(message, optional, tag = "3")]
+    pub settings: ::core::option::Option<EgressProxySettings>,
+    #[prost(string, repeated, tag = "4")]
+    pub machines: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(bool, tag = "5")]
+    pub is_default: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ProxyLibrary {
+    #[prost(message, repeated, tag = "1")]
+    pub profiles: ::prost::alloc::vec::Vec<ProxyProfile>,
+    #[prost(string, tag = "2")]
+    pub default_profile_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SaveProxyProfileRequest {
+    /// Empty creates a profile. Otherwise edits that immutable ID.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub settings: ::core::option::Option<EgressProxySettings>,
+    /// Write only; absent keeps the stored password, empty clears it.
+    #[prost(string, optional, tag = "4")]
+    pub password: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ProxyProfileRequest {
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct MachineProxyRequest {
+    #[prost(string, tag = "1")]
+    pub machine: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetMachineProxyRequest {
+    #[prost(string, tag = "1")]
+    pub machine: ::prost::alloc::string::String,
+    /// Empty inherits the default; "direct" bypasses proxies; otherwise a profile ID.
+    #[prost(string, tag = "2")]
+    pub choice: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct MachineProxyAssignment {
+    #[prost(string, tag = "1")]
+    pub machine: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub choice: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub effective: ::core::option::Option<EgressProxySettings>,
 }
 /// One finished step of a proxy test.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

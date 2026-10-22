@@ -36,8 +36,8 @@ struct NetworkSettingsView: View {
                 }
             case .loaded:
                 ProxyLibrarySection(model: library, client: client) { await model.load(client: client) }
-                proxySection
-                if model.draft.profileID.isEmpty { trafficSection }
+                proxySection.disabled(model.isTesting || model.isSaving)
+                if model.draft.profileID.isEmpty { trafficSection.disabled(model.isTesting || model.isSaving) }
                 testSection
                 saveSection
             }

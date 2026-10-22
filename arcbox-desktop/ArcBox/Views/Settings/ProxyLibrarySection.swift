@@ -44,9 +44,9 @@ struct ProxyLibrarySection: View {
                                 model.testing.contains(profile.id))
                             Button("Edit…") {
                                 editing = profile; showingEditor = true
-                            }
+                            }.disabled(model.testing.contains(profile.id))
                             Button("Delete", role: .destructive) { deleting = profile }
-                                .disabled(profile.isInUse).help(
+                                .disabled(profile.isInUse || model.testing.contains(profile.id)).help(
                                     profile.isInUse
                                         ? "Change the default and machine assignments before deleting."
                                         : "Delete saved proxy")
