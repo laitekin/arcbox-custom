@@ -1,5 +1,6 @@
-use std::net::{Ipv4Addr, SocketAddr};
-use std::time::Duration;
+use std::net::Ipv4Addr;
+
+use arcbox_fakeip::proxy_state::ProxyState;
 
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -22,6 +23,7 @@ pub(super) fn handle_intercepted_frame(
     egress: &mut HostEgress,
     dhcp_server: &mut DhcpServer,
     dns_forwarder: &DnsForwarder,
+    proxy_state: &ProxyState,
     dns_reply_tx: &mpsc::Sender<Vec<u8>>,
     dns_log: &crate::darwin::dns_log::DnsResolutionLog,
     cancel: &CancellationToken,
@@ -47,6 +49,7 @@ pub(super) fn handle_intercepted_frame(
             handle_dns(
                 frame,
                 dns_forwarder,
+                proxy_state,
                 dns_reply_tx,
                 dns_log,
                 cancel,
@@ -151,6 +154,7 @@ fn handle_dhcp(
 fn handle_dns(
     frame: &[u8],
     dns_forwarder: &DnsForwarder,
+    proxy_state: &ProxyState,
     dns_reply_tx: &mpsc::Sender<Vec<u8>>,
     dns_log: &crate::darwin::dns_log::DnsResolutionLog,
     cancel: &CancellationToken,
@@ -177,7 +181,7 @@ fn handle_dns(
     let dns_data = &frame[dns_start..];
 
     // Fast path: resolve from local host mappings (no I/O).
-    if let Some(response) = dns_forwarder.try_resolve_locally(dns_data) {
+    if let Some(response) = dns_forwarder.try_resolve_locally_or_nodata(dns_data) {
         let reply_frames = build_udp_ip_ethernet(
             gateway_ip,
             src_ip,
@@ -203,6 +207,7 @@ fn handle_dns(
 
     // Slow path: forward to upstream asynchronously.
     let upstream = dns_forwarder.upstream();
+    let proxy = proxy_state.load();
     let data = dns_data.to_vec();
     let tx = dns_reply_tx.clone();
     let log = dns_log.clone();
@@ -212,7 +217,7 @@ fn handle_dns(
         // Cancel promptly on shutdown instead of waiting for upstream
         // DNS timeouts (up to 2 s × number of upstream servers).
         let result = tokio::select! {
-            r = forward_dns_async(&data, &upstream) => r,
+            r = crate::dns::proxy::forward(&data, &upstream, &proxy) => r,
             () = cancel.cancelled() => return,
         };
         match result {
@@ -270,36 +275,6 @@ fn handle_dns(
             }
         }
     });
-}
-
-/// Forwards a raw DNS query to upstream servers using async I/O.
-async fn forward_dns_async(data: &[u8], upstream: &[SocketAddr]) -> Result<Vec<u8>, String> {
-    if data.len() < 2 {
-        return Err("query too short".to_string());
-    }
-    let query_id = [data[0], data[1]];
-
-    for addr in upstream {
-        // A connected socket makes the kernel drop datagrams from anyone but
-        // this upstream — a 16-bit txid alone is guessable by an off-path
-        // attacker flooding the ephemeral port, so the source filter matters.
-        let socket = tokio::net::UdpSocket::bind("0.0.0.0:0")
-            .await
-            .map_err(|e| format!("bind failed: {e}"))?;
-        if socket.connect(addr).await.is_err() || socket.send(data).await.is_err() {
-            continue;
-        }
-
-        let mut buf = [0u8; 4096];
-        match tokio::time::timeout(Duration::from_secs(2), socket.recv(&mut buf)).await {
-            Ok(Ok(len)) if len >= 2 && buf[0] == query_id[0] && buf[1] == query_id[1] => {
-                return Ok(buf[..len].to_vec());
-            }
-            _ => {}
-        }
-    }
-
-    Err("all upstream DNS servers failed".to_string())
 }
 
 /// Builds a minimal DNS SERVFAIL response from the raw query.

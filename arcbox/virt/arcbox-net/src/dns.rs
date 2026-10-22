@@ -9,6 +9,7 @@
 //! The implementation handles basic A and AAAA record queries.
 
 mod cache;
+pub(crate) mod proxy;
 mod upstream;
 
 use std::collections::HashMap;
@@ -1153,12 +1154,14 @@ mod tests {
             let reply = forwarder.try_resolve_locally_or_nodata(&data).unwrap();
             let reply = hickory_proto::op::Message::from_vec(&reply).unwrap();
             assert!(reply.answers.is_empty());
-            assert_eq!(reply.metadata.message_type, hickory_proto::op::MessageType::Response);
+            assert_eq!(
+                reply.metadata.message_type,
+                hickory_proto::op::MessageType::Response
+            );
             assert_eq!(
                 reply.metadata.response_code,
                 hickory_proto::op::ResponseCode::NoError
             );
         }
     }
-
 }

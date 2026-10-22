@@ -226,7 +226,7 @@ impl NetworkDatapath {
         // proxy actually routes UDP). Without a proxy the bridge still gets
         // the DNS log, so flow metadata keeps recovering domains.
         egress.set_proxy_state(dns_log.clone(), proxy_env.clone());
-        tcp_bridge.set_proxy_state(dns_log.clone(), proxy_env);
+        tcp_bridge.set_proxy_state(dns_log.clone(), proxy_env.clone());
 
         let guest_async = AsyncFd::new(FdWrapper(guest_fd))?;
 
@@ -355,6 +355,7 @@ impl NetworkDatapath {
                             &mut egress,
                             &mut dhcp_server,
                             &dns_forwarder,
+                            &proxy_env,
                             &dns_reply_tx,
                             &dns_log,
                             &cancel,
