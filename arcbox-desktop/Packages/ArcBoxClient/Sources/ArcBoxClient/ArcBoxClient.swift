@@ -215,6 +215,10 @@ public final class ArcBoxClient: Sendable {
         .init(wrapping: grpcClient)
     }
 
+    public var proxyLibrary: Arcbox_V1_ProxyLibraryService.Client<HTTP2ClientTransport.TransportServices> {
+        .init(wrapping: grpcClient)
+    }
+
     /// Container image icon lookups.
     public var icons: Arcbox_V1_IconService.Client<HTTP2ClientTransport.TransportServices> {
         .init(wrapping: grpcClient)

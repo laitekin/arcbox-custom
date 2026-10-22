@@ -118,6 +118,7 @@ public enum EgressProxyPasswordChange: Equatable, Sendable {
 /// the daemon only reports whether one is stored.
 public struct EgressProxySettings: Equatable, Sendable {
     public var mode: EgressProxyMode = .system
+    public var profileID = ""
     public var proxyProtocol: EgressProxyProtocol = .socks5
     /// SOCKS5 gateway DNS through the proxy (`socks5h`), instead of the Mac's resolver.
     public var remoteDNS = true
@@ -158,18 +159,19 @@ public struct EgressProxySettings: Equatable, Sendable {
         hasPassword = proto.hasPassword_p
         effective = proto.effective
         credentialStore = proto.credentialStore
+        profileID = proto.profileID
     }
 
     /// Whether `other` describes the same proxy account (so a stored
     /// password still applies to it).
     public func sameAccount(as other: EgressProxySettings) -> Bool {
-        mode == .custom && other.mode == .custom && proxyProtocol == other.proxyProtocol
+        mode == .custom && other.mode == .custom && profileID == other.profileID && proxyProtocol == other.proxyProtocol
             && host == other.host && port == other.port && username == other.username
     }
 
     /// Why these settings cannot be saved, if they cannot.
     public var validationError: String? {
-        guard mode == .custom else { return nil }
+        guard mode == .custom && profileID.isEmpty else { return nil }
         let trimmedHost = host.trimmingCharacters(in: .whitespaces)
         if trimmedHost.isEmpty {
             return "Enter the proxy server's address."
@@ -216,6 +218,7 @@ public struct EgressProxySettings: Equatable, Sendable {
         settings.exclude = exclude.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         settings.udp = udp.proto
         settings.icmp = icmp.proto
+        settings.profileID = profileID
         return settings
     }
 
@@ -325,7 +328,7 @@ public enum EgressProxyQuickToggle {
         switch current.mode {
         case .direct: nil
         case .system: EgressProxyMode.system.rawValue
-        case .custom: current.url
+        case .custom: current.profileID.isEmpty ? current.url : "profile:\(current.profileID)"
         }
     }
 
@@ -333,6 +336,7 @@ public enum EgressProxyQuickToggle {
     public static func off(_ current: EgressProxySettings) -> EgressProxySettings {
         var settings = current
         settings.mode = .direct
+        settings.profileID = ""
         return settings
     }
 
@@ -341,6 +345,15 @@ public enum EgressProxyQuickToggle {
     public static func on(_ current: EgressProxySettings, remembered: String?) -> EgressProxySettings {
         var settings = current
         settings.mode = .system
+        settings.profileID = ""
+        if let remembered, remembered.hasPrefix("profile:") {
+            let id = String(remembered.dropFirst(8))
+            if UUID(uuidString: id) != nil {
+                settings.mode = .custom
+                settings.profileID = id
+            }
+            return settings
+        }
         guard let remembered, let parsed = EgressProxySettings.parse(url: remembered) else {
             return settings
         }
