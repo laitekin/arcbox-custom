@@ -151,7 +151,17 @@ public struct Arcbox_V1_CreateMachineRequest: Sendable {
   /// /Users or /private and no share of the daemon's data directory, only a
   /// directory of its own. Mounts listed above are still shared. See
   /// SetIsolation to change it later.
+  ///
+  /// An isolated machine also has no network path to the Mac, its networks
+  /// or other machines; its traffic goes through its saved proxy or
+  /// nowhere; and it gets a NIC address and machine ID of its own.
   public var isolated: Bool = false
+
+  /// Time zone the machine presents (`Area/City`); empty keeps the image's.
+  public var timezone: String = String()
+
+  /// Locale the machine presents (`en_US.UTF-8`); empty keeps the image's.
+  public var locale: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -540,6 +550,64 @@ public struct Arcbox_V1_SetMachineIsolationRequest: Sendable {
   public init() {}
 }
 
+/// Request to change a machine's time zone and locale.
+public struct Arcbox_V1_SetMachineIdentityRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Machine ID or name.
+  public var id: String = String()
+
+  /// Time zone (`Area/City`); empty keeps the image's.
+  public var timezone: String = String()
+
+  /// Locale (`en_US.UTF-8`); empty keeps the image's.
+  public var locale: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// A port on the Mac's loopback forwarded to a port of a machine.
+public struct Arcbox_V1_MachinePortForward: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Port on 127.0.0.1 of the Mac.
+  public var hostPort: UInt32 = 0
+
+  /// Port in the machine. Its service must listen on all interfaces, not
+  /// only on the guest's loopback.
+  public var guestPort: UInt32 = 0
+
+  /// `tcp` (the default when empty) or `udp`.
+  public var `protocol`: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Request to replace a machine's forwarded ports.
+public struct Arcbox_V1_SetMachinePortForwardsRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Machine ID or name.
+  public var id: String = String()
+
+  /// The forwards; an empty list removes them all.
+  public var forwards: [Arcbox_V1_MachinePortForward] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// Request to set or clear the default machine.
 public struct Arcbox_V1_SetDefaultMachineRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -706,6 +774,24 @@ public struct Arcbox_V1_MachineInfo: @unchecked Sendable {
   public var isolated: Bool {
     get {_storage._isolated}
     set {_uniqueStorage()._isolated = newValue}
+  }
+
+  /// Time zone the machine presents; empty when it keeps the image's.
+  public var timezone: String {
+    get {_storage._timezone}
+    set {_uniqueStorage()._timezone = newValue}
+  }
+
+  /// Locale the machine presents; empty when it keeps the image's.
+  public var locale: String {
+    get {_storage._locale}
+    set {_uniqueStorage()._locale = newValue}
+  }
+
+  /// Ports forwarded from the Mac's loopback into the machine.
+  public var portForwards: [Arcbox_V1_MachinePortForward] {
+    get {_storage._portForwards}
+    set {_uniqueStorage()._portForwards = newValue}
   }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -1270,7 +1356,7 @@ extension Arcbox_V1_ImportMachineImagePhase: SwiftProtobuf._ProtoNameProviding {
 
 extension Arcbox_V1_CreateMachineRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CreateMachineRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}cpus\0\u{1}memory\0\u{3}disk_size\0\u{1}distro\0\u{1}version\0\u{1}arch\0\u{1}mounts\0\u{3}ssh_public_key\0\u{1}kernel\0\u{2}\u{2}cmdline\0\u{1}image\0\u{1}isolated\0\u{c}\u{b}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}cpus\0\u{1}memory\0\u{3}disk_size\0\u{1}distro\0\u{1}version\0\u{1}arch\0\u{1}mounts\0\u{3}ssh_public_key\0\u{1}kernel\0\u{2}\u{2}cmdline\0\u{1}image\0\u{1}isolated\0\u{1}timezone\0\u{1}locale\0\u{c}\u{b}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1291,6 +1377,8 @@ extension Arcbox_V1_CreateMachineRequest: SwiftProtobuf.Message, SwiftProtobuf._
       case 12: try { try decoder.decodeSingularStringField(value: &self.cmdline) }()
       case 13: try { try decoder.decodeSingularStringField(value: &self.image) }()
       case 14: try { try decoder.decodeSingularBoolField(value: &self.isolated) }()
+      case 15: try { try decoder.decodeSingularStringField(value: &self.timezone) }()
+      case 16: try { try decoder.decodeSingularStringField(value: &self.locale) }()
       default: break
       }
     }
@@ -1336,6 +1424,12 @@ extension Arcbox_V1_CreateMachineRequest: SwiftProtobuf.Message, SwiftProtobuf._
     if self.isolated != false {
       try visitor.visitSingularBoolField(value: self.isolated, fieldNumber: 14)
     }
+    if !self.timezone.isEmpty {
+      try visitor.visitSingularStringField(value: self.timezone, fieldNumber: 15)
+    }
+    if !self.locale.isEmpty {
+      try visitor.visitSingularStringField(value: self.locale, fieldNumber: 16)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1353,6 +1447,8 @@ extension Arcbox_V1_CreateMachineRequest: SwiftProtobuf.Message, SwiftProtobuf._
     if lhs.cmdline != rhs.cmdline {return false}
     if lhs.image != rhs.image {return false}
     if lhs.isolated != rhs.isolated {return false}
+    if lhs.timezone != rhs.timezone {return false}
+    if lhs.locale != rhs.locale {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -2102,6 +2198,121 @@ extension Arcbox_V1_SetMachineIsolationRequest: SwiftProtobuf.Message, SwiftProt
   }
 }
 
+extension Arcbox_V1_SetMachineIdentityRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetMachineIdentityRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}timezone\0\u{1}locale\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.timezone) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.locale) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.id.isEmpty {
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
+    }
+    if !self.timezone.isEmpty {
+      try visitor.visitSingularStringField(value: self.timezone, fieldNumber: 2)
+    }
+    if !self.locale.isEmpty {
+      try visitor.visitSingularStringField(value: self.locale, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_SetMachineIdentityRequest, rhs: Arcbox_V1_SetMachineIdentityRequest) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.timezone != rhs.timezone {return false}
+    if lhs.locale != rhs.locale {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_MachinePortForward: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".MachinePortForward"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}host_port\0\u{3}guest_port\0\u{1}protocol\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt32Field(value: &self.hostPort) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.guestPort) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.`protocol`) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.hostPort != 0 {
+      try visitor.visitSingularUInt32Field(value: self.hostPort, fieldNumber: 1)
+    }
+    if self.guestPort != 0 {
+      try visitor.visitSingularUInt32Field(value: self.guestPort, fieldNumber: 2)
+    }
+    if !self.`protocol`.isEmpty {
+      try visitor.visitSingularStringField(value: self.`protocol`, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_MachinePortForward, rhs: Arcbox_V1_MachinePortForward) -> Bool {
+    if lhs.hostPort != rhs.hostPort {return false}
+    if lhs.guestPort != rhs.guestPort {return false}
+    if lhs.`protocol` != rhs.`protocol` {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Arcbox_V1_SetMachinePortForwardsRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetMachinePortForwardsRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}forwards\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
+      case 2: try { try decoder.decodeRepeatedMessageField(value: &self.forwards) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.id.isEmpty {
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
+    }
+    if !self.forwards.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.forwards, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Arcbox_V1_SetMachinePortForwardsRequest, rhs: Arcbox_V1_SetMachinePortForwardsRequest) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.forwards != rhs.forwards {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 extension Arcbox_V1_SetDefaultMachineRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SetDefaultMachineRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0")
@@ -2244,7 +2455,7 @@ extension Arcbox_V1_InspectMachineRequest: SwiftProtobuf.Message, SwiftProtobuf.
 
 extension Arcbox_V1_MachineInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".MachineInfo"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}name\0\u{1}state\0\u{1}hardware\0\u{1}network\0\u{1}storage\0\u{1}os\0\u{1}created\0\u{3}started_at\0\u{1}mounts\0\u{1}isolated\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}name\0\u{1}state\0\u{1}hardware\0\u{1}network\0\u{1}storage\0\u{1}os\0\u{1}created\0\u{3}started_at\0\u{1}mounts\0\u{1}isolated\0\u{1}timezone\0\u{1}locale\0\u{3}port_forwards\0")
 
   fileprivate class _StorageClass {
     var _id: String = String()
@@ -2258,6 +2469,9 @@ extension Arcbox_V1_MachineInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageIm
     var _startedAt: Arcbox_V1_Timestamp? = nil
     var _mounts: [Arcbox_V1_DirectoryMount] = []
     var _isolated: Bool = false
+    var _timezone: String = String()
+    var _locale: String = String()
+    var _portForwards: [Arcbox_V1_MachinePortForward] = []
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -2279,6 +2493,9 @@ extension Arcbox_V1_MachineInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageIm
       _startedAt = source._startedAt
       _mounts = source._mounts
       _isolated = source._isolated
+      _timezone = source._timezone
+      _locale = source._locale
+      _portForwards = source._portForwards
     }
   }
 
@@ -2308,6 +2525,9 @@ extension Arcbox_V1_MachineInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageIm
         case 9: try { try decoder.decodeSingularMessageField(value: &_storage._startedAt) }()
         case 10: try { try decoder.decodeRepeatedMessageField(value: &_storage._mounts) }()
         case 11: try { try decoder.decodeSingularBoolField(value: &_storage._isolated) }()
+        case 12: try { try decoder.decodeSingularStringField(value: &_storage._timezone) }()
+        case 13: try { try decoder.decodeSingularStringField(value: &_storage._locale) }()
+        case 14: try { try decoder.decodeRepeatedMessageField(value: &_storage._portForwards) }()
         default: break
         }
       }
@@ -2353,6 +2573,15 @@ extension Arcbox_V1_MachineInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageIm
       if _storage._isolated != false {
         try visitor.visitSingularBoolField(value: _storage._isolated, fieldNumber: 11)
       }
+      if !_storage._timezone.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._timezone, fieldNumber: 12)
+      }
+      if !_storage._locale.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._locale, fieldNumber: 13)
+      }
+      if !_storage._portForwards.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._portForwards, fieldNumber: 14)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -2373,6 +2602,9 @@ extension Arcbox_V1_MachineInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageIm
         if _storage._startedAt != rhs_storage._startedAt {return false}
         if _storage._mounts != rhs_storage._mounts {return false}
         if _storage._isolated != rhs_storage._isolated {return false}
+        if _storage._timezone != rhs_storage._timezone {return false}
+        if _storage._locale != rhs_storage._locale {return false}
+        if _storage._portForwards != rhs_storage._portForwards {return false}
         return true
       }
       if !storagesAreEqual {return false}

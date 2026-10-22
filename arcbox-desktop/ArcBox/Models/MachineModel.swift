@@ -52,6 +52,36 @@ struct MachineMountViewModel: Hashable, Identifiable {
     }
 }
 
+/// A port on the Mac's loopback forwarded into a machine.
+struct MachinePortForwardViewModel: Hashable, Identifiable {
+    var hostPort: UInt16
+    var guestPort: UInt16
+    var udp: Bool
+
+    var id: String { "\(hostPort)/\(udp ? "udp" : "tcp")" }
+
+    init(hostPort: UInt16, guestPort: UInt16, udp: Bool = false) {
+        self.hostPort = hostPort
+        self.guestPort = guestPort
+        self.udp = udp
+    }
+
+    init?(from forward: Arcbox_V1_MachinePortForward) {
+        guard let host = UInt16(exactly: forward.hostPort), let guest = UInt16(exactly: forward.guestPort) else {
+            return nil
+        }
+        self.init(hostPort: host, guestPort: guest, udp: forward.protocol.lowercased() == "udp")
+    }
+
+    var proto: Arcbox_V1_MachinePortForward {
+        var forward = Arcbox_V1_MachinePortForward()
+        forward.hostPort = UInt32(hostPort)
+        forward.guestPort = UInt32(guestPort)
+        forward.protocol = udp ? "udp" : "tcp"
+        return forward
+    }
+}
+
 /// Machine view model for UI display
 struct MachineViewModel: Identifiable, Hashable {
     let id: String
@@ -73,6 +103,10 @@ struct MachineViewModel: Identifiable, Hashable {
     var dnsServers: [String] = []
     var mounts: [MachineMountViewModel] = []
     var startedAt: Date?
+    /// Time zone and locale the machine presents; empty keeps the image's.
+    var timezone: String = ""
+    var locale: String = ""
+    var portForwards: [MachinePortForwardViewModel] = []
 
     /// A lifecycle RPC is in flight for this machine.
     var isTransitioning: Bool = false
@@ -113,6 +147,9 @@ struct MachineViewModel: Identifiable, Hashable {
         dnsServers = info.network.dnsServers
         mounts = info.mounts.map(MachineMountViewModel.init(from:))
         isolated = info.isolated
+        timezone = info.timezone
+        locale = info.locale
+        portForwards = info.portForwards.compactMap(MachinePortForwardViewModel.init(from:))
         if info.hasStartedAt, info.startedAt.seconds > 0 {
             startedAt = Date(timeIntervalSince1970: TimeInterval(info.startedAt.seconds))
         }
@@ -127,6 +164,9 @@ struct MachineViewModel: Identifiable, Hashable {
         dnsServers = existing.dnsServers
         mounts = existing.mounts
         startedAt = existing.startedAt
+        timezone = existing.timezone
+        locale = existing.locale
+        portForwards = existing.portForwards
     }
 
     private static func gigabytes(_ bytes: UInt64) -> UInt32 {

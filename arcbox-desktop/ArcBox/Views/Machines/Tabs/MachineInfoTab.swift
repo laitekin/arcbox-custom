@@ -32,6 +32,8 @@ struct MachineInfoTab: View {
 
                 MachineIsolationSection(machine: machine)
 
+                MachinePortForwardsSection(machine: machine)
+
                 MachineResourcesSection(machine: machine)
 
                 MachineClipboardSection(machine: machine)

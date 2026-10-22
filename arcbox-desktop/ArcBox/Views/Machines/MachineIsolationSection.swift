@@ -1,16 +1,23 @@
 import ArcBoxClient
+import GRPCCore
 import SwiftUI
 
-/// Machine Info › Isolation: what the machine can reach of the Mac, and the
-/// switch to isolate a stopped machine or lift its isolation.
+/// Machine Info › Isolation: what the machine can reach of the Mac, the
+/// switch to isolate a stopped machine or lift its isolation, the identity
+/// it presents, and a check that probes the isolation from inside.
 struct MachineIsolationSection: View {
     let machine: MachineViewModel
     @Environment(MachinesViewModel.self) private var vm
     @Environment(\.arcboxClient) private var client
     @State private var isSaving = false
+    @State private var timezone = ""
+    @State private var locale = ""
+    @State private var isChecking = false
+    @State private var results: [IsolationCheck.Result] = []
+    @State private var checkError: String?
 
-    private var canChange: Bool {
-        (machine.state == .stopped || machine.state == .created) && !machine.isBusy && !isSaving
+    private var isStopped: Bool {
+        (machine.state == .stopped || machine.state == .created) && !machine.isBusy
     }
 
     var body: some View {
@@ -33,7 +40,7 @@ struct MachineIsolationSection: View {
                     Button(machine.isolated ? "Lift Isolation" : "Isolate") {
                         Task { await toggle() }
                     }
-                    .disabled(!canChange)
+                    .disabled(!isStopped || isSaving)
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -45,19 +52,120 @@ struct MachineIsolationSection: View {
                     }
                 }
 
-                if !canChange && !isSaving {
-                    Text("Stop the machine to change its isolation.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if canChange {
-                    Text("Takes effect when the machine next starts.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                Text(
+                    isStopped
+                        ? "Isolating needs a saved proxy (Outbound proxy below). Takes effect at the next start."
+                        : "Stop the machine to change its isolation, time zone or locale."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                Divider()
+                identity
+
+                if machine.isRunning {
+                    Divider()
+                    selfCheck
                 }
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .infoSectionStyle()
+        }
+        .task(id: "\(machine.id)/\(machine.timezone)/\(machine.locale)") {
+            timezone = machine.timezone
+            locale = machine.locale
+        }
+        .task(id: machine.id) {
+            results = []
+            checkError = nil
+        }
+    }
+
+    // MARK: - Identity
+
+    private var identity: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !machine.macAddress.isEmpty {
+                LabeledContent("Network card", value: machine.macAddress)
+                    .textSelection(.enabled)
+            }
+            HStack {
+                TextField("Time zone", text: $timezone, prompt: Text("Image default, e.g. Europe/Berlin"))
+                TextField("Locale", text: $locale, prompt: Text("Image default, e.g. en_US.UTF-8"))
+                Button("Save") {
+                    Task {
+                        isSaving = true
+                        defer { isSaving = false }
+                        await vm.setMachineIdentity(
+                            machine.id,
+                            timezone: timezone.trimmingCharacters(in: .whitespaces),
+                            locale: locale.trimmingCharacters(in: .whitespaces),
+                            client: client
+                        )
+                    }
+                }
+                .disabled(
+                    !isStopped || isSaving || (timezone == machine.timezone && locale == machine.locale))
+            }
+            .disabled(!isStopped)
+            Text("Match these to your proxy's location so the machine's clock and language agree with its address.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Self-check
+
+    private var selfCheck: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Isolation check").fontWeight(.medium)
+                Spacer()
+                if isChecking {
+                    ProgressView().controlSize(.small)
+                }
+                Button(isChecking ? "Checking…" : "Run Check") { Task { await runCheck() } }
+                    .disabled(isChecking || client == nil)
+            }
+            if results.isEmpty && checkError == nil {
+                Text(
+                    "Tries, from inside the machine, to reach your Mac's files, your Mac, your network and the internet directly."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            ForEach(results) { result in
+                Label {
+                    Text("\(result.title): \(result.detail)").textSelection(.enabled)
+                } icon: {
+                    Image(systemName: checkSymbol(result.status)).foregroundStyle(checkColor(result.status))
+                }
+                .font(.caption)
+            }
+            if let checkError {
+                Text(checkError).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+            }
+        }
+    }
+
+    private func runCheck() async {
+        guard let client else { return }
+        isChecking = true
+        defer { isChecking = false }
+        results = []
+        checkError = nil
+        var options = ArcBoxClient.defaultCallOptions
+        options.timeout = .seconds(90)
+        do {
+            let output = try await MachineExec.run(
+                IsolationCheck.request(machine: machine.id), client: client, options: options)
+            results = IsolationCheck.parse(String(decoding: output.stdout, as: UTF8.self))
+            if results.isEmpty {
+                checkError = "The check printed nothing: " + String(decoding: output.stderr, as: UTF8.self)
+            }
+        } catch {
+            checkError = ArcBoxClient.userMessage(for: error)
         }
     }
 
@@ -80,6 +188,22 @@ struct MachineIsolationSection: View {
         case .covered: .green
         case .warning: .orange
         case .notCovered: .secondary
+        }
+    }
+
+    private func checkSymbol(_ status: IsolationCheck.Result.Status) -> String {
+        switch status {
+        case .pass: "checkmark.circle.fill"
+        case .fail: "xmark.octagon.fill"
+        case .info: "info.circle"
+        }
+    }
+
+    private func checkColor(_ status: IsolationCheck.Result.Status) -> Color {
+        switch status {
+        case .pass: .green
+        case .fail: .red
+        case .info: .secondary
         }
     }
 }

@@ -118,26 +118,8 @@ enum MachineClipboard {
         _ request: Arcbox_V1_MachineExecRequest, client: ArcBoxClient
     ) async -> Result<String, Failure> {
         do {
-            let (exitCode, stdout, stderr) = try await client.machines.exec(
-                request,
-                options: ArcBoxClient.defaultCallOptions
-            ) { response in
-                var stdout = Data()
-                var stderr = Data()
-                var exitCode: Int32 = -1
-                for try await output in response.messages {
-                    if output.stream == "stderr" {
-                        stderr.append(output.data)
-                    } else {
-                        stdout.append(output.data)
-                    }
-                    if output.done {
-                        exitCode = output.exitCode
-                    }
-                }
-                return (exitCode, stdout, stderr)
-            }
-            return result(exitCode: exitCode, stdout: stdout, stderr: stderr)
+            let output = try await MachineExec.run(request, client: client)
+            return result(exitCode: output.exitCode, stdout: output.stdout, stderr: output.stderr)
         } catch {
             return .failure(Failure(message: ArcBoxClient.userMessage(for: error)))
         }

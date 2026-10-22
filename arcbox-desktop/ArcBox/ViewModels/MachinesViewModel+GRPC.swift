@@ -184,10 +184,54 @@ extension MachinesViewModel {
             _ = try await client.machines.setIsolation(request, options: ArcBoxClient.defaultCallOptions)
             updateMachine(id) { $0.isolated = isolated }
             await loadMachines(client: client)
+            await loadMachineDetails(id, client: client)
             return true
         } catch {
             reportError(error, operation: "set isolation")
             return false
+        }
+    }
+
+    /// Sets the time zone and locale a stopped machine presents; empty keeps
+    /// the image's. Returns whether it was saved.
+    @discardableResult
+    func setMachineIdentity(_ id: String, timezone: String, locale: String, client: ArcBoxClient?) async -> Bool {
+        guard let client else {
+            lastError = "ArcBox daemon is unavailable."
+            return false
+        }
+        var request = Arcbox_V1_SetMachineIdentityRequest()
+        request.id = id
+        request.timezone = timezone
+        request.locale = locale
+        do {
+            _ = try await client.machines.setIdentity(request, options: ArcBoxClient.defaultCallOptions)
+            await loadMachineDetails(id, client: client)
+            return true
+        } catch {
+            reportError(error, operation: "set identity")
+            return false
+        }
+    }
+
+    /// Replaces the ports forwarded from the Mac into a machine; a running
+    /// machine gets them at once. Returns the error message, or `nil`.
+    func setMachinePortForwards(
+        _ id: String,
+        _ forwards: [MachinePortForwardViewModel],
+        client: ArcBoxClient?
+    ) async -> String? {
+        guard let client else { return "ArcBox daemon is unavailable." }
+        var request = Arcbox_V1_SetMachinePortForwardsRequest()
+        request.id = id
+        request.forwards = forwards.map(\.proto)
+        do {
+            _ = try await client.machines.setPortForwards(request, options: ArcBoxClient.defaultCallOptions)
+            await loadMachineDetails(id, client: client)
+            return nil
+        } catch {
+            await loadMachineDetails(id, client: client)
+            return reportError(error, operation: "set port forwards", surface: false)
         }
     }
 
