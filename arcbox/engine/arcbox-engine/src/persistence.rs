@@ -75,6 +75,21 @@ pub struct PersistedMachine {
     /// field existed load as `false`, the behavior they were created with.
     #[serde(default)]
     pub isolated: bool,
+    /// MAC address of the primary NIC; random per boot when absent.
+    #[serde(default)]
+    pub nic_mac: Option<String>,
+    /// The guest's `/etc/machine-id`; the image's own when absent.
+    #[serde(default)]
+    pub machine_id: Option<String>,
+    /// Time zone the guest presents; the image's when absent.
+    #[serde(default)]
+    pub timezone: Option<String>,
+    /// Locale the guest presents; the image's when absent.
+    #[serde(default)]
+    pub locale: Option<String>,
+    /// Ports on the Mac's loopback forwarded into the machine.
+    #[serde(default)]
+    pub port_forwards: Vec<crate::machine::MachinePortForward>,
 }
 
 /// Default creation time for backward compatibility with old configs.
@@ -164,6 +179,11 @@ impl From<&MachineInfo> for PersistedMachine {
             started_at: info.started_at,
             mounts: info.mounts.clone(),
             isolated: info.isolated,
+            nic_mac: info.nic_mac.clone(),
+            machine_id: info.machine_id.clone(),
+            timezone: info.timezone.clone(),
+            locale: info.locale.clone(),
+            port_forwards: info.port_forwards.clone(),
         }
     }
 }
@@ -332,6 +352,11 @@ mod tests {
             started_at: None,
             mounts: Vec::new(),
             isolated: false,
+            nic_mac: None,
+            machine_id: None,
+            timezone: None,
+            locale: None,
+            port_forwards: Vec::new(),
             state: MachineState::Created,
             vm_id: VmId::new(),
             cpus: 4,
@@ -378,6 +403,11 @@ mod tests {
                 started_at: None,
                 mounts: Vec::new(),
                 isolated: false,
+                nic_mac: None,
+                machine_id: None,
+                timezone: None,
+                locale: None,
+                port_forwards: Vec::new(),
                 state: MachineState::Created,
                 vm_id: VmId::new(),
                 cpus: 2,
@@ -417,6 +447,11 @@ mod tests {
             started_at: None,
             mounts: Vec::new(),
             isolated: false,
+            nic_mac: None,
+            machine_id: None,
+            timezone: None,
+            locale: None,
+            port_forwards: Vec::new(),
             state: MachineState::Created,
             vm_id: VmId::new(),
             cpus: 2,
@@ -454,6 +489,11 @@ mod tests {
             started_at: None,
             mounts: Vec::new(),
             isolated: false,
+            nic_mac: None,
+            machine_id: None,
+            timezone: None,
+            locale: None,
+            port_forwards: Vec::new(),
             state: MachineState::Created,
             vm_id: VmId::new(),
             cpus: 2,
@@ -506,6 +546,11 @@ mod tests {
             started_at: None,
             mounts: Vec::new(),
             isolated: false,
+            nic_mac: None,
+            machine_id: None,
+            timezone: None,
+            locale: None,
+            port_forwards: Vec::new(),
             state: MachineState::Running,
             vm_id: VmId::new(),
             cpus: 2,

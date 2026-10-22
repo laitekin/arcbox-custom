@@ -312,6 +312,8 @@ impl VmBuilder {
                 })
                 .collect(),
             bridge_nic_mac: None,
+            primary_nic_mac: None,
+            isolated_network: false,
             backend: crate::VmBackend::default(),
             debug_console_socket: None,
         };

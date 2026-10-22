@@ -1241,3 +1241,221 @@ async fn isolation_is_created_switched_while_stopped_and_persisted() {
     .unwrap();
     assert!(!legacy.isolated);
 }
+
+#[test]
+fn an_isolated_machine_starts_on_an_isolated_policy_of_its_own() {
+    use arcbox_fakeip::proxy_routes::ProxyRoutes;
+    use arcbox_fakeip::proxy_state::ProxyState;
+
+    let routes = ProxyRoutes::new(ProxyState::default());
+    let host = HostNetwork {
+        proxy_routes: Some(routes),
+        ..Default::default()
+    };
+    assert!(machine_network(&host, "sealed", true).proxy.load().isolated);
+    assert!(!machine_network(&host, "open", false).proxy.load().isolated);
+    // Lifted isolation applies at the next start.
+    assert!(
+        !machine_network(&host, "sealed", false)
+            .proxy
+            .load()
+            .isolated
+    );
+
+    // Without per-machine routes it still never shares the default policy.
+    let shared = HostNetwork::default();
+    let network = machine_network(&shared, "sealed", true);
+    assert!(network.proxy.load().isolated);
+    assert!(!shared.proxy.load().isolated);
+    assert!(
+        !machine_network(&shared, "open", false)
+            .proxy
+            .load()
+            .isolated
+    );
+}
+
+#[tokio::test]
+async fn an_isolated_machine_gets_an_identity_and_a_network_of_its_own() {
+    use arcbox_constants::cmdline::{MACHINE_ID_KEY, MACHINE_LOCALE_KEY, MACHINE_TIMEZONE_KEY};
+
+    let temp_dir = tempdir().unwrap();
+    let manager = test_machine_manager(temp_dir.path());
+    let rootfs_img = temp_dir.path().join("rootfs.squashfs");
+    std::fs::write(&rootfs_img, b"squash").unwrap();
+    let shimmed = |name: &str, isolated: bool| MachineConfig {
+        name: name.to_string(),
+        disk_gb: 1,
+        distro: Some("alpine".to_string()),
+        rootfs: Some(MachineRootfs {
+            path: rootfs_img.clone(),
+            format: "squashfs".to_string(),
+            shim: Some(BootShim {
+                kernel: temp_dir.path().join("kernel"),
+                rootfs: temp_dir.path().join("shim.erofs"),
+            }),
+        }),
+        isolated,
+        timezone: Some("Asia/Tokyo".to_string()),
+        locale: Some("ja_JP.UTF-8".to_string()),
+        ..Default::default()
+    };
+
+    manager.create(shimmed("sealed", true)).await.unwrap();
+    let sealed = manager.get("sealed").unwrap();
+    let mac = sealed
+        .nic_mac
+        .clone()
+        .expect("an isolated machine has its own NIC address");
+    assert!(!mac.starts_with("02:"), "{mac}");
+    let id = sealed.machine_id.clone().expect("and its own machine ID");
+    let cmdline = sealed.cmdline.clone().unwrap();
+    for token in [
+        format!("{MACHINE_ID_KEY}{id}"),
+        format!("{MACHINE_TIMEZONE_KEY}Asia/Tokyo"),
+        format!("{MACHINE_LOCALE_KEY}ja_JP.UTF-8"),
+    ] {
+        assert!(
+            cmdline.split_whitespace().any(|t| t == token),
+            "{token} in {cmdline}"
+        );
+    }
+    let vm = manager.vm_manager.config_for_test(&sealed.vm_id).unwrap();
+    assert!(vm.isolated_network);
+    assert_eq!(vm.primary_nic_mac.as_deref(), Some(mac.as_str()));
+    let persisted = manager.persistence.load("sealed").unwrap();
+    assert_eq!(persisted.machine_id.as_deref(), Some(id.as_str()));
+    assert_eq!(persisted.timezone.as_deref(), Some("Asia/Tokyo"));
+
+    // A clone draws a new address and ID, and its cmdline says so.
+    manager.clone_machine("sealed", "twin").unwrap();
+    let twin = manager.get("twin").unwrap();
+    assert_ne!(twin.nic_mac, sealed.nic_mac);
+    let twin_id = twin.machine_id.clone().unwrap();
+    assert_ne!(twin_id, id);
+    let twin_cmdline = twin.cmdline.clone().unwrap();
+    assert!(
+        twin_cmdline.contains(&format!("{MACHINE_ID_KEY}{twin_id}")),
+        "{twin_cmdline}"
+    );
+    assert!(!twin_cmdline.contains(&id), "{twin_cmdline}");
+    assert!(twin.port_forwards.is_empty());
+
+    // An ordinary machine keeps the image's identity until it is isolated.
+    manager.create(shimmed("open", false)).await.unwrap();
+    let open = manager.get("open").unwrap();
+    assert!(open.nic_mac.is_none() && open.machine_id.is_none());
+    assert!(
+        !manager
+            .vm_manager
+            .config_for_test(&open.vm_id)
+            .unwrap()
+            .isolated_network
+    );
+    manager.set_isolated("open", true).unwrap();
+    let open = manager.get("open").unwrap();
+    let open_id = open.machine_id.clone().unwrap();
+    assert!(
+        open.cmdline
+            .unwrap()
+            .contains(&format!("{MACHINE_ID_KEY}{open_id}"))
+    );
+    let vm = manager.vm_manager.config_for_test(&open.vm_id).unwrap();
+    assert!(vm.isolated_network);
+    assert_eq!(vm.primary_nic_mac, open.nic_mac);
+    // Lifting the isolation keeps the identity, but gives back the bridge.
+    manager.set_isolated("open", false).unwrap();
+    let open = manager.get("open").unwrap();
+    assert_eq!(open.machine_id.as_deref(), Some(open_id.as_str()));
+    assert!(
+        !manager
+            .vm_manager
+            .config_for_test(&open.vm_id)
+            .unwrap()
+            .isolated_network
+    );
+}
+
+#[tokio::test]
+async fn identity_and_port_forwards_are_validated_and_persisted() {
+    use arcbox_constants::cmdline::{MACHINE_LOCALE_KEY, MACHINE_TIMEZONE_KEY};
+
+    let temp_dir = tempdir().unwrap();
+    let manager = test_machine_manager(temp_dir.path());
+    create_shimmed(&manager, temp_dir.path(), "box").await;
+
+    manager
+        .set_identity("box", Some("Europe/Berlin".into()), None)
+        .unwrap();
+    let machine = manager.get("box").unwrap();
+    let cmdline = machine.cmdline.unwrap();
+    assert!(
+        cmdline.contains(&format!("{MACHINE_TIMEZONE_KEY}Europe/Berlin")),
+        "{cmdline}"
+    );
+    assert!(!cmdline.contains(MACHINE_LOCALE_KEY), "{cmdline}");
+    let vm = manager.vm_manager.config_for_test(&machine.vm_id).unwrap();
+    assert_eq!(vm.cmdline.as_deref(), Some(cmdline.as_str()));
+    assert_eq!(
+        manager.persistence.load("box").unwrap().timezone.as_deref(),
+        Some("Europe/Berlin")
+    );
+    assert!(
+        manager
+            .set_identity("box", Some("../../etc".into()), None)
+            .is_err()
+    );
+    assert!(
+        manager
+            .set_identity("box", None, Some("en US".into()))
+            .is_err()
+    );
+    manager.set_identity("box", None, None).unwrap();
+    assert!(
+        !manager
+            .get("box")
+            .unwrap()
+            .cmdline
+            .unwrap()
+            .contains(MACHINE_TIMEZONE_KEY)
+    );
+
+    let vnc = MachinePortForward {
+        host_port: 5901,
+        guest_port: 5901,
+        udp: false,
+    };
+    manager.set_port_forwards("box", vec![vnc]).unwrap();
+    assert_eq!(manager.get("box").unwrap().port_forwards, [vnc]);
+    assert_eq!(
+        manager.persistence.load("box").unwrap().port_forwards,
+        [vnc]
+    );
+    assert!(manager.set_port_forwards("box", vec![vnc, vnc]).is_err());
+    assert!(
+        manager
+            .set_port_forwards(
+                "box",
+                vec![MachinePortForward {
+                    host_port: 0,
+                    ..vnc
+                }]
+            )
+            .is_err()
+    );
+    // The same host port for TCP and UDP is two forwards, not a clash.
+    manager
+        .set_port_forwards("box", vec![vnc, MachinePortForward { udp: true, ..vnc }])
+        .unwrap();
+
+    // Running: identity waits for a stop, forwards do not.
+    manager
+        .machines
+        .write()
+        .unwrap()
+        .get_mut("box")
+        .unwrap()
+        .state = MachineState::Running;
+    assert!(manager.set_identity("box", None, None).is_err());
+    manager.set_port_forwards("box", Vec::new()).unwrap();
+}

@@ -65,6 +65,13 @@ pub struct VmmConfig {
     pub block_devices: Vec<BlockDeviceConfig>,
     /// Optional MAC address for the bridge NAT NIC on macOS.
     pub bridge_nic_mac: Option<String>,
+    /// MAC address of the primary NIC; random when `None`.
+    pub primary_nic_mac: Option<String>,
+    /// The guest is isolated from the Mac (macOS): it gets no bridge NIC,
+    /// and when ArcBox's own network stack cannot start the VM fails to
+    /// start instead of falling back to Apple's NAT, which would reach the
+    /// internet directly from the Mac's address.
+    pub isolated_network: bool,
     /// VM backend selection (macOS only).
     ///
     /// Controls whether to use Hypervisor.framework (custom VMM with TSO
@@ -100,6 +107,8 @@ impl Default for VmmConfig {
             balloon: true, // Enable balloon by default for memory optimization
             block_devices: Vec::new(),
             bridge_nic_mac: None,
+            primary_nic_mac: None,
+            isolated_network: false,
             backend: VmBackend::default(),
             debug_console_socket: None,
         }

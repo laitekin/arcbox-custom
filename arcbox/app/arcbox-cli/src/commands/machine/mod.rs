@@ -3,6 +3,7 @@
 mod image;
 pub use image::ImageCommands;
 mod lifecycle;
+mod proxy;
 mod target;
 
 use anyhow::{Context, Result, bail};
@@ -100,8 +101,15 @@ pub enum MachineCommands {
     Import(lifecycle::ImportArgs),
     /// Change a machine's CPU and memory limits (applied at its next start)
     Resize(lifecycle::ResizeArgs),
-    /// Isolate a stopped machine from the Mac's files, or lift it with --off
+    /// Isolate a stopped machine from the Mac, or lift it with --off
     Isolate(lifecycle::IsolateArgs),
+    /// Show or set a machine's outbound proxy (default, direct, or a saved proxy)
+    Proxy(proxy::ProxyArgs),
+    /// List, add or remove ports forwarded from this Mac's 127.0.0.1 into a
+    /// machine (how the Mac reaches an isolated machine, for VNC say)
+    Forward(lifecycle::ForwardArgs),
+    /// Show or set the time zone and locale a machine presents
+    Identity(lifecycle::IdentityArgs),
     /// Show or set the machine `exec` and `ssh` use when given no name
     Default(lifecycle::DefaultArgs),
     /// Manage machine images (list, import your own rootfs, remove)
@@ -142,9 +150,21 @@ pub struct CreateArgs {
     #[arg(long)]
     pub cmdline: Option<String>,
     /// Isolate the machine from the Mac: no share of /Users, /private or
-    /// ArcBox's data directory (--mount directories are still shared)
+    /// ArcBox's data directory (--mount directories are still shared), no
+    /// network path to the Mac or other machines, and egress only through
+    /// its saved proxy (see --proxy)
     #[arg(long)]
     pub isolated: bool,
+    /// Outbound proxy: `default`, `direct`, or a saved proxy's name or ID.
+    /// An isolated machine needs a saved proxy.
+    #[arg(long)]
+    pub proxy: Option<String>,
+    /// Time zone the machine presents, such as Europe/Berlin
+    #[arg(long)]
+    pub timezone: Option<String>,
+    /// Locale the machine presents, such as en_US.UTF-8
+    #[arg(long)]
+    pub locale: Option<String>,
 }
 
 #[derive(Args)]
@@ -248,6 +268,9 @@ pub async fn execute(cmd: MachineCommands, format: super::OutputFormat) -> Resul
         MachineCommands::Import(args) => lifecycle::execute_import(args).await,
         MachineCommands::Resize(args) => lifecycle::execute_resize(args).await,
         MachineCommands::Isolate(args) => lifecycle::execute_isolate(args).await,
+        MachineCommands::Proxy(args) => proxy::execute(args).await,
+        MachineCommands::Forward(args) => lifecycle::execute_forward(args).await,
+        MachineCommands::Identity(args) => lifecycle::execute_identity(args).await,
         MachineCommands::Default(args) => lifecycle::execute_default(args).await,
         MachineCommands::Image(cmd) => image::execute(cmd, format).await,
     }
@@ -277,10 +300,21 @@ async fn execute_create(args: CreateArgs) -> Result<()> {
             cmdline: args.cmdline.clone().unwrap_or_default(),
             image: args.image.clone().unwrap_or_default(),
             isolated: args.isolated,
+            timezone: args.timezone.clone().unwrap_or_default(),
+            locale: args.locale.clone().unwrap_or_default(),
             ..Default::default()
         })
         .await
         .context("Failed to create machine")?;
+    if let Some(wanted) = args.proxy.as_deref() {
+        proxy::assign(&args.name, wanted).await.with_context(|| {
+            format!(
+                "Machine '{}' was created, but its proxy could not be set; set it before starting \
+                 it with: abctl machine proxy {} <proxy>",
+                args.name, args.name
+            )
+        })?;
+    }
 
     println!("Machine '{}' created successfully", args.name);
     match args.cpus {
@@ -289,10 +323,19 @@ async fn execute_create(args: CreateArgs) -> Result<()> {
     }
     println!("  Memory: {} MB", args.memory);
     println!("  Disk:   {} GB", args.disk);
+    if let Some(wanted) = &args.proxy {
+        println!("  Proxy:  {wanted}");
+    }
     if args.isolated {
-        println!("  Isolated: no Mac files shared");
+        println!("  Isolated: no Mac files, no path to the Mac or other machines");
         if !args.mount.is_empty() {
             println!("  Note: the --mount directories are shared into it anyway");
+        }
+        if args.proxy.is_none() {
+            println!(
+                "  Note: it has no network until it has a saved proxy:\n    abctl machine proxy {} <saved proxy>",
+                args.name
+            );
         }
     }
     println!();
@@ -488,6 +531,15 @@ async fn execute_status(args: StatusArgs) -> Result<()> {
     println!("Bridge:  {}", or_dash(&machine.network.bridge_ip_address));
     println!("DNS:     {}", or_dash(&machine.network.dns_name));
     println!("Isolated: {}", if machine.isolated { "yes" } else { "no" });
+    if !machine.network.mac_address.is_empty() {
+        println!("MAC:     {}", machine.network.mac_address);
+    }
+    for forward in &machine.port_forwards {
+        println!(
+            "Forward: 127.0.0.1:{} -> {}",
+            forward.host_port, forward.guest_port
+        );
+    }
 
     Ok(())
 }
@@ -520,6 +572,17 @@ async fn execute_inspect(args: InspectArgs) -> Result<()> {
         "distro": machine.os.distro.clone(),
         "distro_version": machine.os.version.clone(),
         "isolated": machine.isolated,
+        "timezone": Some(machine.timezone.clone()).filter(|v| !v.is_empty()),
+        "locale": Some(machine.locale.clone()).filter(|v| !v.is_empty()),
+        "port_forwards": machine
+            .port_forwards
+            .iter()
+            .map(|f| serde_json::json!({
+                "host_port": f.host_port,
+                "guest_port": f.guest_port,
+                "protocol": if f.protocol.is_empty() { "tcp" } else { f.protocol.as_str() },
+            }))
+            .collect::<Vec<_>>(),
     });
 
     println!(

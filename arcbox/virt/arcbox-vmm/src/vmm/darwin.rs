@@ -87,6 +87,13 @@ impl Vmm {
                 Ok(net_config) => {
                     vm.add_virtio_device(net_config)?;
                 }
+                // Apple's NAT would carry an isolated guest straight to the
+                // internet from the Mac's address, past its proxy.
+                Err(e) if self.config.isolated_network => {
+                    return Err(VmmError::Device(format!(
+                        "isolated machine: network stack unavailable and Apple NAT is not allowed: {e}"
+                    )));
+                }
                 Err(e) => {
                     tracing::warn!(
                         "Custom network stack unavailable, falling back to Apple NAT: {}",
@@ -115,7 +122,12 @@ impl Vmm {
         if diag_disable_bridge {
             tracing::warn!("bridge NIC disabled via ARCBOX_DIAG_DISABLE_BRIDGE_NIC (diagnostic)");
         }
-        if self.config.networking && !diag_disable_bridge {
+        // An isolated guest gets no bridge NIC: vmnet's shared mode would be
+        // a second, unproxied way to the internet and to the Mac.
+        if self.config.isolated_network {
+            tracing::info!("bridge NIC skipped: the machine is isolated");
+        }
+        if self.config.networking && !diag_disable_bridge && !self.config.isolated_network {
             #[cfg(feature = "vmnet")]
             {
                 match self.create_vmnet_bridge_nic() {
@@ -418,7 +430,10 @@ impl Vmm {
         // fd into the hypervisor attachment config.
         let vz_raw_fd = vz_fd.as_raw_fd();
         self.net_vz_fd = Some(vz_fd);
-        Ok(VirtioDeviceConfig::network_file_handle(vz_raw_fd))
+        Ok(match self.config.primary_nic_mac.as_deref() {
+            Some(mac) => VirtioDeviceConfig::network_file_handle_with_mac(vz_raw_fd, mac),
+            None => VirtioDeviceConfig::network_file_handle(vz_raw_fd),
+        })
     }
 
     /// Creates the bridge NIC via vmnet.framework and a socketpair relay.

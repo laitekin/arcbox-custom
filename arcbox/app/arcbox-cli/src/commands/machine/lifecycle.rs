@@ -5,8 +5,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use arcbox_connect::v1::{
-    CloneMachineRequest, ExportMachineRequest, ImportMachineRequest, ListMachinesRequest,
-    SetDefaultMachineRequest, SetMachineIsolationRequest, SetMachineResourcesRequest,
+    CloneMachineRequest, ExportMachineRequest, ImportMachineRequest, InspectMachineRequest,
+    ListMachinesRequest, MachinePortForward, SetDefaultMachineRequest, SetMachineIdentityRequest,
+    SetMachineIsolationRequest, SetMachinePortForwardsRequest, SetMachineResourcesRequest,
 };
 use clap::Args;
 
@@ -71,6 +72,35 @@ pub struct IsolateArgs {
     /// Lift the isolation: share the Mac's /Users and /private again
     #[arg(long)]
     pub off: bool,
+}
+
+#[derive(Args)]
+pub struct ForwardArgs {
+    /// Machine name
+    pub name: String,
+    /// Port in the machine; omit to list the forwards
+    pub guest_port: Option<u16>,
+    /// Port on the Mac's 127.0.0.1 (default: the guest port)
+    #[arg(long, requires = "guest_port")]
+    pub host_port: Option<u16>,
+    /// Forward UDP instead of TCP
+    #[arg(long, requires = "guest_port")]
+    pub udp: bool,
+    /// Remove the forward of this guest port instead
+    #[arg(long, requires = "guest_port", conflicts_with = "host_port")]
+    pub remove: bool,
+}
+
+#[derive(Args)]
+pub struct IdentityArgs {
+    /// Machine name; must be stopped
+    pub name: String,
+    /// Time zone such as Europe/Berlin; `image` keeps the image's own
+    #[arg(long)]
+    pub timezone: Option<String>,
+    /// Locale such as en_US.UTF-8; `image` keeps the image's own
+    #[arg(long)]
+    pub locale: Option<String>,
 }
 
 #[derive(Args)]
@@ -202,7 +232,8 @@ pub async fn execute_isolate(args: IsolateArgs) -> Result<()> {
     if isolated {
         println!(
             "Machine '{}' is isolated: from its next start it gets no share of the Mac's \
-             files, only a directory of its own (mounts you added stay shared)",
+             files, no network path to the Mac or other machines, and egress only through \
+             its saved proxy (mounts you added stay shared)",
             args.name
         );
     } else {
@@ -212,6 +243,128 @@ pub async fn execute_isolate(args: IsolateArgs) -> Result<()> {
             args.name
         );
     }
+    Ok(())
+}
+
+/// `forwards` after adding `guest_port` (as `host_port`) or removing it.
+fn edited_forwards(
+    mut forwards: Vec<MachinePortForward>,
+    guest_port: u16,
+    host_port: u16,
+    udp: bool,
+    remove: bool,
+) -> Vec<MachinePortForward> {
+    let protocol = if udp { "udp" } else { "tcp" };
+    let same_protocol = |f: &MachinePortForward| {
+        f.protocol == protocol || (f.protocol.is_empty() && protocol == "tcp")
+    };
+    if remove {
+        forwards.retain(|f| !(f.guest_port == u32::from(guest_port) && same_protocol(f)));
+    } else {
+        forwards.retain(|f| !(f.host_port == u32::from(host_port) && same_protocol(f)));
+        forwards.push(MachinePortForward {
+            host_port: u32::from(host_port),
+            guest_port: u32::from(guest_port),
+            protocol: protocol.to_owned(),
+            ..Default::default()
+        });
+    }
+    forwards
+}
+
+pub async fn execute_forward(args: ForwardArgs) -> Result<()> {
+    let client = machine_client();
+    let current = client
+        .inspect(InspectMachineRequest {
+            id: args.name.clone(),
+            ..Default::default()
+        })
+        .await
+        .map_err(|error| machine_lifecycle(error, &args.name, "inspect"))?
+        .into_owned()
+        .port_forwards;
+    let Some(guest_port) = args.guest_port else {
+        if current.is_empty() {
+            println!("Machine '{}' has no forwarded ports", args.name);
+        }
+        for forward in &current {
+            let protocol = if forward.protocol.is_empty() {
+                "tcp"
+            } else {
+                forward.protocol.as_str()
+            };
+            println!(
+                "127.0.0.1:{} -> {}:{} ({protocol})",
+                forward.host_port, args.name, forward.guest_port
+            );
+        }
+        return Ok(());
+    };
+    let host_port = args.host_port.unwrap_or(guest_port);
+    let forwards = edited_forwards(current, guest_port, host_port, args.udp, args.remove);
+    client
+        .set_port_forwards(SetMachinePortForwardsRequest {
+            id: args.name.clone(),
+            forwards,
+            ..Default::default()
+        })
+        .await
+        .map_err(|error| machine_lifecycle(error, &args.name, "forward ports of"))?;
+    if args.remove {
+        println!(
+            "Removed the forward of port {guest_port} of machine '{}'",
+            args.name
+        );
+    } else {
+        println!(
+            "127.0.0.1:{host_port} on this Mac now reaches port {guest_port} of machine '{}' \
+             while it runs; its service must listen on all interfaces",
+            args.name
+        );
+    }
+    Ok(())
+}
+
+pub async fn execute_identity(args: IdentityArgs) -> Result<()> {
+    let client = machine_client();
+    let current = client
+        .inspect(InspectMachineRequest {
+            id: args.name.clone(),
+            ..Default::default()
+        })
+        .await
+        .map_err(|error| machine_lifecycle(error, &args.name, "inspect"))?
+        .into_owned();
+    if args.timezone.is_none() && args.locale.is_none() {
+        let or_image = |value: &str| {
+            if value.is_empty() {
+                "the image's".to_owned()
+            } else {
+                value.to_owned()
+            }
+        };
+        println!("Time zone: {}", or_image(&current.timezone));
+        println!("Locale:    {}", or_image(&current.locale));
+        return Ok(());
+    }
+    let pick = |given: Option<String>, current: String| match given.as_deref() {
+        Some("image") => String::new(),
+        Some(_) => given.unwrap_or_default(),
+        None => current,
+    };
+    client
+        .set_identity(SetMachineIdentityRequest {
+            id: args.name.clone(),
+            timezone: pick(args.timezone, current.timezone),
+            locale: pick(args.locale, current.locale),
+            ..Default::default()
+        })
+        .await
+        .map_err(|error| machine_lifecycle(error, &args.name, "set the identity of"))?;
+    println!(
+        "Machine '{}' presents the new time zone and locale from its next start",
+        args.name
+    );
     Ok(())
 }
 
@@ -282,6 +435,34 @@ pub(super) fn human_size(bytes: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::edited_forwards;
+    use arcbox_connect::v1::MachinePortForward;
+
+    fn forward(host_port: u32, guest_port: u32, protocol: &str) -> MachinePortForward {
+        MachinePortForward {
+            host_port,
+            guest_port,
+            protocol: protocol.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn forwards_are_added_replaced_and_removed_per_protocol() {
+        let added = edited_forwards(Vec::new(), 5901, 5901, false, false);
+        assert_eq!(added, [forward(5901, 5901, "tcp")]);
+        // The same host port again replaces the old target.
+        let replaced = edited_forwards(added, 5902, 5901, false, false);
+        assert_eq!(replaced, [forward(5901, 5902, "tcp")]);
+        // UDP on the same port is a separate forward.
+        let both = edited_forwards(replaced, 5902, 5901, true, false);
+        assert_eq!(both.len(), 2);
+        let tcp_gone = edited_forwards(both, 5902, 0, false, true);
+        assert_eq!(tcp_gone, [forward(5901, 5902, "udp")]);
+        // A forward from before the protocol field counts as TCP.
+        assert!(edited_forwards(vec![forward(22, 22, "")], 22, 0, false, true).is_empty());
+    }
+
     use super::*;
 
     #[test]

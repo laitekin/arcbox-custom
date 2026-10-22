@@ -497,6 +497,8 @@ impl LifecycleShared {
             nested_virt: true,
             // The System VM serves Docker bind mounts from the Mac's paths.
             isolated: false,
+            timezone: None,
+            locale: None,
         };
 
         tracing::info!(

@@ -42,6 +42,7 @@ pub enum MachineState {
 pub mod archive;
 mod clone;
 mod host_hold;
+pub mod identity;
 mod maintenance;
 #[cfg(target_os = "macos")]
 mod serial;
@@ -109,6 +110,33 @@ pub struct MachineInfo {
     pub mounts: Vec<MachineMount>,
     /// The machine is isolated from the Mac (see [`vm_shared_dirs`]).
     pub isolated: bool,
+    /// MAC address of the primary NIC; random per boot when `None`. An
+    /// isolated machine gets one from a real vendor's range
+    /// ([`identity::vendor_mac`]).
+    pub nic_mac: Option<String>,
+    /// The guest's `/etc/machine-id`; the image's own when `None`.
+    pub machine_id: Option<String>,
+    /// Time zone the guest presents; the image's when `None`.
+    pub timezone: Option<String>,
+    /// Locale the guest presents; the image's when `None`.
+    pub locale: Option<String>,
+    /// Ports on the Mac's loopback forwarded into the machine.
+    pub port_forwards: Vec<MachinePortForward>,
+}
+
+/// A port on the Mac's loopback forwarded to a port of the machine, the way
+/// the Mac reaches a service of an isolated machine (which has no bridge
+/// address), VNC say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MachinePortForward {
+    /// Port on `127.0.0.1` of the Mac.
+    pub host_port: u16,
+    /// Port in the machine; its service must listen on all interfaces, not
+    /// only on the guest's loopback.
+    pub guest_port: u16,
+    /// UDP instead of TCP.
+    #[serde(default)]
+    pub udp: bool,
 }
 
 /// The outcome of [`MachineManager::set_resources`].
@@ -211,6 +239,10 @@ pub struct MachineConfig {
     /// and its own directory in place of the data directory share. User
     /// mounts are still honored; they are the user's explicit choice.
     pub isolated: bool,
+    /// Time zone the guest presents (`Area/City`); the image's when `None`.
+    pub timezone: Option<String>,
+    /// Locale the guest presents (`en_US.UTF-8`); the image's when `None`.
+    pub locale: Option<String>,
 }
 
 impl Default for MachineConfig {
@@ -231,6 +263,8 @@ impl Default for MachineConfig {
             enable_rosetta: false,
             nested_virt: false,
             isolated: false,
+            timezone: None,
+            locale: None,
         }
     }
 }
@@ -379,6 +413,41 @@ fn vm_shared_dirs(
         shared_dirs.push(share);
     }
     shared_dirs
+}
+
+/// The host network a machine starts on: its own proxy route, marked
+/// isolated or not. Without per-machine routes an isolated machine still gets
+/// a policy of its own carrying the flag, so it is never left on the shared
+/// default, which does not isolate.
+fn machine_network(host_network: &HostNetwork, name: &str, isolated: bool) -> HostNetwork {
+    let mut network = host_network.clone();
+    if let Some(routes) = &network.proxy_routes {
+        routes.set_isolated(name, isolated);
+        network.proxy = routes.for_machine(name);
+    } else if isolated {
+        network.proxy = arcbox_fakeip::proxy_state::ProxyState::from_snapshot(
+            arcbox_fakeip::proxy_state::ProxySnapshot {
+                isolated: true,
+                ..(*network.proxy.load()).clone()
+            },
+        );
+    }
+    network
+}
+
+/// A shim machine's `cmdline` carrying the identity the machine has; any
+/// other command line, which no ArcBox shim reads, is left as it is.
+fn identity_cmdline(
+    cmdline: &str,
+    machine_id: Option<&str>,
+    timezone: Option<&str>,
+    locale: Option<&str>,
+) -> String {
+    if cmdline.contains(arcbox_constants::cmdline::MACHINE_NAME_KEY) {
+        identity::cmdline_with_identity(cmdline, machine_id, timezone, locale)
+    } else {
+        cmdline.to_owned()
+    }
 }
 
 /// Checks that `name` is free to register and returns the hostname it would
@@ -530,6 +599,8 @@ impl MachineManager {
                 block_devices: persisted.block_devices.clone(),
                 backend: persisted.backend,
                 nested_virt: persisted.nested_virt,
+                isolated_network: persisted.isolated,
+                primary_nic_mac: persisted.nic_mac.clone(),
                 ..Default::default()
             };
 
@@ -558,6 +629,11 @@ impl MachineManager {
                     started_at: persisted.started_at,
                     mounts: persisted.mounts.clone(),
                     isolated: persisted.isolated,
+                    nic_mac: persisted.nic_mac.clone(),
+                    machine_id: persisted.machine_id.clone(),
+                    timezone: persisted.timezone.clone(),
+                    locale: persisted.locale.clone(),
+                    port_forwards: persisted.port_forwards.clone(),
                 };
                 machines.insert(persisted.name.clone(), info);
             }
@@ -661,6 +737,23 @@ impl MachineManager {
             .map_err(|_| EngineError::LockPoisoned)?;
         let hostname = reserve_hostname(&machines, &config.name)?;
 
+        if let Some(zone) = &config.timezone {
+            identity::validate_timezone(zone)?;
+        }
+        if let Some(locale) = &config.locale {
+            identity::validate_locale(locale)?;
+        }
+        // An isolated machine is distinguishable from every other from the
+        // start: its own NIC address and machine ID.
+        let (nic_mac, machine_id) = if config.isolated {
+            (
+                Some(identity::vendor_mac()),
+                Some(identity::new_machine_id()),
+            )
+        } else {
+            (None, None)
+        };
+
         let machine_dir = self.machines_dir.join(&config.name);
         std::fs::create_dir_all(&machine_dir)?;
 
@@ -737,7 +830,12 @@ impl MachineManager {
                 });
                 let cmdline = config.cmdline.clone().or_else(|| {
                     Some(match &rootfs.shim {
-                        Some(_) => machine_shim_cmdline(&hostname, &rootfs.format, &config.mounts),
+                        Some(_) => identity::cmdline_with_identity(
+                            &machine_shim_cmdline(&hostname, &rootfs.format, &config.mounts),
+                            machine_id.as_deref(),
+                            config.timezone.as_deref(),
+                            config.locale.as_deref(),
+                        ),
                         None => default_distro_cmdline(&rootfs.format),
                     })
                 });
@@ -769,6 +867,8 @@ impl MachineManager {
             rosetta: config.enable_rosetta,
             nested_virt: config.nested_virt,
             backend: config.backend,
+            isolated_network: config.isolated,
+            primary_nic_mac: nic_mac.clone(),
             ..Default::default()
         };
         let vm_id = self.vm_manager.create(vm_config)?;
@@ -796,6 +896,11 @@ impl MachineManager {
             started_at: None,
             mounts: config.mounts,
             isolated: config.isolated,
+            nic_mac,
+            machine_id,
+            timezone: config.timezone,
+            locale: config.locale,
+            port_forwards: Vec::new(),
         };
         self.register(&mut machines, info)
     }
@@ -861,20 +966,17 @@ impl MachineManager {
         self.verify_storage_pair(name)?;
         let (vm_id, cid) = self.assign_cid_for_start(name)?;
 
-        // Check if this is a distro-based machine VM.
-        let is_machine_vm = self
+        // Check if this is a distro-based machine VM, and whether it is
+        // isolated from the Mac.
+        let (is_machine_vm, isolated) = self
             .machines
             .read()
             .map_err(|_| EngineError::LockPoisoned)?
             .get(name)
-            .and_then(|m| m.distro.as_ref())
-            .is_some();
+            .map_or((false, false), |m| (m.distro.is_some(), m.isolated));
 
         // Start underlying VM
-        let mut network = self.host_network.clone();
-        if let Some(routes) = &network.proxy_routes {
-            network.proxy = routes.for_machine(name);
-        }
+        let network = machine_network(&self.host_network, name, isolated);
         self.vm_manager.start(&vm_id, network)?;
 
         // Update machine state
@@ -1657,17 +1759,136 @@ impl MachineManager {
         if machine.isolated == isolated {
             return Ok(());
         }
+        // Isolating gives the machine an identity of its own if it has none
+        // yet; lifting the isolation keeps it, so the machine does not
+        // change appearance back and forth.
+        let nic_mac = machine
+            .nic_mac
+            .clone()
+            .or_else(|| isolated.then(identity::vendor_mac));
+        let machine_id = machine
+            .machine_id
+            .clone()
+            .or_else(|| isolated.then(identity::new_machine_id));
+        let cmdline = machine.cmdline.as_deref().map(|cmdline| {
+            identity_cmdline(
+                cmdline,
+                machine_id.as_deref(),
+                machine.timezone.as_deref(),
+                machine.locale.as_deref(),
+            )
+        });
         let shared_dirs = vm_shared_dirs(
             &self.data_dir,
             &self.machines_dir.join(name),
             &machine.mounts,
             isolated,
         );
-        self.vm_manager
-            .set_shared_dirs(&machine.vm_id, shared_dirs)?;
+        self.vm_manager.reconfigure(&machine.vm_id, |config| {
+            config.shared_dirs = shared_dirs;
+            config.isolated_network = isolated;
+            config.primary_nic_mac.clone_from(&nic_mac);
+            config.cmdline.clone_from(&cmdline);
+        })?;
         machine.isolated = isolated;
-        self.persistence.update(name, |m| m.isolated = isolated)?;
+        machine.nic_mac.clone_from(&nic_mac);
+        machine.machine_id.clone_from(&machine_id);
+        machine.cmdline.clone_from(&cmdline);
+        self.persistence.update(name, |m| {
+            m.isolated = isolated;
+            m.nic_mac = nic_mac;
+            m.machine_id = machine_id;
+            m.cmdline = cmdline;
+        })?;
         tracing::info!(machine = name, isolated, "machine isolation changed");
+        Ok(())
+    }
+
+    /// Sets the time zone and locale a stopped machine presents; `None`
+    /// leaves the image's own. Applied by the guest on its next boot.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a name is malformed, the machine is not found or
+    /// not stopped, or the persisted config cannot be updated.
+    pub fn set_identity(
+        &self,
+        name: &str,
+        timezone: Option<String>,
+        locale: Option<String>,
+    ) -> Result<()> {
+        if let Some(zone) = &timezone {
+            identity::validate_timezone(zone)?;
+        }
+        if let Some(locale) = &locale {
+            identity::validate_locale(locale)?;
+        }
+        let _storage = self.storage_permit(name)?;
+        let mut machines = self
+            .machines
+            .write()
+            .map_err(|_| EngineError::LockPoisoned)?;
+        let machine = machines
+            .get_mut(name)
+            .ok_or_else(|| EngineError::not_found(name.to_string()))?;
+        if !matches!(machine.state, MachineState::Created | MachineState::Stopped) {
+            return Err(EngineError::invalid_state(format!(
+                "machine '{name}' is {}; stop it first",
+                format!("{:?}", machine.state).to_lowercase()
+            )));
+        }
+        let cmdline = machine.cmdline.as_deref().map(|cmdline| {
+            identity_cmdline(
+                cmdline,
+                machine.machine_id.as_deref(),
+                timezone.as_deref(),
+                locale.as_deref(),
+            )
+        });
+        self.vm_manager
+            .reconfigure(&machine.vm_id, |config| config.cmdline.clone_from(&cmdline))?;
+        machine.timezone.clone_from(&timezone);
+        machine.locale.clone_from(&locale);
+        machine.cmdline.clone_from(&cmdline);
+        self.persistence.update(name, |m| {
+            m.timezone = timezone;
+            m.locale = locale;
+            m.cmdline = cmdline;
+        })?;
+        Ok(())
+    }
+
+    /// Replaces the ports forwarded from the Mac's loopback into the
+    /// machine. Only the record changes; the daemon binds them while the
+    /// machine runs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a port is 0, a host port is listed twice, the
+    /// machine is not found, or the persisted config cannot be updated.
+    pub fn set_port_forwards(&self, name: &str, forwards: Vec<MachinePortForward>) -> Result<()> {
+        let mut seen = std::collections::HashSet::new();
+        for forward in &forwards {
+            if forward.host_port == 0 || forward.guest_port == 0 {
+                return Err(EngineError::config("forwarded ports must not be 0"));
+            }
+            if !seen.insert((forward.host_port, forward.udp)) {
+                return Err(EngineError::config(format!(
+                    "host port {} is forwarded twice",
+                    forward.host_port
+                )));
+            }
+        }
+        let mut machines = self
+            .machines
+            .write()
+            .map_err(|_| EngineError::LockPoisoned)?;
+        let machine = machines
+            .get_mut(name)
+            .ok_or_else(|| EngineError::not_found(name.to_string()))?;
+        machine.port_forwards.clone_from(&forwards);
+        self.persistence
+            .update(name, |m| m.port_forwards = forwards)?;
         Ok(())
     }
 
@@ -1997,6 +2218,11 @@ impl MachineManager {
             started_at: None,
             mounts: Vec::new(),
             isolated: false,
+            nic_mac: None,
+            machine_id: None,
+            timezone: None,
+            locale: None,
+            port_forwards: Vec::new(),
         };
 
         machines.insert(name.to_string(), info);

@@ -1,5 +1,6 @@
 //! Machine service gRPC implementation.
 
+mod forwards;
 mod rootfs;
 mod transfer;
 
@@ -141,6 +142,8 @@ impl pb::MachineService for MachineServiceImpl {
             enable_rosetta: false,
             nested_virt: false,
             isolated: req.isolated,
+            timezone: (!req.timezone.is_empty()).then(|| req.timezone.clone()),
+            locale: (!req.locale.is_empty()).then(|| req.locale.clone()),
         };
 
         runtime
@@ -169,6 +172,15 @@ impl pb::MachineService for MachineServiceImpl {
             .await
             .map_err(ApiError::from)?;
 
+        // The machine is up either way; a port another program holds is
+        // logged, and the forwards can be set again once it is free.
+        if let Some(machine) = runtime.machine_manager().get(&id)
+            && !machine.port_forwards.is_empty()
+            && let Err(e) = forwards::apply(runtime, &machine.name, &machine.port_forwards).await
+        {
+            tracing::warn!(machine = %id, error = %e, "forwarded ports not bound");
+        }
+
         Response::ok(pb::Empty::default())
     }
 
@@ -187,6 +199,7 @@ impl pb::MachineService for MachineServiceImpl {
         // workers.
         let force = req.force;
         let id = req.id;
+        let name = id.clone();
         tokio::task::spawn_blocking(move || {
             if force {
                 return manager.stop(&id);
@@ -208,6 +221,7 @@ impl pb::MachineService for MachineServiceImpl {
         .await
         .map_err(|e| ConnectError::internal(format!("stop task panicked: {e}")))?
         .map_err(ApiError::from)?;
+        forwards::release(runtime, &name).await;
 
         Response::ok(pb::Empty::default())
     }
@@ -229,6 +243,7 @@ impl pb::MachineService for MachineServiceImpl {
             .await
             .map_err(|e| ConnectError::internal(format!("remove task panicked: {e}")))?
             .map_err(ApiError::from)?;
+        forwards::release(runtime, &removed_name).await;
 
         let controller = std::sync::Arc::clone(runtime.network_proxy());
         if controller
@@ -309,10 +324,66 @@ impl pb::MachineService for MachineServiceImpl {
     ) -> ServiceResult<pb::Empty> {
         let req = request.to_owned_message();
         let runtime = self.runtime.ready()?;
+        if req.isolated {
+            // Isolation is fail-closed in the datapath, but a machine without a
+            // saved proxy would just be offline: refuse it up front instead.
+            let name = req.id.clone();
+            let proxy = std::sync::Arc::clone(runtime.network_proxy());
+            let (choice, _) = tokio::task::spawn_blocking(move || proxy.machine_proxy(&name))
+                .await
+                .map_err(|e| ConnectError::internal(format!("proxy lookup panicked: {e}")))?
+                .map_err(refusal)?;
+            if !super::proxy_library::is_saved_proxy_choice(&choice) {
+                return Err(ConnectError::failed_precondition(
+                    "choose a saved proxy for the machine before isolating it; \
+                     an isolated machine connects only through one",
+                ));
+            }
+        }
         runtime
             .machine_manager()
             .set_isolated(&req.id, req.isolated)
             .map_err(refusal)?;
+        Response::ok(pb::Empty::default())
+    }
+
+    async fn set_identity(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, pb::SetMachineIdentityRequest>,
+    ) -> ServiceResult<pb::Empty> {
+        let req = request.to_owned_message();
+        let runtime = self.runtime.ready()?;
+        runtime
+            .machine_manager()
+            .set_identity(
+                &req.id,
+                (!req.timezone.is_empty()).then_some(req.timezone),
+                (!req.locale.is_empty()).then_some(req.locale),
+            )
+            .map_err(refusal)?;
+        Response::ok(pb::Empty::default())
+    }
+
+    async fn set_port_forwards(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, pb::SetMachinePortForwardsRequest>,
+    ) -> ServiceResult<pb::Empty> {
+        let req = request.to_owned_message();
+        let runtime = self.runtime.ready()?;
+        let wanted = forwards::from_proto(&req.forwards)?;
+        runtime
+            .machine_manager()
+            .set_port_forwards(&req.id, wanted.clone())
+            .map_err(refusal)?;
+        let running = runtime
+            .machine_manager()
+            .get(&req.id)
+            .is_some_and(|m| m.state == arcbox_core::machine::MachineState::Running);
+        if running {
+            forwards::apply(runtime, &req.id, &wanted).await?;
+        }
         Response::ok(pb::Empty::default())
     }
 
@@ -409,7 +480,7 @@ impl pb::MachineService for MachineServiceImpl {
                     .map(|_| vec![NAT_GATEWAY.to_string()])
                     .unwrap_or_default(),
                 ip_address: machine.ip_address.clone().unwrap_or_default(),
-                mac_address: String::new(),
+                mac_address: machine.nic_mac.clone().unwrap_or_default(),
                 bridge_mac_address: arcbox_core::vm::bridge_nic_mac_for_vm_id(&machine.vm_id),
                 dns_name,
                 bridge_ip_address: machine.bridge_ip_address.clone().unwrap_or_default(),
@@ -450,6 +521,9 @@ impl pb::MachineService for MachineServiceImpl {
                 })
                 .collect(),
             isolated: machine.isolated,
+            timezone: machine.timezone.clone().unwrap_or_default(),
+            locale: machine.locale.clone().unwrap_or_default(),
+            port_forwards: forwards::to_proto(&machine.port_forwards),
             ..Default::default()
         };
         Response::ok(resp)

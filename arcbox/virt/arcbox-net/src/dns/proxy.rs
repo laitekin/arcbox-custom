@@ -35,10 +35,21 @@ pub async fn forward(
         ));
     }
     let host = query.queries[0].name().to_ascii();
-    let remote = snapshot
-        .environment
-        .as_ref()
-        .filter(|env| env.remote_dns && !env.should_bypass(&host));
+    // An isolated machine resolves only through its proxy, bypass list or
+    // not, and gets no answer when there is no SOCKS5 proxy to ask through.
+    let remote = if snapshot.isolated {
+        Some(snapshot.environment.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotConnected,
+                "an isolated machine resolves names only through its proxy",
+            )
+        })?)
+    } else {
+        snapshot
+            .environment
+            .as_ref()
+            .filter(|env| env.remote_dns && !env.should_bypass(&host))
+    };
     let proxy = remote
         .map(|env| {
             env.socks_proxy.as_ref().ok_or_else(|| {

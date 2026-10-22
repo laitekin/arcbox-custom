@@ -50,6 +50,8 @@ fn main() {
         balloon: false,
         block_devices: Vec::new(),
         bridge_nic_mac: None,
+        primary_nic_mac: None,
+        isolated_network: false,
         backend: arcbox_vmm::VmBackend::default(),
         debug_console_socket: None,
     };

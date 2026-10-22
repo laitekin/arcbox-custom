@@ -268,6 +268,7 @@ fn snapshot(
         udp: preferences.udp,
         icmp: preferences.icmp,
         revision: 0,
+        isolated: false,
     }
 }
 

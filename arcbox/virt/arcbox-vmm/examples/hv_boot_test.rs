@@ -80,6 +80,8 @@ fn main() {
             read_only: true,
         }],
         bridge_nic_mac: None,
+            primary_nic_mac: None,
+            isolated_network: false,
         backend: arcbox_vmm::VmBackend::Hv, // Force HV backend
         debug_console_socket: None,
     };

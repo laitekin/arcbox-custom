@@ -74,6 +74,22 @@ pub const MACHINE_MOUNTS_KEY: &str = "arcbox.machine_mounts=";
 /// guest calls itself. Fixed at create like the rest of the machine cmdline.
 pub const MACHINE_NAME_KEY: &str = "arcbox.machine_name=";
 
+/// Kernel cmdline key carrying the machine's `/etc/machine-id`.
+///
+/// The value is 32 lowercase hex digits. The agent writes it on every boot,
+/// so an isolated machine, or a clone of one, never shares the ID its image
+/// or its source carried.
+pub const MACHINE_ID_KEY: &str = "arcbox.machine_id=";
+
+/// Kernel cmdline key carrying the machine's time zone (`Area/City`, an
+/// entry under `/usr/share/zoneinfo`), which the agent links as
+/// `/etc/localtime` on every boot.
+pub const MACHINE_TIMEZONE_KEY: &str = "arcbox.timezone=";
+
+/// Kernel cmdline key carrying the machine's locale (`en_US.UTF-8`), which
+/// the agent writes as `LANG` on every boot.
+pub const MACHINE_LOCALE_KEY: &str = "arcbox.locale=";
+
 /// Kernel routing protocol (`rtm_protocol`) tagging the routes the agent's
 /// own DHCP client installs.
 ///

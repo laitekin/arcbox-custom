@@ -82,4 +82,10 @@ pub struct ArchivedMachine {
     /// in archives written before the field existed.
     #[serde(default)]
     pub isolated: bool,
+    /// Time zone the machine presents, if set.
+    #[serde(default)]
+    pub timezone: Option<String>,
+    /// Locale the machine presents, if set.
+    #[serde(default)]
+    pub locale: Option<String>,
 }

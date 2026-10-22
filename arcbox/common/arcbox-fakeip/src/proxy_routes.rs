@@ -15,6 +15,9 @@ pub struct ProxyRoutes {
 struct Route {
     state: ProxyState,
     inherited: bool,
+    /// Stamped on every snapshot this machine gets, whichever source it
+    /// comes from.
+    isolated: bool,
 }
 
 impl ProxyRoutes {
@@ -33,8 +36,12 @@ impl ProxyRoutes {
         machines
             .entry(name.to_string())
             .or_insert_with(|| Route {
-                state: ProxyState::from_snapshot((*self.default.load()).clone()),
+                state: ProxyState::from_snapshot(ProxySnapshot {
+                    isolated: false,
+                    ..(*self.default.load()).clone()
+                }),
                 inherited: true,
+                isolated: false,
             })
             .state
             .clone()
@@ -45,7 +52,7 @@ impl ProxyRoutes {
         let machines = self.machines.write().expect("proxy routes lock poisoned");
         self.default.store(snapshot.clone());
         for route in machines.values().filter(|route| route.inherited) {
-            store(&route.state, snapshot.clone());
+            store(&route.state, snapshot.clone(), route.isolated);
         }
     }
 
@@ -58,12 +65,25 @@ impl ProxyRoutes {
         store(
             &state,
             snapshot.unwrap_or_else(|| (*self.default.load()).clone()),
+            route.isolated,
         );
+    }
+
+    /// Marks machine `name` isolated or not. Its current policy is
+    /// republished with the flag, and every later one carries it, so the
+    /// rules hold from the next flow on.
+    pub fn set_isolated(&self, name: &str, isolated: bool) {
+        let state = self.for_machine(name);
+        let mut machines = self.machines.write().expect("proxy routes lock poisoned");
+        let route = machines.get_mut(name).expect("machine route created above");
+        route.isolated = isolated;
+        store(&state, (*state.load()).clone(), isolated);
     }
 }
 
-fn store(state: &ProxyState, mut snapshot: ProxySnapshot) {
+fn store(state: &ProxyState, mut snapshot: ProxySnapshot, isolated: bool) {
     snapshot.revision = state.load().revision + 1;
+    snapshot.isolated = isolated;
     state.store(snapshot);
 }
 
@@ -95,5 +115,40 @@ mod tests {
         routes.publish_default(ProxySnapshot::default());
         assert_eq!(first.load().udp, UdpPolicy::Proxy);
         assert_eq!(second.load().udp, UdpPolicy::Proxy);
+    }
+
+    #[test]
+    fn isolation_survives_every_later_policy_and_only_for_its_machine() {
+        let routes = ProxyRoutes::new(ProxyState::default());
+        let sealed = routes.for_machine("sealed");
+        let open = routes.for_machine("open");
+
+        routes.set_isolated("sealed", true);
+        assert!(sealed.load().isolated);
+        assert!(!open.load().isolated);
+
+        // A new default, then an explicit choice, keep the flag.
+        routes.publish_default(ProxySnapshot {
+            udp: UdpPolicy::Block,
+            ..Default::default()
+        });
+        assert!(sealed.load().isolated);
+        assert_eq!(sealed.load().udp, UdpPolicy::Block);
+        routes.set_machine("sealed", Some(ProxySnapshot::default()));
+        assert!(sealed.load().isolated);
+        routes.set_machine("sealed", None);
+        assert!(sealed.load().isolated);
+        assert!(!open.load().isolated);
+
+        // A default snapshot that claims isolation does not leak to others.
+        routes.publish_default(ProxySnapshot {
+            isolated: true,
+            ..Default::default()
+        });
+        assert!(!open.load().isolated);
+        assert!(!routes.for_machine("late").load().isolated);
+
+        routes.set_isolated("sealed", false);
+        assert!(!sealed.load().isolated);
     }
 }

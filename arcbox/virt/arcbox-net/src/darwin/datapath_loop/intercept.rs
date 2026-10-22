@@ -180,8 +180,14 @@ fn handle_dns(
     let src_port = u16::from_be_bytes([frame[l4_start], frame[l4_start + 1]]);
     let dns_data = &frame[dns_start..];
 
-    // Fast path: resolve from local host mappings (no I/O).
-    if let Some(response) = dns_forwarder.try_resolve_locally_or_nodata(dns_data) {
+    // Fast path: resolve from local host mappings (no I/O). An isolated
+    // machine skips it: local names point at the Mac and other machines,
+    // which it may not reach, so it only gets what its proxy resolves.
+    let isolated = proxy_state.load().isolated;
+    if let Some(response) = (!isolated)
+        .then(|| dns_forwarder.try_resolve_locally_or_nodata(dns_data))
+        .flatten()
+    {
         let reply_frames = build_udp_ip_ethernet(
             gateway_ip,
             src_ip,

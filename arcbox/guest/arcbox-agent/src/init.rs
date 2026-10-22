@@ -528,6 +528,17 @@ mod platform {
                 "no machine name on the kernel cmdline; keeping the image's hostname"
             ),
         }
+        // Set only when the host chose them (an isolated machine, or one the
+        // user gave a time zone or locale); the image's own stay otherwise.
+        if let Some(id) = cmdline_value(arcbox_constants::cmdline::MACHINE_ID_KEY) {
+            crate::machine_identity::set_machine_id(&id);
+        }
+        if let Some(zone) = cmdline_value(arcbox_constants::cmdline::MACHINE_TIMEZONE_KEY) {
+            crate::machine_identity::set_timezone(&zone);
+        }
+        if let Some(locale) = cmdline_value(arcbox_constants::cmdline::MACHINE_LOCALE_KEY) {
+            crate::machine_identity::set_locale(&locale);
+        }
         run_init_cmd(
             "/bin/busybox",
             &["ip", "link", "set", "lo", "up"],
@@ -564,11 +575,16 @@ mod platform {
     /// The machine's name, from the `arcbox.machine_name=` the host put on
     /// the kernel cmdline.
     fn machine_name() -> Option<String> {
+        cmdline_value(MACHINE_NAME_KEY)
+    }
+
+    /// The non-empty value of the `key` token on the kernel cmdline.
+    fn cmdline_value(key: &str) -> Option<String> {
         let cmdline = fs::read_to_string("/proc/cmdline").ok()?;
         cmdline
             .split_whitespace()
-            .find_map(|token| token.strip_prefix(MACHINE_NAME_KEY))
-            .filter(|name| !name.is_empty())
+            .find_map(|token| token.strip_prefix(key))
+            .filter(|value| !value.is_empty())
             .map(str::to_owned)
     }
 

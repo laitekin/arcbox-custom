@@ -1,5 +1,6 @@
 //! What a distro machine is told about itself before its own init runs:
-//! its name, and which NIC is not its to manage.
+//! its name, which NIC is not its to manage, and — when the host sets them
+//! — its machine ID, time zone and locale.
 //!
 //! Both are files the boot shim's `machine-init` writes into the distro's
 //! overlay root, so they are in place when the distro's init starts and
@@ -31,6 +32,18 @@ const ETC_HOSTS: &str = "/etc/hosts";
 /// The loopback alias Debian-family images give the hostname; any image
 /// gets it, since the line is harmless where the convention is foreign.
 const HOSTNAME_ALIAS_ADDRESS: &str = "127.0.1.1";
+
+const ETC_MACHINE_ID: &str = "/etc/machine-id";
+/// Where dbus looks first; a plain file here (not the usual symlink) would
+/// keep the image's ID alive next to the new one.
+const DBUS_MACHINE_ID: &str = "/var/lib/dbus/machine-id";
+const ETC_LOCALTIME: &str = "/etc/localtime";
+const ETC_TIMEZONE: &str = "/etc/timezone";
+const ZONEINFO: &str = "/usr/share/zoneinfo";
+/// Read by systemd and most shells' profile scripts.
+const ETC_LOCALE_CONF: &str = "/etc/locale.conf";
+/// Read by Debian-family PAM sessions.
+const ETC_DEFAULT_LOCALE: &str = "/etc/default/locale";
 
 const NETWORKD_BINARIES: &[&str] = &[
     "/usr/lib/systemd/systemd-networkd",
@@ -80,6 +93,80 @@ impl Layout {
             && let Err(e) = write_file(&hosts, &wanted, 0o644)
         {
             tracing::warn!(error = %e, "failed to add the hostname to /etc/hosts");
+        }
+    }
+
+    /// Makes `id` the guest's machine ID. The host sends 32 hex digits;
+    /// anything else is ignored rather than written, since a malformed ID
+    /// breaks systemd's boot.
+    fn set_machine_id(&self, id: &str) {
+        if id.len() != 32 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+            tracing::warn!("ignoring a malformed machine ID from the kernel cmdline");
+            return;
+        }
+        if let Err(e) = write_file(&self.path(ETC_MACHINE_ID), &format!("{id}\n"), 0o444) {
+            tracing::warn!(error = %e, "failed to write /etc/machine-id");
+        }
+        let dbus = self.path(DBUS_MACHINE_ID);
+        if fs::symlink_metadata(&dbus).is_ok_and(|meta| meta.file_type().is_file())
+            && let Err(e) = write_file(&dbus, &format!("{id}\n"), 0o444)
+        {
+            tracing::warn!(error = %e, "failed to write the dbus machine ID");
+        }
+    }
+
+    /// Makes `zone` the guest's time zone, if the image has it: `/etc/localtime`
+    /// links to its zoneinfo file and `/etc/timezone` names it. An unknown
+    /// zone leaves the image's own, rather than a dangling link.
+    fn set_timezone(&self, zone: &str) {
+        let valid = zone
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..");
+        let zoneinfo = format!("{ZONEINFO}/{zone}");
+        if !valid || !self.path(&zoneinfo).is_file() {
+            tracing::warn!(zone, "time zone not in the image; keeping its own");
+            return;
+        }
+        let localtime = self.path(ETC_LOCALTIME);
+        if let Some(parent) = localtime.parent()
+            && let Err(e) = fs::create_dir_all(parent)
+        {
+            tracing::warn!(error = %e, "failed to create /etc");
+            return;
+        }
+        let staged = localtime.with_extension("arcbox-tmp");
+        let _ = fs::remove_file(&staged);
+        let linked = std::os::unix::fs::symlink(format!("..{zoneinfo}"), &staged)
+            .and_then(|()| fs::rename(&staged, &localtime));
+        if let Err(e) = linked {
+            let _ = fs::remove_file(&staged);
+            tracing::warn!(error = %e, "failed to link /etc/localtime");
+        }
+        if let Err(e) = write_file(&self.path(ETC_TIMEZONE), &format!("{zone}\n"), 0o644) {
+            tracing::warn!(error = %e, "failed to write /etc/timezone");
+        }
+    }
+
+    /// Makes `locale` the guest's `LANG`, in the files systemd and Debian's
+    /// PAM read. The locale's data must be in the image for programs to use
+    /// it; that is the image's business.
+    fn set_locale(&self, locale: &str) {
+        if locale.is_empty()
+            || !locale
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '@'))
+        {
+            tracing::warn!("ignoring a malformed locale from the kernel cmdline");
+            return;
+        }
+        let body = format!("LANG={locale}\n");
+        if let Err(e) = write_file(&self.path(ETC_LOCALE_CONF), &body, 0o644) {
+            tracing::warn!(error = %e, "failed to write /etc/locale.conf");
+        }
+        if self.path("/etc/default").is_dir()
+            && let Err(e) = write_file(&self.path(ETC_DEFAULT_LOCALE), &body, 0o644)
+        {
+            tracing::warn!(error = %e, "failed to write /etc/default/locale");
         }
     }
 
@@ -163,6 +250,24 @@ pub fn set_hostname(name: &str) {
 #[cfg(target_os = "linux")]
 pub fn claim_bridge_nic(mac: &str) {
     Layout::guest().claim_bridge_nic(mac);
+}
+
+/// Makes `id` the guest's `/etc/machine-id`; see the module docs.
+#[cfg(target_os = "linux")]
+pub fn set_machine_id(id: &str) {
+    Layout::guest().set_machine_id(id);
+}
+
+/// Makes `zone` the guest's time zone; see the module docs.
+#[cfg(target_os = "linux")]
+pub fn set_timezone(zone: &str) {
+    Layout::guest().set_timezone(zone);
+}
+
+/// Makes `locale` the guest's `LANG`; see the module docs.
+#[cfg(target_os = "linux")]
+pub fn set_locale(locale: &str) {
+    Layout::guest().set_locale(locale);
 }
 
 #[cfg(test)]
@@ -270,5 +375,61 @@ mod tests {
             "{:?}",
             fs::read_dir(dir.path())
         );
+    }
+
+    /// A clone or an isolated machine replaces the image's ID everywhere
+    /// it lives as a file; dbus's usual symlink is left to follow it.
+    #[test]
+    fn the_machine_id_replaces_the_images() {
+        let (_dir, layout) = image();
+        touch(&layout, ETC_MACHINE_ID);
+        fs::write(
+            layout.path(ETC_MACHINE_ID),
+            "0123456789abcdef0123456789abcdef\n",
+        )
+        .expect("write");
+        touch(&layout, DBUS_MACHINE_ID);
+        let id = "fedcba9876543210fedcba9876543210";
+        layout.set_machine_id(id);
+        assert_eq!(read(&layout, ETC_MACHINE_ID), format!("{id}\n"));
+        assert_eq!(read(&layout, DBUS_MACHINE_ID), format!("{id}\n"));
+
+        let (_dir, layout) = image();
+        layout.set_machine_id("not-an-id");
+        assert!(!layout.path(ETC_MACHINE_ID).exists());
+    }
+
+    #[test]
+    fn a_known_time_zone_is_linked_and_an_unknown_one_ignored() {
+        let (_dir, layout) = image();
+        touch(&layout, "/usr/share/zoneinfo/Asia/Tokyo");
+        touch(&layout, ETC_LOCALTIME);
+        layout.set_timezone("Asia/Tokyo");
+        assert_eq!(
+            fs::read_link(layout.path(ETC_LOCALTIME)).expect("link"),
+            PathBuf::from("../usr/share/zoneinfo/Asia/Tokyo")
+        );
+        assert_eq!(read(&layout, ETC_TIMEZONE), "Asia/Tokyo\n");
+
+        layout.set_timezone("Mars/Olympus");
+        assert_eq!(read(&layout, ETC_TIMEZONE), "Asia/Tokyo\n");
+        layout.set_timezone("../../etc/passwd");
+        assert_eq!(read(&layout, ETC_TIMEZONE), "Asia/Tokyo\n");
+    }
+
+    #[test]
+    fn the_locale_goes_where_systemd_and_debian_read_it() {
+        let (_dir, layout) = image();
+        fs::create_dir_all(layout.path("/etc/default")).expect("mkdir");
+        layout.set_locale("de_DE.UTF-8");
+        assert_eq!(read(&layout, ETC_LOCALE_CONF), "LANG=de_DE.UTF-8\n");
+        assert_eq!(read(&layout, ETC_DEFAULT_LOCALE), "LANG=de_DE.UTF-8\n");
+
+        let (_dir, layout) = image();
+        layout.set_locale("en_US.UTF-8");
+        assert_eq!(read(&layout, ETC_LOCALE_CONF), "LANG=en_US.UTF-8\n");
+        assert!(!layout.path(ETC_DEFAULT_LOCALE).exists());
+        layout.set_locale("bad value");
+        assert_eq!(read(&layout, ETC_LOCALE_CONF), "LANG=en_US.UTF-8\n");
     }
 }

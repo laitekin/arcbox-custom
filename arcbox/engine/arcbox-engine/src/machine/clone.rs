@@ -19,7 +19,10 @@ use std::path::{Path, PathBuf};
 use arcbox_constants::cmdline::MACHINE_NAME_KEY;
 use chrono::Utc;
 
-use super::{MachineInfo, MachineManager, MachineState, reserve_hostname, vm_shared_dirs};
+use super::{
+    MachineInfo, MachineManager, MachineState, identity, identity_cmdline, reserve_hostname,
+    vm_shared_dirs,
+};
 use crate::error::{EngineError, Result};
 use crate::vm::{BlockDeviceConfig, VmConfig};
 
@@ -64,6 +67,8 @@ impl MachineManager {
                 block_devices: info.block_devices.clone(),
                 backend: info.backend,
                 nested_virt: info.nested_virt,
+                isolated_network: info.isolated,
+                primary_nic_mac: info.nic_mac.clone(),
                 ..Default::default()
             })?;
             Ok(MachineInfo { vm_id, ..info })
@@ -134,6 +139,7 @@ fn cloned_record(
             }
         })
         .collect();
+    let machine_id = src.machine_id.as_ref().map(|_| identity::new_machine_id());
     MachineInfo {
         name: name.to_owned(),
         state: MachineState::Created,
@@ -143,10 +149,14 @@ fn cloned_record(
         memory_mb: src.memory_mb,
         disk_gb: src.disk_gb,
         kernel: src.kernel.clone(),
-        cmdline: src
-            .cmdline
-            .as_deref()
-            .map(|cmdline| cmdline_with_hostname(cmdline, hostname)),
+        cmdline: src.cmdline.as_deref().map(|cmdline| {
+            identity_cmdline(
+                &cmdline_with_hostname(cmdline, hostname),
+                machine_id.as_deref(),
+                src.timezone.as_deref(),
+                src.locale.as_deref(),
+            )
+        }),
         block_devices,
         distro: src.distro.clone(),
         distro_version: src.distro_version.clone(),
@@ -160,6 +170,13 @@ fn cloned_record(
         started_at: None,
         mounts: src.mounts.clone(),
         isolated: src.isolated,
+        // A clone is its own machine: what made the source distinguishable
+        // is drawn afresh, and its forwarded host ports stay the source's.
+        nic_mac: src.nic_mac.as_ref().map(|_| identity::vendor_mac()),
+        machine_id,
+        timezone: src.timezone.clone(),
+        locale: src.locale.clone(),
+        port_forwards: Vec::new(),
     }
 }
 

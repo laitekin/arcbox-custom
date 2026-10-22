@@ -107,8 +107,14 @@ impl pb::ProxyLibraryService for ProxyLibraryServiceImpl {
     ) -> ServiceResult<pb::MachineProxyAssignment> {
         let req = request.to_owned_message();
         let runtime = self.runtime.ready_for_write(&req.machine)?;
-        if !req.choice.is_empty() && runtime.machine_manager().get(&req.machine).is_none() {
+        let machine = runtime.machine_manager().get(&req.machine);
+        if !req.choice.is_empty() && machine.is_none() {
             return Err(ConnectError::not_found("Linux machine not found"));
+        }
+        // A removed machine's choice is cleared with an empty one; only an
+        // existing isolated machine is held to a saved proxy.
+        if machine.is_some_and(|m| m.isolated) && !is_saved_proxy_choice(&req.choice) {
+            return Err(ConnectError::invalid_argument(ISOLATED_NEEDS_SAVED_PROXY));
         }
         let controller = self.controller()?;
         let result = blocking(move || {
@@ -118,6 +124,16 @@ impl pb::ProxyLibraryService for ProxyLibraryServiceImpl {
         .await?;
         Response::ok(result)
     }
+}
+
+/// Why an isolated machine cannot follow the default or go direct.
+pub(super) const ISOLATED_NEEDS_SAVED_PROXY: &str =
+    "an isolated machine connects only through a saved proxy; choose one of your saved proxies";
+
+/// A machine's proxy choice names a saved proxy: not empty (follow the
+/// default, which may be direct) and not `direct`.
+pub(super) fn is_saved_proxy_choice(choice: &str) -> bool {
+    !choice.is_empty() && choice != "direct"
 }
 
 fn profile(view: SavedProxyView) -> pb::ProxyProfile {
@@ -151,4 +167,18 @@ async fn blocking<T: Send + 'static>(
         .await
         .map_err(|e| ConnectError::internal(format!("proxy library task failed: {e}")))?
         .map_err(|e| ConnectError::invalid_argument(e.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_saved_proxy_choice;
+
+    #[test]
+    fn only_a_saved_proxy_counts_for_an_isolated_machine() {
+        assert!(!is_saved_proxy_choice(""));
+        assert!(!is_saved_proxy_choice("direct"));
+        assert!(is_saved_proxy_choice(
+            "6f1c1f7e-0b5e-4c61-9a50-6d2d3a2f9a10"
+        ));
+    }
 }

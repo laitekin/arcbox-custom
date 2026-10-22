@@ -121,7 +121,19 @@ impl DefaultEgress {
 
         let snapshot = self.proxy_state.load();
         let env = snapshot.environment.as_ref()?;
+        Self::proxy_target(env, dst_ip, dst_port, domain, !snapshot.isolated)
+    }
 
+    /// The proxy `env` tunnels `dst` through, or `None` for direct;
+    /// `honor_bypass` is false for an isolated machine, which never goes
+    /// direct.
+    fn proxy_target(
+        env: &ProxyEnvironment,
+        dst_ip: Ipv4Addr,
+        dst_port: u16,
+        domain: Option<&str>,
+        honor_bypass: bool,
+    ) -> Option<(ProxyConfig, String, u16, &'static str)> {
         // No proxy configured → always direct.
         if !env.has_usable_proxy() {
             return None;
@@ -140,7 +152,7 @@ impl DefaultEgress {
         };
 
         // Honor the bypass list (direct for excepted hosts).
-        if env.should_bypass(&host) || env.should_bypass(&dst_ip.to_string()) {
+        if honor_bypass && (env.should_bypass(&host) || env.should_bypass(&dst_ip.to_string())) {
             return None;
         }
 
@@ -161,12 +173,60 @@ impl DefaultEgress {
 
         None
     }
+
+    /// An isolated machine's flow: its proxy target, or `Err` with why the
+    /// flow is refused. It is never direct (see [`arcbox_fakeip::isolation`]).
+    fn isolated_target(
+        &self,
+        dst_ip: Ipv4Addr,
+        dst_port: u16,
+        domain: Option<&str>,
+    ) -> Result<(ProxyConfig, String, u16, &'static str), &'static str> {
+        if !arcbox_fakeip::isolation::allows_destination(dst_ip, self.gateway_ip) {
+            return Err("destination is the Mac, a local network or another machine");
+        }
+        let snapshot = self.proxy_state.load();
+        let env = snapshot
+            .environment
+            .as_ref()
+            .filter(|env| env.has_usable_proxy())
+            .ok_or("no proxy is configured")?;
+        Self::proxy_target(env, dst_ip, dst_port, domain, false)
+            .ok_or("no proxy can carry the flow")
+    }
 }
 
 impl EgressResolver for DefaultEgress {
     fn resolve(&self, flow: FlowMeta) -> oneshot::Receiver<Option<EgressConn>> {
+        if self.proxy_state.load().isolated {
+            match self.isolated_target(flow.dst_ip, flow.dst_port, flow.domain.as_deref()) {
+                Ok(target) => return self.dial(Some(target), flow),
+                Err(reason) => {
+                    tracing::debug!(
+                        dst = %flow.dst_ip,
+                        port = flow.dst_port,
+                        reason,
+                        "isolated machine: flow refused"
+                    );
+                    let (tx, rx) = oneshot::channel();
+                    let _ = tx.send(None);
+                    return rx;
+                }
+            }
+        }
         let proxy_target =
             self.resolve_proxy_target(flow.dst_ip, flow.dst_port, flow.domain.as_deref());
+        self.dial(proxy_target, flow)
+    }
+}
+
+impl DefaultEgress {
+    /// Connects `flow` through `proxy_target`, or directly when `None`.
+    fn dial(
+        &self,
+        proxy_target: Option<(ProxyConfig, String, u16, &'static str)>,
+        flow: FlowMeta,
+    ) -> oneshot::Receiver<Option<EgressConn>> {
         // Direct connect target. Gateway IP → loopback for host.docker.internal.
         let target_ip = if flow.dst_ip == self.gateway_ip {
             Ipv4Addr::LOCALHOST
@@ -310,6 +370,90 @@ mod tests {
             egress(None).resolve_proxy_target(Ipv4Addr::new(1, 2, 3, 4), 443, None),
             None,
         );
+    }
+
+    fn isolated(env: Option<ProxyEnvironment>) -> DefaultEgress {
+        let egress = egress(env.clone());
+        egress
+            .proxy_state
+            .store(arcbox_fakeip::proxy_state::ProxySnapshot {
+                environment: env,
+                isolated: true,
+                ..Default::default()
+            });
+        egress
+    }
+
+    #[test]
+    fn an_isolated_machine_is_tunnelled_even_where_others_bypass() {
+        let mut proxy = env(false, false, true);
+        proxy.bypass_domains = vec!["public.example".into(), "*".into()];
+        let eg = isolated(Some(proxy.clone()));
+        let (via, host, port, kind) = eg
+            .isolated_target(Ipv4Addr::new(203, 0, 113, 1), 443, Some("public.example"))
+            .unwrap();
+        assert_eq!(
+            (via, host.as_str(), port, kind),
+            (proxy.socks_proxy.unwrap(), "public.example", 443, "socks5")
+        );
+        // Fake-IP destinations go to the proxy by name.
+        assert!(
+            eg.isolated_target(Ipv4Addr::new(198, 18, 0, 9), 443, Some("example.com"))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn an_isolated_machine_never_reaches_the_mac_or_local_networks() {
+        let eg = isolated(Some(env(false, false, true)));
+        for dst in [
+            Ipv4Addr::new(10, 0, 0, 1), // the gateway: the Mac itself
+            Ipv4Addr::new(192, 168, 64, 3),
+            Ipv4Addr::new(172, 20, 0, 2),
+            Ipv4Addr::new(169, 254, 169, 254),
+            Ipv4Addr::LOCALHOST,
+        ] {
+            assert!(eg.isolated_target(dst, 22, None).is_err(), "{dst}");
+        }
+    }
+
+    #[test]
+    fn an_isolated_machine_without_a_proxy_has_no_egress() {
+        assert_eq!(
+            isolated(None)
+                .isolated_target(Ipv4Addr::new(1, 1, 1, 1), 443, None)
+                .unwrap_err(),
+            "no proxy is configured"
+        );
+        assert!(
+            isolated(Some(env(false, false, false)))
+                .isolated_target(Ipv4Addr::new(1, 1, 1, 1), 443, None)
+                .is_err()
+        );
+        // An HTTP proxy carries TCP, so it is enough.
+        assert_eq!(
+            isolated(Some(env(true, false, false)))
+                .isolated_target(Ipv4Addr::new(1, 1, 1, 1), 80, None)
+                .unwrap()
+                .3,
+            "http-connect"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_isolated_flow_resolves_to_no_connection_at_once() {
+        let eg = isolated(None);
+        let conn = eg
+            .resolve(FlowMeta {
+                src_ip: Ipv4Addr::new(10, 0, 0, 2),
+                src_port: 40000,
+                dst_ip: Ipv4Addr::new(1, 1, 1, 1),
+                dst_port: 443,
+                domain: None,
+            })
+            .await
+            .unwrap();
+        assert!(conn.is_none());
     }
 
     #[test]

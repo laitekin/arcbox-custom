@@ -121,8 +121,13 @@ impl HostEgress {
         let protocol = frame[ETH_HEADER_LEN + 9];
         let cancel = self.cancel.clone();
         match protocol {
-            1 if self.udp.proxy_state.load().icmp
-                == arcbox_fakeip::proxy_state::IcmpPolicy::Direct =>
+            // An isolated machine never pings: ICMP cannot go through a
+            // proxy, so it would leave from the Mac's own address.
+            1 if {
+                let snapshot = self.udp.proxy_state.load();
+                !snapshot.isolated
+                    && snapshot.icmp == arcbox_fakeip::proxy_state::IcmpPolicy::Direct
+            } =>
             {
                 self.icmp.proxy_icmp(frame, guest_mac, cancel);
             }

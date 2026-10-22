@@ -31,6 +31,10 @@ pub struct ProxySnapshot {
     pub udp: UdpPolicy,
     pub icmp: IcmpPolicy,
     pub revision: u64,
+    /// The machine is isolated from the Mac: flows go through the proxy or
+    /// nowhere, and never to the Mac or its networks (see
+    /// [`crate::isolation`]). Set per machine by [`crate::proxy_routes`].
+    pub isolated: bool,
 }
 
 /// Lock-free reads shared by all currently running and future VMs.

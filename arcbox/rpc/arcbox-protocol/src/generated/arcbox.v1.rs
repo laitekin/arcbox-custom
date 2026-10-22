@@ -2083,8 +2083,18 @@ pub struct CreateMachineRequest {
     /// /Users or /private and no share of the daemon's data directory, only a
     /// directory of its own. Mounts listed above are still shared. See
     /// SetIsolation to change it later.
+    ///
+    /// An isolated machine also has no network path to the Mac, its networks
+    /// or other machines; its traffic goes through its saved proxy or
+    /// nowhere; and it gets a NIC address and machine ID of its own.
     #[prost(bool, tag = "14")]
     pub isolated: bool,
+    /// Time zone the machine presents (`Area/City`); empty keeps the image's.
+    #[prost(string, tag = "15")]
+    pub timezone: ::prost::alloc::string::String,
+    /// Locale the machine presents (`en_US.UTF-8`); empty keeps the image's.
+    #[prost(string, tag = "16")]
+    pub locale: ::prost::alloc::string::String,
 }
 /// Request that targets a machine's guest agent.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -2326,6 +2336,43 @@ pub struct SetMachineIsolationRequest {
     #[prost(bool, tag = "2")]
     pub isolated: bool,
 }
+/// Request to change a machine's time zone and locale.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SetMachineIdentityRequest {
+    /// Machine ID or name.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// Time zone (`Area/City`); empty keeps the image's.
+    #[prost(string, tag = "2")]
+    pub timezone: ::prost::alloc::string::String,
+    /// Locale (`en_US.UTF-8`); empty keeps the image's.
+    #[prost(string, tag = "3")]
+    pub locale: ::prost::alloc::string::String,
+}
+/// A port on the Mac's loopback forwarded to a port of a machine.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct MachinePortForward {
+    /// Port on 127.0.0.1 of the Mac.
+    #[prost(uint32, tag = "1")]
+    pub host_port: u32,
+    /// Port in the machine. Its service must listen on all interfaces, not
+    /// only on the guest's loopback.
+    #[prost(uint32, tag = "2")]
+    pub guest_port: u32,
+    /// `tcp` (the default when empty) or `udp`.
+    #[prost(string, tag = "3")]
+    pub protocol: ::prost::alloc::string::String,
+}
+/// Request to replace a machine's forwarded ports.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SetMachinePortForwardsRequest {
+    /// Machine ID or name.
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// The forwards; an empty list removes them all.
+    #[prost(message, repeated, tag = "2")]
+    pub forwards: ::prost::alloc::vec::Vec<MachinePortForward>,
+}
 /// Request to set or clear the default machine.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SetDefaultMachineRequest {
@@ -2413,6 +2460,15 @@ pub struct MachineInfo {
     /// The machine is isolated from the Mac (CreateMachineRequest.isolated).
     #[prost(bool, tag = "11")]
     pub isolated: bool,
+    /// Time zone the machine presents; empty when it keeps the image's.
+    #[prost(string, tag = "12")]
+    pub timezone: ::prost::alloc::string::String,
+    /// Locale the machine presents; empty when it keeps the image's.
+    #[prost(string, tag = "13")]
+    pub locale: ::prost::alloc::string::String,
+    /// Ports forwarded from the Mac's loopback into the machine.
+    #[prost(message, repeated, tag = "14")]
+    pub port_forwards: ::prost::alloc::vec::Vec<MachinePortForward>,
 }
 /// Machine hardware configuration.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

@@ -130,6 +130,8 @@ fn run() -> Result<Outcome, Failure> {
             read_only: true,
         }],
         bridge_nic_mac: None,
+            primary_nic_mac: None,
+            isolated_network: false,
         backend: VmBackend::Hv,
         debug_console_socket: None,
     };

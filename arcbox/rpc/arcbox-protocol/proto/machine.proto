@@ -86,6 +86,15 @@ service MachineService {
     // says it does not have.
     rpc SetIsolation(SetMachineIsolationRequest) returns (Empty);
 
+    // Sets the time zone and locale a stopped machine presents; applied at
+    // its next start.
+    rpc SetIdentity(SetMachineIdentityRequest) returns (Empty);
+
+    // Replaces the ports forwarded from the Mac's loopback into the machine,
+    // the way the Mac reaches services of an isolated machine (which has no
+    // bridge address). A running machine gets them at once.
+    rpc SetPortForwards(SetMachinePortForwardsRequest) returns (Empty);
+
     // Sets the default machine — the one `abctl machine exec` and
     // `abctl machine ssh` act on when given no name — or clears it with an
     // empty id. The machine must exist. List reports the current one.
@@ -163,7 +172,15 @@ message CreateMachineRequest {
     // /Users or /private and no share of the daemon's data directory, only a
     // directory of its own. Mounts listed above are still shared. See
     // SetIsolation to change it later.
+    //
+    // An isolated machine also has no network path to the Mac, its networks
+    // or other machines; its traffic goes through its saved proxy or
+    // nowhere; and it gets a NIC address and machine ID of its own.
     bool isolated = 14;
+    // Time zone the machine presents (`Area/City`); empty keeps the image's.
+    string timezone = 15;
+    // Locale the machine presents (`en_US.UTF-8`); empty keeps the image's.
+    string locale = 16;
 }
 
 // Request that targets a machine's guest agent.
@@ -353,6 +370,35 @@ message SetMachineIsolationRequest {
     bool isolated = 2;
 }
 
+// Request to change a machine's time zone and locale.
+message SetMachineIdentityRequest {
+    // Machine ID or name.
+    string id = 1;
+    // Time zone (`Area/City`); empty keeps the image's.
+    string timezone = 2;
+    // Locale (`en_US.UTF-8`); empty keeps the image's.
+    string locale = 3;
+}
+
+// A port on the Mac's loopback forwarded to a port of a machine.
+message MachinePortForward {
+    // Port on 127.0.0.1 of the Mac.
+    uint32 host_port = 1;
+    // Port in the machine. Its service must listen on all interfaces, not
+    // only on the guest's loopback.
+    uint32 guest_port = 2;
+    // `tcp` (the default when empty) or `udp`.
+    string protocol = 3;
+}
+
+// Request to replace a machine's forwarded ports.
+message SetMachinePortForwardsRequest {
+    // Machine ID or name.
+    string id = 1;
+    // The forwards; an empty list removes them all.
+    repeated MachinePortForward forwards = 2;
+}
+
 // Request to set or clear the default machine.
 message SetDefaultMachineRequest {
     // Machine ID or name; empty clears the default.
@@ -415,6 +461,12 @@ message MachineInfo {
     repeated DirectoryMount mounts = 10;
     // The machine is isolated from the Mac (CreateMachineRequest.isolated).
     bool isolated = 11;
+    // Time zone the machine presents; empty when it keeps the image's.
+    string timezone = 12;
+    // Locale the machine presents; empty when it keeps the image's.
+    string locale = 13;
+    // Ports forwarded from the Mac's loopback into the machine.
+    repeated MachinePortForward port_forwards = 14;
 }
 
 // Machine hardware configuration.

@@ -135,6 +135,7 @@ impl NetworkProxy {
             udp: preferences.udp,
             icmp: preferences.icmp,
             revision: 0,
+            isolated: false,
         });
         Self {
             routes: arcbox_fakeip::proxy_routes::ProxyRoutes::new(state.clone()),
@@ -321,6 +322,7 @@ impl NetworkProxy {
             udp: preferences.udp,
             icmp: preferences.icmp,
             revision,
+            isolated: false,
         });
     }
 

@@ -171,6 +171,11 @@ pub struct VmConfig {
     /// execution and is the only backend that can host the Rosetta share;
     /// `Hv` drives the custom HV-framework VMM.
     pub backend: arcbox_vmm::VmBackend,
+    /// The machine is isolated from the Mac: no bridge NIC and no Apple NAT
+    /// fallback (see `arcbox_vmm::VmmConfig::isolated_network`).
+    pub isolated_network: bool,
+    /// MAC address of the primary NIC; random per boot when `None`.
+    pub primary_nic_mac: Option<String>,
 }
 
 impl Default for VmConfig {
@@ -189,6 +194,8 @@ impl Default for VmConfig {
             rosetta: cfg!(all(target_os = "macos", target_arch = "aarch64")),
             nested_virt: false,
             backend: arcbox_vmm::VmBackend::default(),
+            isolated_network: false,
+            primary_nic_mac: None,
         }
     }
 }

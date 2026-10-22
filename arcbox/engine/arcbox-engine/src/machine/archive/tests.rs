@@ -40,6 +40,8 @@ fn manifest() -> ArchiveManifest {
             distro_version: Some("3.24".to_owned()),
             mounts: Vec::new(),
             isolated: false,
+            timezone: None,
+            locale: None,
         },
         image,
         image_included: false,

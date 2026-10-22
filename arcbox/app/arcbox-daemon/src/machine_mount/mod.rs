@@ -143,10 +143,12 @@ async fn sync_all(runtime: &Arc<Runtime>, root: &Path) {
 
 /// Whether a machine's root is mounted while it runs: it is a distro
 /// machine (the System VM's data is the docker export) with a bridge
-/// address the host can reach.
+/// address the host can reach, and not isolated (an isolated machine has no
+/// bridge NIC; the check keeps it so should one ever report an address).
 fn exports_its_root(machine: &MachineInfo) -> bool {
     machine.state == MachineState::Running
         && machine.distro.is_some()
+        && !machine.isolated
         && machine.bridge_ip_address.is_some()
 }
 

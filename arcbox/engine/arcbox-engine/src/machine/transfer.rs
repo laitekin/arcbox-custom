@@ -156,6 +156,8 @@ impl From<&MachineInfo> for ArchivedMachine {
             distro_version: machine.distro_version.clone(),
             mounts: machine.mounts.clone(),
             isolated: machine.isolated,
+            timezone: machine.timezone.clone(),
+            locale: machine.locale.clone(),
         }
     }
 }

@@ -394,8 +394,13 @@ impl Vmm {
         // (via DeviceManager TX/RX bridging), the other end goes to the same
         // NetworkDatapath used by the VZ path (DHCP, DNS, NAT, TCP proxy).
         if self.config.networking {
+            let mac = match self.config.primary_nic_mac.as_deref() {
+                Some(mac) => arcbox_net::darwin::parse_mac(mac)
+                    .map_err(|e| VmmError::Device(format!("invalid primary NIC MAC: {e}")))?,
+                None => arcbox_virtio::net::NetConfig::random_mac(),
+            };
             let net_config = arcbox_virtio::net::NetConfig {
-                mac: arcbox_virtio::net::NetConfig::random_mac(),
+                mac,
                 ..Default::default()
             };
             let mut net_dev = arcbox_virtio::net::VirtioNet::new(net_config);
@@ -415,10 +420,14 @@ impl Vmm {
             // Set up the network datapath (reuses VZ path's entire stack).
             self.create_hv_network_datapath(&mut device_manager, primary_net_id)?;
 
-            // Bridge NIC (NIC2): vmnet for host→container L3 routing.
+            // Bridge NIC (NIC2): vmnet for host→container L3 routing. An
+            // isolated guest gets none: vmnet's shared mode would be a second,
+            // unproxied way to the internet and to the Mac.
             #[cfg(feature = "vmnet")]
             {
-                if let Err(e) =
+                if self.config.isolated_network {
+                    tracing::info!("bridge NIC skipped: the machine is isolated");
+                } else if let Err(e) =
                     self.create_hv_bridge_nic(&mut device_manager, &mut memory_manager, &irq_chip)
                 {
                     tracing::warn!("vmnet bridge NIC failed (non-fatal): {e}");

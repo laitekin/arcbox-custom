@@ -212,6 +212,8 @@ fn run() -> Result<(), String> {
         // The daemon's System VM carries a second (bridge) NIC; a fixed
         // locally-administered MAC is enough to materialize the device.
         bridge_nic_mac: knobs.bridge.then(|| "02:AB:CD:00:00:99".to_string()),
+        primary_nic_mac: None,
+        isolated_network: false,
         backend: VmBackend::Hv,
         debug_console_socket: None,
     };

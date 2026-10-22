@@ -188,3 +188,50 @@ async fn malformed_queries_and_incomplete_remote_policies_fail_closed() {
     };
     assert!(forward(&query(), &[udp().await], &snapshot).await.is_err());
 }
+
+#[tokio::test]
+async fn an_isolated_machine_resolves_through_its_proxy_whatever_it_is_told() {
+    // Bypassed name and proxy DNS switched off: still through the tunnel.
+    let (port, mut targets) = socks(true).await;
+    let mut snapshot = remote(port);
+    snapshot.isolated = true;
+    let env = snapshot.environment.as_mut().unwrap();
+    env.remote_dns = false;
+    env.bypass_domains = vec![".test".into()];
+    let local = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let reply = forward(&query(), &[local.local_addr().unwrap()], &snapshot)
+        .await
+        .unwrap();
+    assert_eq!(reply, response(&query()));
+    assert_eq!(targets.recv().await.unwrap(), ("1.1.1.1".into(), 53));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(30), local.recv(&mut [0; 512]))
+            .await
+            .is_err(),
+        "the Mac's resolver is never asked"
+    );
+}
+
+#[tokio::test]
+async fn an_isolated_machine_without_a_socks_proxy_gets_no_answer() {
+    let local = udp().await;
+    let isolated = |environment| ProxySnapshot {
+        environment,
+        isolated: true,
+        ..Default::default()
+    };
+    assert!(forward(&query(), &[local], &isolated(None)).await.is_err());
+    let http_only = ProxyEnvironment {
+        http_proxy: Some(ProxyConfig {
+            host: "127.0.0.1".into(),
+            port: 3128,
+            auth: None,
+        }),
+        ..Default::default()
+    };
+    assert!(
+        forward(&query(), &[local], &isolated(Some(http_only)))
+            .await
+            .is_err()
+    );
+}

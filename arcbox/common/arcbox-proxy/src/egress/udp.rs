@@ -52,6 +52,25 @@ impl UdpTransport {
     }
 }
 
+/// An isolated machine's UDP relay: the SOCKS5 proxy and the name to send
+/// to, or `None` when the flow must be dropped — UDP policy `Block` or
+/// `Direct`, no SOCKS5 proxy (HTTP cannot carry UDP), or a destination the
+/// machine may not reach. The bypass list does not apply.
+fn isolated_relay(
+    snapshot: &arcbox_fakeip::proxy_state::ProxySnapshot,
+    dst_ip: Ipv4Addr,
+    gateway_ip: Ipv4Addr,
+    host: &str,
+) -> Option<(ProxyConfig, String)> {
+    if snapshot.udp != UdpPolicy::Proxy
+        || !arcbox_fakeip::isolation::allows_destination(dst_ip, gateway_ip)
+    {
+        return None;
+    }
+    let socks = snapshot.environment.as_ref()?.socks_proxy.as_ref()?;
+    Some((socks.clone(), host.to_owned()))
+}
+
 /// Builds a flow's egress transport. `socks` = `Some((authority, target_host))`
 /// routes via SOCKS5 UDP ASSOCIATE (the proxy resolves `target_host`); `None` is
 /// a direct host socket connected to `connect_ip:dst_port`. Returns `None` (after
@@ -217,27 +236,38 @@ impl UdpProxy {
         // (host services stay direct), and it isn't on the bypass list. Reuses the
         // same `should_bypass` policy the TCP egress uses.
         let snapshot = self.proxy_state.load();
-        let environment = snapshot.environment.as_ref();
-        let bypass = dst_ip == self.gateway_ip
-            || environment.is_some_and(|env| {
-                env.should_bypass(&host) || env.should_bypass(&dst_ip.to_string())
-            });
-        if !bypass
-            && (snapshot.udp == UdpPolicy::Block
-                || (snapshot.udp == UdpPolicy::Proxy
-                    && environment
-                        .is_some_and(|env| env.has_usable_proxy() && env.socks_proxy.is_none())))
-        {
-            return;
-        }
-        let socks = environment
-            .filter(|_| snapshot.udp == UdpPolicy::Proxy)
-            .and_then(|env| {
-                if bypass {
-                    return None;
-                }
-                env.socks_proxy.as_ref().map(|p| (p.clone(), host.clone()))
-            });
+        let socks = if snapshot.isolated {
+            // Through the SOCKS5 relay or not at all: never direct, never to
+            // the Mac or its networks (see `arcbox_fakeip::isolation`).
+            let Some(relay) = isolated_relay(&snapshot, dst_ip, self.gateway_ip, &host) else {
+                tracing::trace!(dst = %dst_ip, port = dst_port, "isolated machine: UDP flow dropped");
+                return;
+            };
+            Some(relay)
+        } else {
+            let environment = snapshot.environment.as_ref();
+            let bypass = dst_ip == self.gateway_ip
+                || environment.is_some_and(|env| {
+                    env.should_bypass(&host) || env.should_bypass(&dst_ip.to_string())
+                });
+            if !bypass
+                && (snapshot.udp == UdpPolicy::Block
+                    || (snapshot.udp == UdpPolicy::Proxy
+                        && environment.is_some_and(|env| {
+                            env.has_usable_proxy() && env.socks_proxy.is_none()
+                        })))
+            {
+                return;
+            }
+            environment
+                .filter(|_| snapshot.udp == UdpPolicy::Proxy)
+                .and_then(|env| {
+                    if bypass {
+                        return None;
+                    }
+                    env.socks_proxy.as_ref().map(|p| (p.clone(), host.clone()))
+                })
+        };
 
         self.flows.insert(
             flow_key,
@@ -546,5 +576,87 @@ mod tests {
             "echoed payload returns to the guest via the SOCKS5 relay"
         );
         server.await.unwrap();
+    }
+
+    #[test]
+    fn an_isolated_machine_relays_udp_only_through_socks_to_public_hosts() {
+        use arcbox_fakeip::proxy_state::ProxySnapshot;
+        let gateway = Ipv4Addr::new(10, 0, 2, 1);
+        let socks = arcbox_fakeip::proxy_detect::ProxyConfig {
+            host: "127.0.0.1".to_string(),
+            port: 1080,
+            auth: None,
+        };
+        let env = |socks: Option<arcbox_fakeip::proxy_detect::ProxyConfig>| ProxyEnvironment {
+            fake_ip_active: false,
+            http_proxy: None,
+            https_proxy: None,
+            socks_proxy: socks,
+            remote_dns: true,
+            // Ignored for an isolated machine.
+            bypass_domains: vec!["*".into()],
+        };
+        let snapshot = |environment, udp| ProxySnapshot {
+            environment,
+            udp,
+            isolated: true,
+            ..Default::default()
+        };
+        let public = Ipv4Addr::new(1, 1, 1, 1);
+
+        let relay = isolated_relay(
+            &snapshot(Some(env(Some(socks.clone()))), UdpPolicy::Proxy),
+            public,
+            gateway,
+            "one.one",
+        );
+        assert_eq!(relay, Some((socks.clone(), "one.one".to_string())));
+
+        // No SOCKS5, no proxy, or a policy other than Proxy: dropped, not direct.
+        assert!(
+            isolated_relay(
+                &snapshot(Some(env(None)), UdpPolicy::Proxy),
+                public,
+                gateway,
+                "h"
+            )
+            .is_none()
+        );
+        assert!(isolated_relay(&snapshot(None, UdpPolicy::Proxy), public, gateway, "h").is_none());
+        assert!(
+            isolated_relay(
+                &snapshot(Some(env(Some(socks.clone()))), UdpPolicy::Direct),
+                public,
+                gateway,
+                "h"
+            )
+            .is_none()
+        );
+        assert!(
+            isolated_relay(
+                &snapshot(Some(env(Some(socks.clone()))), UdpPolicy::Block),
+                public,
+                gateway,
+                "h"
+            )
+            .is_none()
+        );
+
+        // The Mac and local networks stay out of reach even through the proxy.
+        for dst in [
+            gateway,
+            Ipv4Addr::new(192, 168, 1, 1),
+            Ipv4Addr::new(224, 0, 0, 251),
+        ] {
+            assert!(
+                isolated_relay(
+                    &snapshot(Some(env(Some(socks.clone()))), UdpPolicy::Proxy),
+                    dst,
+                    gateway,
+                    "h"
+                )
+                .is_none()
+            );
+        }
     }
 }

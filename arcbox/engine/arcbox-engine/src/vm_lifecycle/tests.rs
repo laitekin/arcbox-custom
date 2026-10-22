@@ -199,6 +199,11 @@ fn sample_machine(cpus: u32, memory_mb: u64, kernel: &str, cmdline: &str) -> Mac
         started_at: None,
         mounts: Vec::new(),
         isolated: false,
+        nic_mac: None,
+        machine_id: None,
+        timezone: None,
+        locale: None,
+        port_forwards: Vec::new(),
     }
 }
 

@@ -161,12 +161,12 @@ impl VmManager {
         Ok(())
     }
 
-    /// Sets the VirtioFS shares a stopped VM boots with.
+    /// Changes the configuration a stopped VM boots with.
     ///
     /// # Errors
     ///
     /// Returns an error if the VM is not found or is running or starting.
-    pub fn set_shared_dirs(&self, id: &VmId, shared_dirs: Vec<SharedDirConfig>) -> Result<()> {
+    pub fn reconfigure(&self, id: &VmId, change: impl FnOnce(&mut VmConfig)) -> Result<()> {
         let mut vms = self.vms.write().map_err(|_| EngineError::LockPoisoned)?;
         let entry = vms
             .get_mut(id)
@@ -176,12 +176,21 @@ impl VmManager {
             MachineState::Running | MachineState::Starting
         ) {
             return Err(EngineError::invalid_state(format!(
-                "cannot change shares while VM is {:?}",
+                "cannot reconfigure a VM while it is {:?}",
                 entry.info.state
             )));
         }
-        entry.config.shared_dirs = shared_dirs;
+        change(&mut entry.config);
         Ok(())
+    }
+
+    /// The configuration a VM boots with.
+    #[cfg(test)]
+    pub(crate) fn config_for_test(&self, id: &VmId) -> Result<VmConfig> {
+        let vms = self.vms.read().map_err(|_| EngineError::LockPoisoned)?;
+        vms.get(id)
+            .map(|entry| entry.config.clone())
+            .ok_or_else(|| EngineError::not_found(id.to_string()))
     }
 
     /// The VirtioFS shares a VM boots with.
@@ -248,7 +257,11 @@ impl VmManager {
                     read_only: bd.read_only,
                 })
                 .collect(),
-            bridge_nic_mac: Some(bridge_nic_mac_for_vm_id(&entry.info.id)),
+            // An isolated machine gets no bridge NIC (see `VmmConfig`).
+            bridge_nic_mac: (!entry.config.isolated_network)
+                .then(|| bridge_nic_mac_for_vm_id(&entry.info.id)),
+            primary_nic_mac: entry.config.primary_nic_mac.clone(),
+            isolated_network: entry.config.isolated_network,
             // Backend is set per-machine on the `VmConfig`, read here at start.
             // `VmManager::set_backend` can change it on a stopped VM to switch
             // the System VM between HV and VZ.
