@@ -215,7 +215,15 @@ final class WebDesktopServer {
                 else { return json(["error": "Invalid display or clipboard setting"], status: 400) }
                 session.clipboardEnabled = enabled
                 if session.display != UInt16(display) { session.resetClipboard(display: UInt16(display)) }
-            case "/api/clipboard/paste": try await session.paste()
+            case "/api/clipboard/paste":
+                try await session.paste()
+                let object = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any]
+                guard object?["detect"] as? Bool == true else { break }
+                let terminal = await session.focusIsTerminal()
+                return json(["ok": true, "terminal": terminal])
+            case "/api/clipboard/target":
+                let terminal = await session.focusIsTerminal()
+                return json(["ok": true, "terminal": terminal])
             case "/api/clipboard/copy": try await session.copy { self.activeToken == session.token }
             case "/api/clipboard/sync":
                 try await session.synchronize { self.activeToken == session.token }

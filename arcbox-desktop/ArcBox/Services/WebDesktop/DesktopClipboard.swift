@@ -125,6 +125,21 @@ enum DesktopClipboard {
         try check(output)
     }
 
+    /// Whether the focused window in the guest is a terminal, which takes Ctrl+Shift+C/V
+    /// rather than Ctrl+C/V. `nil` when the guest has neither xdotool nor xprop.
+    static func focusIsTerminal(machine: String, display: UInt16, client: ArcBoxClient) async throws -> Bool? {
+        let output = try await MachineExec.run(
+            request(machine: machine, display: display, mode: "focus"), client: client,
+            options: options(seconds: 4), maxOutputBytes: 1024
+        )
+        try check(output)
+        switch String(decoding: output.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "terminal": return true
+        case "desktop": return false
+        default: return nil
+        }
+    }
+
     private static func check(_ output: MachineExec.Output) throws {
         guard output.exitCode != 0 else { return }
         let detail = String(decoding: output.stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -152,13 +167,34 @@ enum DesktopClipboard {
           elif command -v runuser >/dev/null 2>&1; then runuser -u "$owner" -- "$@"
           else su -s /bin/sh "$owner" -c 'exec "$@"' -- arcbox-clipboard "$@"; fi
         }
-        clip() {
+        x() {
           if [ -f "$home/.Xauthority" ]; then
-            as_owner env "DISPLAY=:$display" "HOME=$home" "XAUTHORITY=$home/.Xauthority" xclip -selection clipboard "$@"
+            as_owner env "DISPLAY=:$display" "HOME=$home" "XAUTHORITY=$home/.Xauthority" "$@"
           else
-            as_owner env "DISPLAY=:$display" "HOME=$home" xclip -selection clipboard "$@"
+            as_owner env "DISPLAY=:$display" "HOME=$home" "$@"
           fi
         }
+        clip() { x xclip -selection clipboard "$@"; }
+        if [ "$mode" = focus ]; then
+          # Prints terminal, desktop or unknown for the focused window's WM_CLASS.
+          window= class=
+          if command -v xdotool >/dev/null 2>&1; then
+            window=$(x xdotool getactivewindow 2>/dev/null) || window=$(x xdotool getwindowfocus 2>/dev/null) || window=
+          fi
+          if command -v xprop >/dev/null 2>&1; then
+            [ -n "$window" ] || window=$(x xprop -root _NET_ACTIVE_WINDOW 2>/dev/null | sed -n 's/.*# \(0x[0-9a-fA-F]*\).*/\1/p')
+            [ -z "$window" ] || class=$(x xprop -id "$window" WM_CLASS 2>/dev/null | sed -n 's/^WM_CLASS[^=]*= //p')
+          elif [ -n "$window" ]; then
+            class=$(x xdotool getwindowclassname "$window" 2>/dev/null) || class=
+          fi
+          class=$(printf '%s' "$class" | tr 'A-Z' 'a-z')
+          case "$class" in
+          '') echo unknown ;;
+          *term*|*konsole*|*kitty*|*alacritty*|*tilix*|*rxvt*|*foot*|*guake*|*tilda*|*sakura*|*ptyxis*|*kgx*|*console*|st|st-*|*'"st"'*|*'"st-'*) echo terminal ;;
+          *) echo desktop ;;
+          esac
+          exit 0
+        fi
         tmp=$(mktemp -d) || exit 1
         trap 'rm -rf "$tmp"' EXIT HUP INT TERM
         case "$mode" in

@@ -82,6 +82,9 @@ final class WebDesktopTests: XCTestCase {
         XCTAssertTrue(request.attachStdin)
         XCTAssertEqual(Array(request.cmd.suffix(3)), ["set", "7", "image/png"])
         XCTAssertTrue(request.env.isEmpty)
+        let focus = DesktopClipboard.request(machine: "test", display: 1, mode: "focus")
+        XCTAssertFalse(focus.attachStdin)
+        XCTAssertEqual(Array(focus.cmd.suffix(3)), ["focus", "1", ""])
     }
 
     func testGatewayServesBundledAssetsAndRequiresSession() async throws {
@@ -155,6 +158,8 @@ final class WebDesktopTests: XCTestCase {
             try await DesktopClipboard.write(image, machine: machineID, display: 1, client: client)
             let returnedImage = try await DesktopClipboard.read(machine: machineID, display: 1, client: client)
             XCTAssertEqual(returnedImage, image)
+            // Whatever has focus in the guest, the probe answers instead of failing.
+            _ = try await DesktopClipboard.focusIsTerminal(machine: machineID, display: 1, client: client)
             if let old { try await DesktopClipboard.write(old, machine: machineID, display: 1, client: client) }
         } catch {
             if let old { try? await DesktopClipboard.write(old, machine: machineID, display: 1, client: client) }

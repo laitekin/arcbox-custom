@@ -1,5 +1,8 @@
 import RFB from './vendor/core/rfb.js';
-import { keys, modifiers, shortcut, unicodeKeysyms, CompositionCommit, inputAnchor, SerialQueue } from './input.js';
+import {
+    keys, modifiers, shortcut, chordKeysym, clipboardChord, editingChord, unicodeKeysyms, CompositionCommit, inputAnchor, SerialQueue,
+} from './input.js';
+import { zoomSteps, parseView, stepZoom, remoteSize, zoomLabel } from './view.js';
 
 const $ = id => document.getElementById(id);
 const token = location.hash.slice(1);
@@ -15,6 +18,14 @@ let disposed = false;
 let lastError = '';
 let statusTimer;
 let networkBusy = false;
+let view = parseView(load('arcbox.view'));
+
+function load(key) {
+    try { return localStorage.getItem(key); } catch { return null; }
+}
+function save(key, value) {
+    try { localStorage.setItem(key, value); } catch { /* Private windows may refuse storage. */ }
+}
 
 function status(message, error = false) {
     clearTimeout(statusTimer);
@@ -46,7 +57,7 @@ function chord(keysym, { ctrl = false, shift = false, alt = false } = {}) {
     for (const [enabled, sym] of [[ctrl, modifiers.Control], [shift, modifiers.Shift], [alt, modifiers.Alt]]) {
         if (enabled) { rfb.sendKey(sym, undefined, true); held.push(sym); }
     }
-    rfb.sendKey(keysym);
+    rfb.sendKey(chordKeysym(keysym, shift));
     for (const sym of held.reverse()) rfb.sendKey(sym, undefined, false);
 }
 function sendText(text) {
@@ -67,6 +78,7 @@ function deactivate() {
 function focusDesktop(event) {
     if (!connected) return;
     $('settings').open = false;
+    $('zoom').open = false;
     if (event && Number.isFinite(event.clientX)) {
         const point = inputAnchor(event.clientX, event.clientY, $('screen').getBoundingClientRect());
         input.style.left = point.x + 'px';
@@ -75,19 +87,25 @@ function focusDesktop(event) {
     input.focus({ preventScroll: true });
     if (!active) enqueueClipboard(activate);
 }
-function clipboardKey(key, shift = $('terminal').checked) {
+// Like the Mac: ⌘C/⌘X put the selection on the Mac clipboard and ⌘V pastes the newest
+// clipboard, whichever side it came from. Success is silent; only failures are shown.
+function clipboardKey(key, shift = false) {
+    const mode = $('keys').value;
     enqueue(() => clipboardQueue.enqueue(async () => {
         await activate();
+        const detect = mode === 'auto';
         if (key === 'v') {
-            await api('clipboard/paste');
-            chord(key.charCodeAt(0), { ctrl: true, shift });
-            status('已粘贴 Mac 剪贴板（文字 / 图片）');
+            const result = await api('clipboard/paste', { detect });
+            send(clipboardChord(key, mode === 'terminal' || (detect && result.terminal === true), shift));
         } else {
-            chord(key.charCodeAt(0), { ctrl: true, shift });
+            const terminal = mode === 'terminal' || (detect && (await api('clipboard/target')).terminal === true);
+            send(clipboardChord(key, terminal, shift));
             await api('clipboard/copy');
-            status('已同步到 Mac 剪贴板');
         }
     }));
+}
+function send({ key, ...options }) {
+    chord(key.charCodeAt(0), options);
 }
 // An invisible, focusable textarea anchors native IME candidates at the desktop click.
 // Do not hide/display:none it: macOS needs a rendered editable target for composition.
@@ -119,22 +137,23 @@ input.addEventListener('keydown', event => {
     // OS input-source switching remains on the Mac, including Caps Lock and Globe/Fn.
     if (['CapsLock', 'Fn', 'Globe', 'Meta', 'Control', 'Alt', 'Shift'].includes(event.key)) return;
     if (event.ctrlKey && (event.code === 'Space' || event.key === ' ')) return;
-    const command = shortcut(event, $('terminal').checked);
+    const command = shortcut(event);
     if (command) {
         event.preventDefault();
         if (command.action === 'key') enqueue(() => chord(command.key.charCodeAt(0), { ctrl: true, shift: command.shift }));
         else clipboardKey(command.key, command.shift);
         return;
     }
+    const editing = editingChord(event);
+    if (editing) {
+        event.preventDefault();
+        enqueue(() => chord(editing.sym, editing));
+        return;
+    }
     let sym = keys[event.key];
     let ctrl = event.ctrlKey;
     let alt = false;
-    if (event.metaKey && event.key.startsWith('Arrow')) {
-        sym = ['ArrowLeft', 'ArrowUp'].includes(event.key) ? keys.Home : keys.End;
-        ctrl = ['ArrowUp', 'ArrowDown'].includes(event.key);
-    } else if (event.altKey && ['ArrowLeft', 'ArrowRight'].includes(event.key)) {
-        ctrl = true;
-    } else if (event.metaKey) {
+    if (event.metaKey) {
         return; // Browser/system shortcuts (tabs, address bar, etc.) stay local.
     } else if (event.ctrlKey && event.key.length === 1) {
         sym = event.key.toLowerCase().charCodeAt(0);
@@ -181,10 +200,100 @@ async function settings() {
 }
 $('sync').onchange = () => enqueueClipboard(settings);
 $('display').onchange = () => enqueueClipboard(settings);
-$('terminal').onchange = () => {
-    status($('terminal').checked ? '终端模式：⌘C / ⌘V → Ctrl+Shift+C / V' : '桌面模式：⌘C / ⌘V → Ctrl+C / V');
+$('keys').value = ['auto', 'desktop', 'terminal'].includes(load('arcbox.keys')) ? load('arcbox.keys') : 'auto';
+$('keys').onchange = () => {
+    save('arcbox.keys', $('keys').value);
+    status({
+        auto: '自动：终端里 ⌘C / ⌘V → Ctrl+Shift+C / V，其他应用 → Ctrl+C / V',
+        desktop: '⌘C / ⌘V → Ctrl+C / V',
+        terminal: '⌘C / ⌘V → Ctrl+Shift+C / V',
+    }[$('keys').value]);
     focusDesktop();
 };
+// noVNC sizes the machine's desktop to its container and scales the picture to fit.
+// These overrides let zoom pick a different resolution for the machine and show a
+// fixed-resolution desktop at a chosen size. They rely on noVNC 1.7.0 internals
+// (vendor/README.arcbox.md); without them the desktop simply follows the window.
+function installZoom() {
+    if (![rfb._screenSize, rfb._requestRemoteResize, rfb._updateScale].every(f => typeof f === 'function')) return false;
+    const screenSize = rfb._screenSize.bind(rfb);
+    const requestResize = rfb._requestRemoteResize.bind(rfb);
+    const updateScale = rfb._updateScale.bind(rfb);
+    let forRemote = false;
+    rfb._screenSize = () => {
+        const size = screenSize();
+        return forRemote ? remoteSize(size.w, size.h, view.zoom === 'fit' ? 1 : view.zoom) : size;
+    };
+    rfb._requestRemoteResize = () => {
+        forRemote = true;
+        try { requestResize(); } finally { forRemote = false; }
+    };
+    rfb._updateScale = () => {
+        if (view.resize === 'fixed' && view.zoom !== 'fit') {
+            rfb._display.scale = view.zoom;
+            rfb._fixScrollbars?.();
+        } else updateScale();
+        showZoom();
+    };
+    return true;
+}
+function applyView(next, announce = false) {
+    view = next.resize === 'follow' && next.zoom === 'fit' ? { resize: 'follow', zoom: 1 } : next;
+    save('arcbox.view', JSON.stringify(view));
+    if (rfb) {
+        rfb.scaleViewport = view.resize === 'follow' || view.zoom === 'fit';
+        rfb.resizeSession = view.resize === 'follow';
+        rfb._updateScale?.();
+    }
+    showZoom();
+    if (announce) status(view.resize === 'follow'
+        ? '机器分辨率跟随窗口，画面 ' + zoomLabel(view, view.zoom) : '保持分辨率，画面 ' + zoomLabel(view, currentScale()));
+}
+// While a resolution change is on its way the picture is briefly scaled; report the target.
+function currentScale() {
+    if (view.resize === 'follow' && (rfb?._pendingRemoteResize || rfb?._resizeTimeout)) return view.zoom;
+    return rfb?._display?.scale || 1;
+}
+function showZoom() {
+    const label = zoomLabel(view, currentScale());
+    const refused = view.resize === 'follow' && label.startsWith('适应');
+    $('zoom-label').textContent = label;
+    for (const radio of document.querySelectorAll('input[name="resize"]')) radio.checked = radio.value === view.resize;
+    for (const button of $('zoom-steps').children) {
+        button.setAttribute('aria-pressed', String(button.dataset.zoom === String(view.zoom)));
+        button.hidden = button.dataset.zoom === 'fit' && view.resize === 'follow';
+    }
+    $('zoom-hint').textContent = refused ? '这台机器的 VNC 服务不接受调整分辨率，画面已缩放到适应窗口。'
+        : view.resize === 'follow' ? '缩放越小，机器分辨率越高、显示内容越多；100% 时机器分辨率等于窗口大小。'
+        : '机器分辨率不变。「适应窗口」让画面完整显示；按百分比显示时可滚动查看。';
+}
+function zoomBy(direction) {
+    const current = view.zoom === 'fit' ? currentScale() : view.zoom;
+    applyView({ ...view, zoom: stepZoom(current, direction) }, true);
+}
+for (const step of ['fit', ...zoomSteps]) {
+    const button = document.createElement('button');
+    button.dataset.zoom = String(step);
+    button.textContent = step === 'fit' ? '适应窗口' : Math.round(step * 100) + '%';
+    button.onclick = () => { applyView({ ...view, zoom: step }); $('zoom').open = false; focusDesktop(); };
+    $('zoom-steps').append(button);
+}
+for (const radio of document.querySelectorAll('input[name="resize"]')) {
+    radio.onchange = () => applyView({ resize: radio.value, zoom: radio.value === 'fixed' ? 'fit' : 1 }, true);
+}
+$('zoom-in').onclick = () => { zoomBy(1); focusDesktop(); };
+$('zoom-out').onclick = () => { zoomBy(-1); focusDesktop(); };
+// ⌘+ / ⌘− / ⌘0 zoom the desktop instead of the page, as in a Mac app.
+window.addEventListener('keydown', event => {
+    if (!event.metaKey || event.ctrlKey || event.altKey) return;
+    const direction = { '=': 1, '+': 1, '-': -1, '_': -1, '0': 0 }[event.key];
+    if (direction === undefined) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (direction) zoomBy(direction);
+    else applyView(view.resize === 'follow' ? { resize: 'follow', zoom: 1 } : { resize: 'fixed', zoom: 'fit' }, true);
+}, true);
+showZoom();
 $('disconnect').onclick = () => enqueue(async () => {
     disposed = true;
     clearTimeout(syncTimer);
@@ -228,8 +337,11 @@ async function start() {
     document.title = config.name + ' · ArcBox';
     rfb = new RFB($('screen'), 'ws://127.0.0.1:' + config.port + '/', { wsProtocols: ['binary', 'arcbox-' + token] });
     rfb.focusOnClick = false;
-    rfb.scaleViewport = true;
-    rfb.resizeSession = true;
+    if (!installZoom()) {
+        view = { resize: 'follow', zoom: 1 };
+        for (const id of ['zoom-in', 'zoom-out', 'zoom']) $(id).hidden = true;
+    }
+    applyView(view);
     rfb.addEventListener('connect', () => {
         connected = true;
         $('connection').textContent = '已连接';

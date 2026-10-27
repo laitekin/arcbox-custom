@@ -105,7 +105,7 @@ make -C arcbox-desktop generate-arcbox-protobuf ARCBOX_DIR=../arcbox   # Swift �
 
 ## 二开功能速览
 
-- 网页桌面：机器 Info › Forwarded ports › **Open in Browser**，内置 noVNC；支持 Mac ↔ X11 文字/PNG 剪贴板、⌘C/⌘V、终端快捷键模式和 Mac 拼音组合输入。客体需安装 xclip，支持范围与验证方法见 [网页桌面说明](arcbox-desktop/WebDesktop/README.md)。
+- 网页桌面：机器 Info › Forwarded ports › **Open in Browser**，内置 noVNC；支持 Mac ↔ X11 文字/PNG 剪贴板、与 Mac 一致的 ⌘C/⌘X/⌘V（自动识别终端，改发 Ctrl+Shift+C/V）、画面缩放（分辨率跟随窗口或保持分辨率，⌘+/⌘−/⌘0）和 Mac 拼音组合输入。客体需安装 xclip，支持范围与验证方法见 [网页桌面说明](arcbox-desktop/WebDesktop/README.md)。
 
 - 代理库：设置 › 网络 › Import SOCKS URL，粘贴带可选账号密码的 URL，测试后保存；支持多套代理的编辑、测试和删除。默认代理可选择已保存的代理。
 - 每台机器独立代理：新建机器的 Network 或已有机器 Info › Outbound proxy 中选择 Follow default、Direct 或某个已保存代理。运行中可切换，修改代理也会更新引用它的机器；[完整设计与验证](arcbox/docs/architecture/proxy-library-machines.md)。

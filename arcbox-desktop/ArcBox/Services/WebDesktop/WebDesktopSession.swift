@@ -44,11 +44,16 @@ final class WebDesktopSession {
         relays.removeAll()
     }
 
+    /// Puts the Mac clipboard on the machine's before a paste. When the Mac clipboard has
+    /// not changed since it last went either way, the machine's own clipboard is the newest
+    /// and stays, as when copying and pasting within one Mac app.
     func paste() async throws {
-        guard let payload = try DesktopClipboard.readMac() else {
-            throw DesktopClipboard.Failure(message: "Copy text or an image on the Mac first.")
-        }
         let change = NSPasteboard.general.changeCount
+        guard change != lastMacChange else { return }
+        guard let payload = try DesktopClipboard.readMac() else {
+            lastMacChange = change
+            return
+        }
         try await DesktopClipboard.write(payload, machine: machine, display: display, client: client)
         lastGuest = payload.fingerprint
         lastMacChange = change
@@ -63,13 +68,16 @@ final class WebDesktopSession {
             if let payload, payload.fingerprint != lastGuest { break }
             try await Task.sleep(for: .milliseconds(120))
         }
-        guard let payload else {
-            throw DesktopClipboard.Failure(message: "The machine has no supported text or image on its clipboard.")
-        }
+        // Nothing selected: like ⌘C on the Mac, leave the clipboard alone.
+        guard let payload else { return }
         guard isActive(), NSPasteboard.general.changeCount == initialMacChange else { return }
         try DesktopClipboard.writeMac(payload)
         lastMacChange = NSPasteboard.general.changeCount
         lastGuest = payload.fingerprint
+    }
+
+    func focusIsTerminal() async -> Bool {
+        (try? await DesktopClipboard.focusIsTerminal(machine: machine, display: display, client: client)) == true
     }
 
     func synchronize(isActive: () -> Bool) async throws {

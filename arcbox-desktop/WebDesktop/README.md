@@ -13,10 +13,22 @@ running. A VNC desktop must already be installed. Open VNC remains available.
 - The guest needs X11 and xclip: sudo apt install xclip on Ubuntu; apk add xclip
   as root on Alpine. Wayland clipboard sessions are not supported.
 - Automatic sync runs once per second while the browser desktop is focused.
-  ⌘C/⌘X copies/cuts the remote selection to the Mac. ⌘V waits for the transfer
-  before sending paste. The toolbar provides the same actions.
-- Enable **终端快捷键** in Linux terminals: ⌘C/V maps to Ctrl+Shift+C/V.
-  Otherwise these map to Ctrl+C/V. ⌘A/Z/Shift+Z/S/F and Mac arrow navigation work.
+  ⌘C/⌘X copies/cuts the remote selection to the Mac. ⌘V pastes the newest
+  clipboard, as on the Mac: it transfers the Mac clipboard first only when it changed
+  since the last transfer either way, otherwise the machine's own clipboard is pasted
+  straight away. Success is silent; ⌘C with nothing selected changes nothing. The
+  toolbar provides the same actions.
+- **⌘C / ⌘V 发送** (under More) defaults to 自动识别终端: before a copy or paste the
+  guest reports the focused window's WM_CLASS (xdotool or xprop; most desktops have
+  xprop). Terminals (xterm, GNOME Terminal, Konsole, xfce4-terminal, kitty, Alacritty
+  and others) get Ctrl+Shift+C/V, so ⌘C never interrupts the running program and ⌘X
+  copies; other apps get Ctrl+C/X/V. Without either tool, auto falls back to Ctrl+C/V;
+  pick Ctrl+Shift+C / V by hand in a terminal then. Shifted chords send upper-case
+  keysyms; TigerVNC otherwise releases Shift and Ctrl+Shift+V arrives as Ctrl+V.
+- Other ⌘ shortcuts map to Ctrl: ⌘A/B/D/E/F/G/I/K/O/P/S/U/Y/Z, ⌘⇧Z and ⌘/.
+  ⌘Q/W/N/T/H/M/L/R and ⌘Tab stay with the browser and macOS. ⌘←/→ go to line
+  start/end, ⌘↑/↓ to document start/end, ⌥←/→ move by word, ⌥⌫/⌥⌦ delete a word,
+  ⌘↩ sends Ctrl+Enter.
 - Mac input-source shortcuts remain local. A real textarea handles IME composition,
   forwards committed Unicode, and suppresses duplicate commit events. Click the
   desktop and type; no separate input field is shown. Control+Space,
@@ -27,6 +39,25 @@ running. A VNC desktop must already be installed. Open VNC remains available.
 - Disable automatic sync when unwanted; explicit copy/paste still works.
   Unsupported contents are left alone. Simultaneous changes prioritize the Mac.
   Switching tabs prevents an old background read from updating the Mac clipboard.
+
+## Zoom
+
+The zoom control in the toolbar (−, the percentage menu, +; or ⌘−, ⌘+, ⌘0) picks
+how the desktop fits the window. The choice is remembered in the browser.
+
+- 机器分辨率 · 跟随窗口 (default): the machine's resolution follows the window, so
+  the desktop is always shown whole, also after the window is resized. Zoom sets
+  how large it looks: at 100% one machine pixel is one CSS pixel; at 50% the machine
+  gets twice the window's size (sharp on Retina, more room); at 200% half of it.
+  When the VNC server refuses resizing, the picture is scaled to fit instead and
+  the label reads 适应 N%.
+- 机器分辨率 · 保持当前分辨率: the machine keeps its resolution. 适应窗口 scales the
+  picture to fit; a percentage shows it at that size and scrolls when larger.
+  ⌘0 returns to 适应窗口 (100% in 跟随窗口).
+
+desktop.js reaches into three noVNC 1.7.0 internals for this (`_screenSize`,
+`_requestRemoteResize`, `_updateScale`); without them the zoom control is hidden
+and the desktop follows the window as before. Recheck them when updating noVNC.
 
 ## Access and lifetime
 
@@ -40,7 +71,7 @@ buffers, connections and requests have limits. VNC passwords are not persisted.
 
 ## Verification
 
-Run node --test arcbox-desktop/WebDesktop/tests/input.test.mjs.
+Run node --test arcbox-desktop/WebDesktop/tests/input.test.mjs arcbox-desktop/WebDesktop/tests/view.test.mjs.
 Run make -C arcbox-desktop test with XCODEBUILD_EXTRA=-only-testing:ArcBoxTests/WebDesktopTests.
 
 The opt-in live XCTest needs X11 :1, xclip and a localhost:5901 forward. Pass
@@ -75,3 +106,24 @@ browser focus deactivates clipboard ownership even while a read is in flight.
 - Connected-browser verification of the final compact layout, native macOS Pinyin
   candidate UI and end-to-end keyboard/clipboard shortcuts remains pending the
   user's VNC login. No VNC password was read, changed or stored.
+
+### Local verification — 2026-10-27 (zoom and Mac clipboard keys)
+
+Run in a Linux container against TigerVNC 1.13 (one resizable display and one
+started with -AcceptSetDesktopSize=0), Chromium through Playwright, and a Node
+stand-in for WebDesktopServer that runs the real guest helper script from
+DesktopClipboard.swift. 17 end-to-end checks passed:
+
+- Follow window at 100/90/67/50%: the machine's resolution is the window divided by
+  zoom and the picture always fits, also after resizing the window; ⌘+/⌘−/⌘0 and the
+  menu work, and the setting survives a reload.
+- Refused resize: the picture is fitted and labelled 适应 67%. Fixed resolution at
+  fit, 100% and 150%: the pointer lands on the right machine pixel while scrolled.
+- Mousepad (GTK): ⌘V pastes Mac Unicode text, ⌘A ⌘C copies it back, ⌘X cuts, and a
+  second ⌘V with an unchanged Mac clipboard pastes without a transfer.
+- xfce4-terminal: detected as a terminal; ⌘V pastes into a running `cat`, ⌘C with
+  nothing selected does not interrupt it, ⌘C copies a selection to the Mac. xterm
+  is detected too.
+
+Not run here: the Swift changes were not compiled (no Swift toolchain in this
+environment), and Safari and the real Mac pasteboard were not exercised.
