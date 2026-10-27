@@ -13,8 +13,38 @@ export function shortcut(event, terminal = false) {
     if (["c", "x", "v"].includes(key)) {
         return { key, shift: terminal || event.shiftKey, action: key === "v" ? "paste" : "copy" };
     }
-    if (["a", "z", "s", "f"].includes(key)) return { key, shift: event.shiftKey, action: "key" };
+    if (controlLetters.has(key)) return { key, shift: event.shiftKey, action: "key" };
     return null;
+}
+
+// ⌘ shortcuts sent to Linux as Ctrl. ⌘Q/W/N/T/H/M/L/R/Tab stay with the browser and macOS.
+const controlLetters = new Set(["a", "b", "d", "e", "f", "g", "i", "k", "o", "p", "s", "u", "y", "z", "/"]);
+
+// The Linux chord for a Mac copy, cut or paste. Terminals use Ctrl+Shift+C/V (Ctrl+C would
+// interrupt the running program) and have no cut, so ⌘X copies there.
+export function clipboardChord(key, terminal, shift = false) {
+    if (terminal) return { key: key === "x" ? "c" : key, ctrl: true, shift: true };
+    return { key, ctrl: true, shift };
+}
+
+// Mac text-editing keys and their usual Linux equivalents; null for keys sent unchanged.
+export function editingChord(event) {
+    const { key, metaKey: meta, altKey: alt, shiftKey: shift } = event;
+    if (meta && key.startsWith("Arrow")) {
+        const vertical = key === "ArrowUp" || key === "ArrowDown";
+        const start = key === "ArrowLeft" || key === "ArrowUp";
+        return { sym: start ? keys.Home : keys.End, ctrl: vertical, shift };
+    }
+    if (alt && !meta && (key === "ArrowLeft" || key === "ArrowRight")) return { sym: keys[key], ctrl: true, shift };
+    if (alt && !meta && (key === "Backspace" || key === "Delete")) return { sym: keys[key], ctrl: true, shift: false };
+    if (meta && key === "Enter") return { sym: keys.Enter, ctrl: true, shift };
+    return null;
+}
+
+// The keysym for a chord's key. With Shift held a letter must be sent upper case: VNC servers
+// such as TigerVNC release Shift to produce a lower-case keysym, turning Ctrl+Shift+V into Ctrl+V.
+export function chordKeysym(keysym, shift) {
+    return shift && keysym >= 0x61 && keysym <= 0x7a ? keysym - 0x20 : keysym;
 }
 
 export function unicodeKeysyms(text) {

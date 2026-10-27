@@ -4,10 +4,18 @@
 <title>ArcBox · 网页桌面</title><link rel="stylesheet" href="desktop.css"></head>
 <body>
 <header><div class="identity"><strong>ArcBox</strong><span id="machine">网页桌面</span><span id="connection" role="status">正在连接…</span></div>
-<nav aria-label="桌面工具"><button id="network">网络检测</button><button id="fullscreen">全屏</button>
+<nav aria-label="桌面工具"><div class="zoom" role="group" aria-label="缩放"><button id="zoom-out" title="缩小（⌘−）" aria-label="缩小">−</button>
+<details id="zoom"><summary id="zoom-label" title="缩放与分辨率">100%</summary><div class="settings-panel zoom-panel">
+<fieldset><legend>机器分辨率</legend>
+<label><input type="radio" name="resize" value="follow" checked> 跟随窗口（画面始终完整显示）</label>
+<label><input type="radio" name="resize" value="fixed"> 保持当前分辨率</label></fieldset>
+<div class="zoom-steps" id="zoom-steps"></div>
+<p id="zoom-hint"></p></div></details>
+<button id="zoom-in" title="放大（⌘+）" aria-label="放大">+</button></div>
+<button id="network">网络检测</button><button id="fullscreen">全屏</button>
 <details id="settings"><summary>更多</summary><div class="settings-panel">
 <label><input id="sync" type="checkbox" checked> 同步文字 / 图片</label>
-<label><input id="terminal" type="checkbox"> 终端快捷键（⌘C/V → Ctrl+Shift+C/V）</label>
+<label>⌘C / ⌘V 发送 <select id="keys"><option value="auto">自动识别终端</option><option value="desktop">Ctrl+C / V</option><option value="terminal">Ctrl+Shift+C / V</option></select></label>
 <div class="clipboard-actions"><button id="copy">复制到 Mac</button><button id="paste">粘贴到机器</button></div>
 <label>X 显示 :<input id="display" type="number" min="0" max="99" value="1"></label>
 <p>直接点击桌面输入；中英文切换沿用 Mac 设置。</p><button id="disconnect">断开连接</button>

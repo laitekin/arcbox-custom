@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { shortcut, unicodeKeysyms, CompositionCommit, keys, inputAnchor, SerialQueue } from '../input.js';
+import {
+    shortcut, unicodeKeysyms, CompositionCommit, keys, inputAnchor, SerialQueue, clipboardChord, chordKeysym, editingChord,
+} from '../input.js';
 
 test('Mac copy/paste maps to desktop and terminal modifiers', () => {
     const c = { key: 'c', metaKey: true, ctrlKey: false, altKey: false, shiftKey: false };
@@ -9,6 +11,31 @@ test('Mac copy/paste maps to desktop and terminal modifiers', () => {
     assert.equal(shortcut({ ...c, key: ' ' }), null);
     assert.equal(shortcut({ ...c, key: 'l' }), null);
     assert.equal(shortcut({ ...c, metaKey: false, ctrlKey: true }), null);
+    assert.deepEqual(shortcut({ ...c, key: 'b' }), { key: 'b', shift: false, action: 'key' });
+    assert.deepEqual(shortcut({ ...c, key: 'Z', shiftKey: true }), { key: 'z', shift: true, action: 'key' });
+    for (const key of ['q', 'w', 'n', 't', 'r', 'h', 'm']) assert.equal(shortcut({ ...c, key }), null, key);
+});
+test('terminals copy and paste with Ctrl+Shift and have no cut', () => {
+    assert.deepEqual(clipboardChord('c', false), { key: 'c', ctrl: true, shift: false });
+    assert.deepEqual(clipboardChord('v', true), { key: 'v', ctrl: true, shift: true });
+    assert.deepEqual(clipboardChord('x', true), { key: 'c', ctrl: true, shift: true });
+    assert.deepEqual(clipboardChord('v', false, true), { key: 'v', ctrl: true, shift: true });
+});
+test('a shifted letter is sent upper case so the VNC server keeps Shift held', () => {
+    assert.equal(chordKeysym(0x76, true), 0x56);
+    assert.equal(chordKeysym(0x76, false), 0x76);
+    assert.equal(chordKeysym(keys.Home, true), keys.Home);
+    assert.equal(chordKeysym(0x2f, true), 0x2f);
+});
+test('Mac text-editing keys map to their Linux equivalents', () => {
+    const key = (k, mods = {}) => editingChord({ key: k, metaKey: false, altKey: false, shiftKey: false, ...mods });
+    assert.deepEqual(key('ArrowLeft', { metaKey: true }), { sym: keys.Home, ctrl: false, shift: false });
+    assert.deepEqual(key('ArrowDown', { metaKey: true, shiftKey: true }), { sym: keys.End, ctrl: true, shift: true });
+    assert.deepEqual(key('ArrowRight', { altKey: true }), { sym: keys.ArrowRight, ctrl: true, shift: false });
+    assert.deepEqual(key('Backspace', { altKey: true }), { sym: keys.Backspace, ctrl: true, shift: false });
+    assert.deepEqual(key('Enter', { metaKey: true }), { sym: keys.Enter, ctrl: true, shift: false });
+    assert.equal(key('Backspace'), null);
+    assert.equal(key('a', { altKey: true }), null);
 });
 test('Chinese and emoji produce Unicode keysyms, not UTF-16 surrogate key presses', () => {
     assert.deepEqual(unicodeKeysyms('A中🙂\n\t'), [65, 0x01004e2d, 0x0101f642, keys.Enter, keys.Tab]);
