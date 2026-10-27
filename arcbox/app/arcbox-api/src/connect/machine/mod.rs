@@ -112,6 +112,7 @@ impl pb::MachineService for MachineServiceImpl {
             } else {
                 Some(req.kernel)
             },
+            initrd: (!req.initrd.is_empty()).then_some(req.initrd),
             cmdline: if req.cmdline.is_empty() {
                 None
             } else {
@@ -505,6 +506,7 @@ impl pb::MachineService for MachineServiceImpl {
                     .unwrap_or_else(|| "linux".to_string()),
                 version: machine.distro_version.clone().unwrap_or_default(),
                 kernel: machine.kernel.unwrap_or_default(),
+                initrd: machine.initrd.unwrap_or_default(),
                 ..Default::default()
             }
             .into(),

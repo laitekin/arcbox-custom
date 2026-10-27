@@ -364,17 +364,7 @@ async fn recover_container_networking(runtime: &Arc<Runtime>) {
 
         let bindings = arcbox_docker::port_bindings::parse_port_bindings(&inspect_body);
         if !bindings.is_empty() {
-            let rules: Vec<_> = bindings
-                .iter()
-                .map(|b| {
-                    (
-                        b.host_ip.clone(),
-                        b.host_port,
-                        b.container_port,
-                        b.protocol.clone(),
-                    )
-                })
-                .collect();
+            let rules: Vec<_> = bindings.iter().map(|b| b.guest_relay_binding()).collect();
             match runtime
                 .start_port_forwarding_for(runtime.default_machine_name(), id, &rules)
                 .await

@@ -116,6 +116,8 @@ pub struct FsConfig {
     pub tag: String,
     /// Host directory to share.
     pub source: String,
+    /// Reject guest mutations, write opens, and writable DAX mappings.
+    pub read_only: bool,
     /// Number of worker threads.
     pub num_threads: usize,
     /// Enable writeback caching.
@@ -138,6 +140,7 @@ impl Default for FsConfig {
         Self {
             tag: "arcbox".to_string(),
             source: String::new(),
+            read_only: false,
             num_threads: 4,
             writeback_cache: true,
             cache_profile: CacheProfile::Custom {

@@ -46,6 +46,148 @@ fn parse_response_header(response: &[u8]) -> FuseOutHeader {
 }
 
 #[test]
+fn read_only_server_refuses_real_create_but_still_serves_metadata() {
+    let temp = TempDir::new().unwrap();
+    let mut server = crate::FsServer::new(crate::FsConfig {
+        source: temp.path().to_string_lossy().into_owned(),
+        read_only: true,
+        ..Default::default()
+    });
+    server.start().unwrap();
+    let mut body: Vec<u8> = [0o102_u32, 0o644, 0, 0]
+        .into_iter()
+        .flat_map(u32::to_ne_bytes)
+        .collect();
+    body.extend_from_slice(b"forbidden\0");
+    let mut request = make_header(FuseOpcode::Create, 1, body.len());
+    request.extend_from_slice(&body);
+    assert_eq!(
+        parse_response_header(&server.handle_request(&request).unwrap()).error,
+        -libc::EROFS
+    );
+    assert!(!temp.path().join("forbidden").exists());
+    assert_eq!(
+        parse_response_header(
+            &server
+                .handle_request(&make_header(FuseOpcode::Getattr, 1, 0))
+                .unwrap()
+        )
+        .error,
+        0
+    );
+
+    let mut writable = crate::FsServer::new(crate::FsConfig {
+        source: temp.path().to_string_lossy().into_owned(),
+        ..Default::default()
+    });
+    writable.start().unwrap();
+    assert_eq!(
+        parse_response_header(&writable.handle_request(&request).unwrap()).error,
+        0
+    );
+    assert!(
+        temp.path().join("forbidden").exists(),
+        "the same request is valid on a writable share"
+    );
+}
+
+#[test]
+fn read_only_dispatch_rejects_all_mutations_and_linux_write_open_flags() {
+    let (temp, mut dispatcher) = setup_dispatcher();
+    std::fs::write(temp.path().join("original"), b"unchanged").unwrap();
+    dispatcher.config.read_only = true;
+    for opcode in [
+        FuseOpcode::Setattr,
+        FuseOpcode::Write,
+        FuseOpcode::Create,
+        FuseOpcode::Mkdir,
+        FuseOpcode::Mknod,
+        FuseOpcode::Unlink,
+        FuseOpcode::Rmdir,
+        FuseOpcode::Rename,
+        FuseOpcode::Rename2,
+        FuseOpcode::Symlink,
+        FuseOpcode::Link,
+        FuseOpcode::Setxattr,
+        FuseOpcode::Removexattr,
+        FuseOpcode::Fallocate,
+        FuseOpcode::CopyFileRange,
+    ] {
+        let response = dispatcher.dispatch(&make_header(opcode, 1, 0)).unwrap();
+        assert_eq!(
+            parse_response_header(&response).error,
+            -libc::EROFS,
+            "{opcode:?}"
+        );
+    }
+    for flags in [1_u32, 2, 0o100, 0o1000, 0o2000] {
+        let mut request = make_header(FuseOpcode::Open, 1, 8);
+        request.extend_from_slice(&flags.to_ne_bytes());
+        request.extend_from_slice(&0_u32.to_ne_bytes());
+        assert_eq!(
+            parse_response_header(&dispatcher.dispatch(&request).unwrap()).error,
+            -libc::EROFS
+        );
+    }
+    assert_eq!(
+        std::fs::read(temp.path().join("original")).unwrap(),
+        b"unchanged"
+    );
+}
+
+#[test]
+fn read_only_share_allows_read_dax_but_never_reaches_the_mapper_for_write_dax() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Mapper(AtomicUsize);
+    impl crate::DaxMapper for Mapper {
+        fn setup_mapping(
+            &self,
+            _: i32,
+            _: u64,
+            _: u64,
+            _: u64,
+            writable: bool,
+        ) -> std::result::Result<(), i32> {
+            assert!(
+                !writable,
+                "read-only dispatcher let a writable mapping escape"
+            );
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        fn remove_mapping(&self, _: u64, _: u64) -> std::result::Result<(), i32> {
+            Ok(())
+        }
+    }
+    let (temp, mut dispatcher) = setup_dispatcher();
+    dispatcher.config.read_only = true;
+    std::fs::write(temp.path().join("payload"), [0; 4096]).unwrap();
+    let mut lookup = make_header(FuseOpcode::Lookup, 1, 8);
+    lookup.extend_from_slice(b"payload\0");
+    let result = dispatcher.dispatch(&lookup).unwrap();
+    let inode = u64::from_ne_bytes(
+        result[FuseOutHeader::SIZE..FuseOutHeader::SIZE + 8]
+            .try_into()
+            .unwrap(),
+    );
+    let mapper = Arc::new(Mapper(AtomicUsize::new(0)));
+    dispatcher.set_dax_mapper(mapper.clone());
+    for (flags, expected) in [(0, 0), (FUSE_SETUPMAPPING_FLAG_WRITE, -libc::EROFS)] {
+        let body: Vec<u8> = [FUSE_NO_FH, 0, 4096, flags, 0]
+            .into_iter()
+            .flat_map(u64::to_ne_bytes)
+            .collect();
+        let mut request = make_header(FuseOpcode::SetupMapping, inode, body.len());
+        request.extend_from_slice(&body);
+        assert_eq!(
+            parse_response_header(&dispatcher.dispatch(&request).unwrap()).error,
+            expected
+        );
+    }
+    assert_eq!(mapper.0.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn test_getattr_root() {
     let (_temp, dispatcher) = setup_dispatcher();
 

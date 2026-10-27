@@ -1,5 +1,6 @@
 //! tarpc server: accept loop, launchd integration, idle shutdown.
 
+pub mod development;
 pub mod fs_root;
 mod handler;
 mod launchd;
@@ -78,6 +79,7 @@ async fn accept_loop(
     listener: tokio::net::UnixListener,
     tracker: Arc<ConnectionTracker>,
     shutdown: CancellationToken,
+    development: development::DevelopmentPeers,
 ) {
     let codec = tarpc::tokio_util::codec::length_delimited::LengthDelimitedCodec::builder();
 
@@ -97,7 +99,13 @@ async fn accept_loop(
             }
         };
 
-        if !peer_auth::verify(&conn) {
+        let authorized = if development.enabled() {
+            development.verify(&conn)
+        } else {
+            peer_auth::verify(&conn)
+        };
+        if !authorized {
+            tracing::warn!("unauthorized helper client rejected");
             continue;
         }
 
@@ -131,8 +139,15 @@ async fn accept_loop(
 ///
 /// Uses launchd socket activation if available, otherwise falls back to
 /// binding its own socket (for development).
-pub async fn run(idle_exit: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let listener = if let Some(l) = launchd::listener() {
+pub async fn run(
+    idle_exit: bool,
+    development: development::DevelopmentPeers,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let listener = if development.enabled() {
+        let listener = development.bind()?;
+        tracing::info!("private development helper listening; pinned client grants active");
+        listener
+    } else if let Some(l) = launchd::listener() {
         tracing::info!("using launchd socket activation");
         l
     } else {
@@ -163,7 +178,7 @@ pub async fn run(idle_exit: bool) -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("idle-exit enabled ({}s timeout)", IDLE_TIMEOUT.as_secs());
         tokio::spawn(idle_watchdog(Arc::clone(&tracker), shutdown.clone()));
     }
-    accept_loop(listener, tracker, shutdown).await;
+    accept_loop(listener, tracker, shutdown, development).await;
 
     Ok(())
 }

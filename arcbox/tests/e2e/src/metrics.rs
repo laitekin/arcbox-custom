@@ -120,7 +120,8 @@ pub fn percentile(values: &[f64], quantile: f64) -> Option<f64> {
 pub struct RunMetrics {
     /// Test target name (e.g. `boot_assets`, `hv_vmm`).
     pub test: String,
-    /// System VM backend label, when the run pinned one.
+    /// Backend under test: the System VM for lifecycle tests, or the workload
+    /// machine for machine-isolation tests (whose System VM stays on VZ).
     pub backend: Option<String>,
     /// Whether the run passed. Set by the caller; archive failures change this to false.
     pub passed: bool,

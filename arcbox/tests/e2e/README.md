@@ -50,6 +50,83 @@ touch them:
 
 ## Commands
 
+Isolated-machine acceptance (VZ or HV): checks denied Mac file shares, a read-only
+private boot-agent share, one device-backed NIC, the assigned machine ID,
+blocked access to a live Mac service, proxy outage/recovery, and TCP/UDP forwarding
+with different host/guest ports, dynamic removal and stop-time cleanup.
+
+The scenario also starts a second isolated machine, checks distinct MAC and
+machine IDs, and denies TCP/UDP access in both directions while each service
+remains reachable through its explicit host forward. Forwarding must survive
+the Docker port reconciliation interval.
+
+```bash
+CARGO_BUILD_JOBS=2 cargo build --release -p arcbox-daemon
+CARGO_BUILD_JOBS=2 cargo build -p arcbox-agent --target aarch64-unknown-linux-musl --release
+SKIP_BUILD=1 KEEP_TEST_DIR=1 CARGO_BUILD_JOBS=2 cargo test -p arcbox-e2e --test machine_isolation -- --ignored --nocapture --test-threads=1
+```
+
+Stop the desktop daemon before running, as required by the parallel-daemon
+contract above. The test uses a temporary proxy-library configuration and an
+unavailable private Helper socket; it does not install host DNS or routes.
+The public HTTP control defaults to `1.1.1.1:80`. Set
+`ARCBOX_E2E_PUBLIC_CONTROL_IP` to an IPv4 HTTP endpoint reachable directly from
+this Mac if necessary. The endpoint must answer the same HTTP request before
+and after the proxy outage; an unreachable control fails the test rather than
+being counted as successful isolation. No user proxy credentials are needed.
+
+Set `ARCBOX_ISOLATION_BACKEND=hv` to test an HV isolated machine; the default is
+`vz`. The System VM remains VZ because Hypervisor.framework permits only one
+HV VM per process. The HV test changes only the stopped fixture machine's
+persisted backend across an owned-daemon restart. Metrics `backend` identifies
+the isolated machine; the log also prints both System VM and workload backends.
+
+UDP/DNS probes are built as a static Linux binary using the installed musl
+cross-linker. The recording SOCKS fixture implements CONNECT, UDP ASSOCIATE,
+and deterministic DNS answers. Gateway DNS must use SOCKS TCP even with a
+bypass entry; explicit resolver queries use SOCKS UDP. Proxy outages must
+yield timeout/refusal or an answerless SERVFAIL. `UDP=direct` remains blocked
+for isolated machines. `ARCBOX_E2E_DNS_CONTROL_IP` selects a directly reachable
+public resolver for controls (default `223.5.5.5`).
+
+DNS routing assertions alone do not prove absence of a duplicate direct query.
+For packet evidence, start the narrow capture in another terminal before runs:
+
+```sh
+sudo sh tests/e2e/scripts/capture_isolation_dns.sh /tmp/arcbox-dns.pcap
+```
+
+After the VZ and HV runs, stop the capture with Ctrl-C and audit it against
+their saved stdout logs using `scripts/check_isolation_dns_capture.py` from
+this directory. The capture includes only UDP/53 questions starting `abxleak-`.
+The auditor requires both direct-host control names from each successful run,
+and rejects any captured guest query. Empty or late captures cannot pass.
+
+Imported-machine acceptance — imports an upstream ARM64 Docker image with
+`add_init`, boots an isolated machine, verifies `Asia/Tokyo` (`+0900`), and
+checks that BusyBox and a fresh 1 MiB write survive orderly stop/restart and
+export/remove/import/boot. The test deliberately does not flush guest writes.
+Stop the desktop daemon first, then run one scenario at a time:
+
+```bash
+SKIP_BUILD=1 KEEP_TEST_DIR=1 CARGO_BUILD_JOBS=2 \
+  ARCBOX_E2E_MACHINE_SOURCE_IMAGE=alpine:3.20 ARCBOX_E2E_MACHINE_DISTRO=alpine \
+  cargo test -p arcbox-e2e --test machine imported_machine_image_end_to_end -- --ignored --nocapture --test-threads=1
+
+SKIP_BUILD=1 KEEP_TEST_DIR=1 CARGO_BUILD_JOBS=2 \
+  ARCBOX_E2E_MACHINE_SOURCE_IMAGE=ubuntu:24.04 ARCBOX_E2E_MACHINE_DISTRO=ubuntu \
+  ARCBOX_E2E_MACHINE_VNC=1 \
+  cargo test -p arcbox-e2e --test machine imported_machine_image_end_to_end -- --ignored --nocapture --test-threads=1
+```
+
+The Ubuntu VNC fixture installs TigerVNC/X11 tools, starts Xvnc in the guest,
+and reads a real 640×480 RFB framebuffer through a loopback port forward. The
+capture is saved as `vnc-frame.ppm` in the preserved test directory. This
+proves graphical transport, not compatibility with a complete GNOME session.
+`ARCBOX_E2E_MACHINE_ROOTFS=/absolute/path/rootfs.squashfs` instead imports an
+already prepared local rootfs and skips Docker provisioning; it must already
+contain init, timezone data, and VNC packages when VNC verification is enabled.
+
 Daemon-level test — boots the VM through a real daemon and runs Docker
 lifecycle checks over the Docker API socket:
 

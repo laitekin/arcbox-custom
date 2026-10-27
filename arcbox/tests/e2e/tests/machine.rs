@@ -33,6 +33,9 @@ use arcbox_protocol::v1::{
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Channel;
 
+#[path = "machine/vnc.rs"]
+mod vnc;
+
 static TRACING: Once = Once::new();
 
 const READY_TIMEOUT: Duration = Duration::from_secs(180);
@@ -154,6 +157,12 @@ fn imported_machine_image_end_to_end() -> Result<()> {
         .prefix("arcbox-machine-image-e2e-")
         .tempdir()?;
     stage_dev_boot_assets(&root, data_dir.path(), &version)?;
+    let config_home = data_dir.path().join("xdg-config");
+    std::fs::create_dir_all(config_home.join("arcbox"))?;
+    std::fs::write(
+        config_home.join("arcbox/config.toml"),
+        "[vm]\ncpus = 2\nmemory_mb = 2048\n",
+    )?;
     let mut metrics = RunMetrics::new(
         "machine_image_import",
         Some("vz"),
@@ -169,6 +178,15 @@ fn imported_machine_image_end_to_end() -> Result<()> {
             ("ARCBOX_BOOT_ASSET_VERSION".to_owned(), version),
             ("ARCBOX_VM_BACKEND".to_owned(), "vz".to_owned()),
             ("ARCBOX_DNS_PORT".to_owned(), "0".to_owned()),
+            ("XDG_CONFIG_HOME".into(), config_home.display().to_string()),
+            (
+                "ARCBOX_HELPER_SOCKET".into(),
+                data_dir
+                    .path()
+                    .join("absent-helper.sock")
+                    .display()
+                    .to_string(),
+            ),
         ],
     })?;
 
@@ -177,7 +195,7 @@ fn imported_machine_image_end_to_end() -> Result<()> {
     if let Err(error) = metrics.write(Some(data_dir.path())) {
         tracing::warn!("writing run metrics failed: {error:#}");
     }
-    if result.is_err() {
+    if result.is_err() || arcbox_e2e::env_flag("KEEP_TEST_DIR") {
         let kept = data_dir.keep();
         tracing::warn!(path = %kept.display(), "preserving test directory");
     }
@@ -190,9 +208,17 @@ fn image_scenario(
     metrics: &mut RunMetrics,
 ) -> Result<()> {
     metrics.time("daemon_ready", || daemon.wait_ready_blocking(READY_TIMEOUT))?;
-    let source = std::env::var("ARCBOX_E2E_MACHINE_SOURCE_IMAGE")
+    let mut source = std::env::var("ARCBOX_E2E_MACHINE_SOURCE_IMAGE")
         .unwrap_or_else(|_| "alpine:3.20".to_owned());
-    ensure_image(data_dir, &source)?;
+    let distro = std::env::var("ARCBOX_E2E_MACHINE_DISTRO").unwrap_or_else(|_| "alpine".into());
+    let local_rootfs = std::env::var("ARCBOX_E2E_MACHINE_ROOTFS").ok();
+    if local_rootfs.is_none() {
+        ensure_image(data_dir, &source)?;
+    }
+    let check_vnc = arcbox_e2e::env_flag("ARCBOX_E2E_MACHINE_VNC");
+    if check_vnc && local_rootfs.is_none() {
+        source = vnc::prepare_image(data_dir, &source)?;
+    }
     let socket = daemon.grpc_socket();
     let archive = data_dir.join("e2e-imported.arcbox");
 
@@ -203,7 +229,23 @@ fn image_scenario(
     runtime.block_on(async {
         let channel = connect_unix(&socket).await?;
         let mut machines = MachineServiceClient::new(channel.clone());
-        let mut images = MachineImageServiceClient::new(channel);
+        let mut images = MachineImageServiceClient::new(channel.clone());
+        let mut proxies =
+            arcbox_grpc::v1::proxy_library_service_client::ProxyLibraryServiceClient::new(channel);
+        // Imported guests must not share host files or expose the VNC
+        // fixture through a bridged NIC. No egress is needed after import.
+        let proxy = proxies
+            .save_profile(arcbox_protocol::v1::SaveProxyProfileRequest {
+                name: "e2e-import-no-egress".into(),
+                settings: Some(arcbox_protocol::v1::EgressProxySettings {
+                    mode: arcbox_protocol::v1::EgressProxyMode::Custom.into(),
+                    url: "socks5://127.0.0.1:9".into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .await?
+            .into_inner();
 
         // Docker image → machine image, with OpenRC installed by the daemon.
         let started = Instant::now();
@@ -211,8 +253,9 @@ fn image_scenario(
             let mut events = images
                 .import(ImportMachineImageRequest {
                     name: IMPORTED_IMAGE.to_owned(),
-                    docker_image: source.clone(),
-                    add_init: true,
+                    docker_image: if local_rootfs.is_some() { String::new() } else { source.clone() },
+                    path: local_rootfs.clone().unwrap_or_default(),
+                    add_init: local_rootfs.is_none(),
                     ..Default::default()
                 })
                 .await
@@ -225,7 +268,7 @@ fn image_scenario(
                     phases.push(phase);
                 }
                 if phase == ImportMachineImagePhase::Done {
-                    if !phases.contains(&ImportMachineImagePhase::Building) {
+                    if local_rootfs.is_none() && !phases.contains(&ImportMachineImagePhase::Building) {
                         bail!("add_init never reported the building phase: {phases:?}");
                     }
                     return event.image.context("the done event carries no image");
@@ -236,7 +279,7 @@ fn image_scenario(
         .await
         .context("image import timed out")??;
         tracing::info!(elapsed = ?started.elapsed(), size = image.size, "image imported");
-        if !image.imported || image.distro != "alpine" {
+        if !image.imported || image.distro != distro {
             bail!("unexpected imported image: {image:?}");
         }
 
@@ -249,13 +292,28 @@ fn image_scenario(
                 memory: 1024 * 1024 * 1024,
                 disk_size: 2 * 1024 * 1024 * 1024,
                 image: IMPORTED_IMAGE.to_owned(),
+                isolated: true,
+                timezone: "Asia/Tokyo".into(),
+                locale: "C.UTF-8".into(),
                 ..Default::default()
             }),
         )
         .await
         .context("create timed out")?
         .context("create --image failed")?;
-        start_and_check(&mut machines, IMPORTED_MACHINE).await?;
+        proxies
+            .set_machine_proxy(arcbox_protocol::v1::SetMachineProxyRequest {
+                machine: IMPORTED_MACHINE.into(),
+                choice: proxy.id.clone(),
+            })
+            .await?;
+        start_and_check(&mut machines, IMPORTED_MACHINE, &distro).await?;
+        if check_vnc {
+            vnc::verify(&mut machines, IMPORTED_MACHINE, data_dir).await?;
+        }
+        // Deliberately do not sync from the test. An orderly stop must
+        // preserve both the shim's staged binary and fresh guest writes.
+        let checksums = exec_in(&mut machines, IMPORTED_MACHINE, "head -c 1048576 /dev/urandom > /var/tmp/acceptance-write; sha256sum /bin/busybox /var/tmp/acceptance-write").await?;
         let listed = list_images(&mut images).await?;
         let users = listed
             .iter()
@@ -273,6 +331,12 @@ fn image_scenario(
             })
             .await
             .context("stop failed")?;
+        start_and_check(&mut machines, IMPORTED_MACHINE, &distro).await?;
+        anyhow::ensure!(
+            exec_in(&mut machines, IMPORTED_MACHINE, "sha256sum /bin/busybox /var/tmp/acceptance-write").await? == checksums,
+            "orderly stop lost guest writes"
+        );
+        machines.stop(StopMachineRequest { id: IMPORTED_MACHINE.into(), force: false }).await?;
         tokio::time::timeout(
             ARCHIVE_BUDGET,
             machines.export(ExportMachineRequest {
@@ -306,7 +370,17 @@ fn image_scenario(
         {
             bail!("importing the archive did not restore {IMPORTED_IMAGE}");
         }
-        start_and_check(&mut machines, RESTORED_MACHINE).await?;
+        proxies
+            .set_machine_proxy(arcbox_protocol::v1::SetMachineProxyRequest {
+                machine: RESTORED_MACHINE.into(),
+                choice: proxy.id.clone(),
+            })
+            .await?;
+        start_and_check(&mut machines, RESTORED_MACHINE, &distro).await?;
+        anyhow::ensure!(
+            exec_in(&mut machines, RESTORED_MACHINE, "sha256sum /bin/busybox /var/tmp/acceptance-write").await? == checksums,
+            "export/import changed guest file contents"
+        );
         machines
             .stop(StopMachineRequest {
                 id: RESTORED_MACHINE.to_owned(),
@@ -321,7 +395,11 @@ fn image_scenario(
 
 /// Starts machine `id` and checks it booted the imported Alpine with an
 /// init system.
-async fn start_and_check(machines: &mut MachineServiceClient<Channel>, id: &str) -> Result<()> {
+async fn start_and_check(
+    machines: &mut MachineServiceClient<Channel>,
+    id: &str,
+    distro: &str,
+) -> Result<()> {
     tokio::time::timeout(
         START_BUDGET,
         machines.start(StartMachineRequest { id: id.to_owned() }),
@@ -329,11 +407,21 @@ async fn start_and_check(machines: &mut MachineServiceClient<Channel>, id: &str)
     .await
     .with_context(|| format!("starting {id} timed out"))?
     .with_context(|| format!("starting {id} failed"))?;
-    let release = exec_in(machines, id, "cat /etc/os-release").await?;
-    if !release.contains("ID=alpine") {
-        bail!("{id} does not run the imported alpine: {release:?}");
+    let release = exec_in(machines, id, ". /etc/os-release; printf '%s' \"$ID\"").await?;
+    if release.trim() != distro {
+        bail!("{id} does not run the imported {distro}: {release:?}");
     }
-    exec_in(machines, id, "test -e /sbin/openrc && test -e /sbin/init").await?;
+    exec_in(machines, id, "test -e /sbin/init; cat /proc/1/comm").await?;
+    let offset = exec_in(machines, id, "date +%z").await?;
+    if offset.trim() != "+0900" {
+        bail!("{id}: Asia/Tokyo was not applied: {offset:?}");
+    }
+    tracing::info!(
+        id,
+        distro,
+        offset = offset.trim(),
+        "imported machine boot and timezone verified"
+    );
     Ok(())
 }
 

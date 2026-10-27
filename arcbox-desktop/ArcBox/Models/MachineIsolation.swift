@@ -102,10 +102,10 @@ nonisolated enum IsolationCheck {
         elif mount -t virtiofs private "$d" 2>/dev/null; then umount "$d"; say files fail "the Mac's /private can be mounted"
         else say files pass "the Mac's /Users and /private cannot be mounted"; fi
         rmdir "$d"
-        nics=$(ls /sys/class/net | grep -v '^lo$')
+        nics=$(for iface in /sys/class/net/*; do if [ -e "$iface/device" ]; then basename "$iface"; fi; done)
         n=$(echo "$nics" | grep -c .)
-        if [ "$n" -le 1 ]; then say nics pass "one network interface"
-        else say nics fail "$n network interfaces; a second one could bypass the proxy"; fi
+        if [ "$n" -eq 1 ]; then say nics pass "one device-backed network interface"
+        else say nics fail "$n device-backed network interfaces; expected one isolated uplink"; fi
         gw=$(ip route 2>/dev/null | awk '/^default/ {print $3; exit}'); [ -n "$gw" ] || gw=10.0.2.1
         result=pass; for port in 22 445 5900 8080; do
           tcp "$gw" "$port"; r=$?

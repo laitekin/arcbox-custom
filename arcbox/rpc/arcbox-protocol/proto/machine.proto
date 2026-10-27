@@ -181,6 +181,9 @@ message CreateMachineRequest {
     string timezone = 15;
     // Locale the machine presents (`en_US.UTF-8`); empty keeps the image's.
     string locale = 16;
+    // Optional initial ramdisk for a distribution-provided kernel.
+    // Field 11 remains reserved; this is a new, additive boot option.
+    string initrd = 17;
 }
 
 // Request that targets a machine's guest agent.
@@ -519,6 +522,8 @@ message MachineOS {
     string version = 2;
     // Kernel version.
     string kernel = 3;
+    // Initial ramdisk path, when configured.
+    string initrd = 4;
 }
 
 // Request to execute a command in a machine.

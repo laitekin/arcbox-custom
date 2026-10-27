@@ -55,6 +55,7 @@ use tokio::sync::{Mutex as TokioMutex, MutexGuard as TokioMutexGuard, RwLock as 
 #[cfg(not(target_os = "macos"))]
 const DEFAULT_GUEST_IP: Ipv4Addr = Ipv4Addr::new(192, 168, 64, 2);
 const HOST_DNS_OWNER: &str = "system:host";
+const MACHINE_FORWARD_OWNER_PREFIX: &str = "machine-forward:";
 
 /// Smallest memory a System VM may be given, in MiB.
 const MIN_SYSTEM_VM_MEMORY_MB: u64 = 512;
@@ -1379,7 +1380,7 @@ impl Runtime {
         &self,
         machine_name: &str,
         container_id: &str,
-        bindings: &[(String, u16, u16, String)], // (host_ip, host_port, container_port, protocol)
+        bindings: &[(String, u16, u16, String)], // (host_ip, host_port, guest_port, protocol)
     ) -> Result<()> {
         if bindings.is_empty() {
             return Ok(());
@@ -1867,7 +1868,15 @@ impl Runtime {
     /// exposures and Kubernetes LoadBalancer ports own listeners under keys
     /// carrying a prefix a container ID never has.
     fn is_container_owner(key: &str) -> bool {
-        Self::sandbox_port_key_owner(key).is_none() && !kubernetes_lb::is_owner_key(key)
+        Self::sandbox_port_key_owner(key).is_none()
+            && !kubernetes_lb::is_owner_key(key)
+            && !key.starts_with(MACHINE_FORWARD_OWNER_PREFIX)
+    }
+
+    /// Ownership key for a distro machine's forwards, outside the Docker
+    /// reconciler's container namespace and System VM teardown lifecycle.
+    pub fn machine_forward_owner(machine: &str) -> String {
+        format!("{MACHINE_FORWARD_OWNER_PREFIX}{machine}")
     }
 
     /// Registers DNS entries for a container.

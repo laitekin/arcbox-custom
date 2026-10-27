@@ -40,6 +40,19 @@ impl Drop for BlockingVsockShutdown {
 }
 
 impl BlockingVsockTransport {
+    /// Duplicates the connected socket for a dedicated writer. Callers must
+    /// keep exactly one frame reader and serialize all frame writes.
+    pub fn try_clone(&self) -> io::Result<Self> {
+        Ok(Self {
+            stream: Some(
+                self.stream
+                    .as_ref()
+                    .ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected))?
+                    .try_clone()?,
+            ),
+        })
+    }
+
     /// Returns a handle whose drop interrupts blocking send/receive operations.
     pub fn shutdown_handle(&self) -> io::Result<BlockingVsockShutdown> {
         self.stream

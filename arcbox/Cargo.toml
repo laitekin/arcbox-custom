@@ -357,6 +357,19 @@ strip = true
 inherits = "release"
 debug = true
 
+# Local host development: keep release runtime semantics with cheaper codegen.
+[profile.dev-fast]
+inherits = "release"
+opt-level = 1
+lto = false
+codegen-units = 16
+incremental = true
+debug = 1
+strip = false
+
+[profile.dev-fast.package."*"]
+opt-level = 2
+
 [profile.dev]
 # Faster incremental builds
 incremental = true

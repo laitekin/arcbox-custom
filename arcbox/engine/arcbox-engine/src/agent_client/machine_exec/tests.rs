@@ -62,6 +62,93 @@ async fn start(
     (output, input, guest)
 }
 
+async fn start_blocking() -> (
+    ExecSessionOutput,
+    mpsc::Sender<ExecSessionInput>,
+    UnixStream,
+) {
+    let (host, guest) = std::os::unix::net::UnixStream::pair().unwrap();
+    guest.set_nonblocking(true).unwrap();
+    let mut client = AgentClient::from_fd_blocking(3, host.into_raw_fd()).unwrap();
+    // Admission has separate cross-transport tests. Exercise the session I/O.
+    client.protocol_admitted = true;
+    let mut guest = UnixStream::from_std(guest).unwrap();
+    write_window(&mut guest, STDIN_WINDOW).await;
+    let (input, input_rx) = mpsc::channel(4);
+    let output = client
+        .machine_exec_session(MachineExecRequest::default(), input_rx)
+        .await
+        .unwrap();
+    assert_eq!(
+        read_frame(&mut guest).await.0,
+        MessageType::MachineExecRequest as u32
+    );
+    (output, input, guest)
+}
+
+#[tokio::test]
+async fn blocking_exec_streams_input_and_output_and_finishes() {
+    let (mut output, input, mut guest) = start_blocking().await;
+    input
+        .send(ExecSessionInput::Stdin(b"hv stdin".to_vec()))
+        .await
+        .unwrap();
+    assert_eq!(
+        read_frame(&mut guest).await,
+        (MessageType::MachineExecInput as u32, b"hv stdin".to_vec())
+    );
+    write_output(&mut guest, data(64 * 1024)).await;
+    write_output(
+        &mut guest,
+        MachineExecOutput {
+            done: true,
+            exit_code: 7,
+            ..Default::default()
+        },
+    )
+    .await;
+    assert_eq!(output.recv().await.unwrap().unwrap().data.len(), 64 * 1024);
+    assert_eq!(output.recv().await.unwrap().unwrap().exit_code, 7);
+    assert!(output.recv().await.is_none());
+}
+
+#[tokio::test]
+async fn dropping_blocking_exec_interrupts_idle_io_without_waiting_for_deadline() {
+    let (output, _input, mut guest) = start_blocking().await;
+    drop(output);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), guest.read(&mut [0]))
+            .await
+            .expect("idle blocking read must be cancelled")
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn cancelling_blocking_exec_before_the_stdin_window_closes_the_connection() {
+    let (host, guest) = std::os::unix::net::UnixStream::pair().unwrap();
+    guest.set_nonblocking(true).unwrap();
+    let mut client = AgentClient::from_fd_blocking(3, host.into_raw_fd()).unwrap();
+    client.protocol_admitted = true;
+    let mut guest = UnixStream::from_std(guest).unwrap();
+    let (_input, input_rx) = mpsc::channel(1);
+    let mut opening =
+        Box::pin(client.machine_exec_session(MachineExecRequest::default(), input_rx));
+    tokio::select! {
+        _ = &mut opening => panic!("guest has not granted its window"),
+        frame = read_frame(&mut guest) => assert_eq!(frame.0, MessageType::MachineExecRequest as u32),
+    }
+    drop(opening);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), guest.read(&mut [0]))
+            .await
+            .expect("cancelled opening must close")
+            .unwrap(),
+        0
+    );
+}
+
 /// One host frame as the guest reads it: `(type, payload)`.
 async fn read_frame(guest: &mut UnixStream) -> (u32, Vec<u8>) {
     let mut header = [0u8; 8];

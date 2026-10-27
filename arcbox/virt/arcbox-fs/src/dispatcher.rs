@@ -28,6 +28,7 @@ mod file_ops;
 mod lookup_attrs;
 mod mapping_xattr;
 mod nodes;
+mod readonly;
 #[cfg(test)]
 mod tests;
 mod types;
@@ -121,6 +122,11 @@ impl FuseDispatcher {
             response.write_error(ctx.unique, libc::ENOSYS);
             return Ok(response.finish());
         };
+
+        if self.config.read_only && readonly::mutates(opcode, body) {
+            response.write_error(ctx.unique, libc::EROFS);
+            return Ok(response.finish());
+        }
 
         tracing::debug!(
             "FUSE: {:?} nodeid={} unique={}",

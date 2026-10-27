@@ -111,6 +111,7 @@ pub(super) async fn import(
         memory_mb,
         disk_gb: archived.disk_gb,
         kernel: None,
+        initrd: None,
         cmdline: None,
         block_devices: Vec::new(),
         rootfs: Some(rootfs::rootfs_for(runtime, &image).await?),

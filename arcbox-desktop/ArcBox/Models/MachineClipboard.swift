@@ -1,5 +1,6 @@
 import ArcBoxClient
 import Foundation
+import GRPCCore
 
 /// Copies text between the Mac's clipboard and the clipboard of a machine's
 /// X11 desktop (a VNC session, for example).

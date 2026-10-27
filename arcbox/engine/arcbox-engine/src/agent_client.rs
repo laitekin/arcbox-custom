@@ -11,6 +11,7 @@
 mod cancellation;
 mod machine_exec;
 mod sandbox_stream;
+mod session_io;
 mod shutdown;
 mod storage_check;
 mod storage_health;
@@ -137,7 +138,8 @@ impl AgentClient {
     ///
     /// Use for synchronous RPCs or the HV backend's AF_UNIX socketpair.
     /// The HV blocking path avoids tokio/kqueue stalls during connection retries.
-    /// The blocking transport rejects streaming RPCs.
+    /// Machine exec/TCP sessions use dedicated blocking I/O workers; other
+    /// streaming RPCs still require the async transport.
     pub fn from_fd_blocking(cid: u32, fd: std::os::unix::io::RawFd) -> Result<Self> {
         let transport = unsafe { BlockingVsockTransport::from_raw_fd(fd) }
             .map_err(|e| EngineError::Machine(format!("invalid vsock fd: {e}")))?;

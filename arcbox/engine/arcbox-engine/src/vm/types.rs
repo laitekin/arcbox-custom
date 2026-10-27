@@ -135,6 +135,8 @@ pub struct VmConfig {
     pub memory_mb: u64,
     /// Kernel path.
     pub kernel: Option<String>,
+    /// Initial ramdisk loaded alongside the kernel, when required.
+    pub initrd: Option<String>,
     /// Kernel command line.
     pub cmdline: Option<String>,
     /// Shared directories for `VirtioFS`.
@@ -184,6 +186,7 @@ impl Default for VmConfig {
             cpus: arcbox_hypervisor::default_vm_cpu_count(),
             memory_mb: 4096,
             kernel: None,
+            initrd: None,
             cmdline: None,
             shared_dirs: Vec::new(),
             block_devices: Vec::new(),

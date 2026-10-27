@@ -172,6 +172,7 @@ fn sample_machine(cpus: u32, memory_mb: u64, kernel: &str, cmdline: &str) -> Mac
         memory_mb,
         disk_gb: 50,
         kernel: Some(kernel.to_string()),
+        initrd: None,
         cmdline: Some(cmdline.to_string()),
         block_devices: vec![
             crate::vm::BlockDeviceConfig {

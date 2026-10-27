@@ -105,6 +105,51 @@ client capable of sending privileged mutations.
 
 ## Local E2E (no root)
 
+### Ad-hoc development clients
+
+The installed release helper deliberately rejects ad-hoc builds. For local
+development, start a separate helper with explicit, process-lifetime grants:
+`--development-peer UID:CDHash` (repeat for the daemon and CLI). The CDHash is
+reported by `/usr/bin/codesign -d --verbose=4 <binary>`. Grant the bundled
+executables, not the unsigned build inputs: embedding may re-sign them.
+
+Set `ARCBOX_HELPER_SOCKET` to an absolute path in a directory owned by that
+UID with mode `0700`. This mode never uses the production launchd socket and
+refuses an existing socket. Each accepted connection must have the granted
+UID **and** an audit-token-bound signature matching an exact granted CDHash.
+There is no PID fallback or debug bypass for development grants. Rebuilding
+a client invalidates its grant until the helper is restarted with its new
+hash. The production Team ID policy is unchanged.
+
+Run the helper as root only when testing actual DNS/route mutations; version
+and authentication tests need no root. Build the desktop development bundle
+with `ARCBOX_HELPER_SOCKET` pointing at that private socket: it uses the
+separate `arcbox-dev.local` resolver domain. Do not replace the installed
+production helper or disable its signature checks.
+
+After building the bundle, run the foreground launcher from a terminal:
+
+```sh
+sudo sh scripts/start-development-helper.sh /absolute/ArcBox.app /absolute/private/helper.sock
+```
+
+Both arguments must match the development build. Create the private directory
+as the normal user with mode `0700` before building. The launcher verifies the
+bundled binaries and pins their current code hashes; it does not run packet
+capture or replace the installed service. Leave that terminal open and start
+the development app. For CLI diagnostics, pass the same `ARCBOX_HELPER_SOCKET`
+environment variable to the bundled `abctl --profile development doctor`.
+Root execution is still required for real host network changes, and a rebuilt
+ad-hoc daemon can separately require macOS Keychain consent for saved proxy
+credentials. Build success alone proves neither host network readiness nor
+Keychain access.
+
+Validation: `cargo test -p arcbox-helper --test development_peer_test` checks
+that the explicitly pinned live process connects and an unpinned process is
+rejected. Run it with `--release` as well to exercise the shipped build mode.
+
+### Filesystem mutation sandbox
+
 Debug builds honour `ARCBOX_HELPER_TEST_ROOT`. When set, privileged paths are
 rewritten under that directory so the real helper binary can be exercised
 without touching the live system:

@@ -146,6 +146,9 @@ pub struct CreateArgs {
     /// Custom kernel path (for advanced users / testing)
     #[arg(long)]
     pub kernel: Option<String>,
+    /// Initial ramdisk for the custom kernel
+    #[arg(long, requires = "kernel")]
+    pub initrd: Option<String>,
     /// Custom kernel command line (for advanced users / testing)
     #[arg(long)]
     pub cmdline: Option<String>,
@@ -297,6 +300,7 @@ async fn execute_create(args: CreateArgs) -> Result<()> {
             mounts,
             ssh_public_key: String::new(),
             kernel: args.kernel.clone().unwrap_or_default(),
+            initrd: args.initrd.clone().unwrap_or_default(),
             cmdline: args.cmdline.clone().unwrap_or_default(),
             image: args.image.clone().unwrap_or_default(),
             isolated: args.isolated,
@@ -569,6 +573,7 @@ async fn execute_inspect(args: InspectArgs) -> Result<()> {
         "bridge_ip_address": Some(machine.network.bridge_ip_address.clone()).filter(|ip| !ip.is_empty()),
         "dns_name": Some(machine.network.dns_name.clone()).filter(|name| !name.is_empty()),
         "kernel": machine.os.kernel.clone(),
+        "initrd": Some(machine.os.initrd.clone()).filter(|v| !v.is_empty()),
         "distro": machine.os.distro.clone(),
         "distro_version": machine.os.version.clone(),
         "isolated": machine.isolated,

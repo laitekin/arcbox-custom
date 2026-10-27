@@ -2,7 +2,8 @@
 //!
 //! This module provides the FUSE server that handles filesystem requests
 //! from the guest VM. On Darwin, the native VZ framework handles virtio-fs,
-//! so this is primarily used for Linux KVM.
+//! so this server serves the custom HV backend and Linux KVM. Read-only shares
+//! are enforced in the dispatcher, including writable DAX requests.
 //!
 //! The [`FsServer`] implements [`arcbox_virtio::fs::FuseRequestHandler`] to
 //! integrate with the VirtIO-FS device.
@@ -102,6 +103,7 @@ impl FsServer {
 
         // Initialize dispatcher using cache profile timeouts
         let dispatcher_config = DispatcherConfig {
+            read_only: self.config.read_only,
             entry_timeout: self.config.cache_profile.entry_timeout().as_secs(),
             attr_timeout: self.config.cache_profile.attr_timeout().as_secs(),
         };
@@ -206,6 +208,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let config = FsConfig {
             tag: "test".to_string(),
+            read_only: false,
             source: temp.path().to_string_lossy().to_string(),
             num_threads: 1,
             writeback_cache: false,
@@ -240,6 +243,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let config = FsConfig {
             tag: "test".to_string(),
+            read_only: false,
             source: temp.path().to_string_lossy().to_string(),
             num_threads: 1,
             writeback_cache: false,
@@ -289,6 +293,7 @@ mod tests {
     fn test_server_not_started_error() {
         let config = FsConfig {
             tag: "test".to_string(),
+            read_only: false,
             source: "/tmp".to_string(),
             num_threads: 1,
             writeback_cache: false,

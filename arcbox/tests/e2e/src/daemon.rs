@@ -10,7 +10,6 @@
 //! logs never collide with a developer's `~/.arcbox` daemon and multiple
 //! harnesses can run in parallel.
 
-use std::fs::File;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -44,6 +43,7 @@ pub fn host_mounts(data_dir: &Path) -> HostMountLayout {
 }
 
 /// Launch parameters for a daemon under test.
+#[derive(Clone)]
 pub struct DaemonConfig {
     /// Path to the `arcbox-daemon` binary; signed in place on spawn when
     /// it lacks the virtualization entitlement.
@@ -113,6 +113,7 @@ pub struct DaemonHandle {
     data_dir: PathBuf,
     log_path: PathBuf,
     phase_marks: PhaseMarks,
+    spawn_config: DaemonConfig,
 }
 
 impl DaemonHandle {
@@ -120,6 +121,7 @@ impl DaemonHandle {
     /// `--data-dir` and `--foreground`, capturing stdout/stderr to
     /// `harness-daemon.log` inside the data directory.
     pub fn spawn(config: DaemonConfig) -> Result<Self> {
+        let spawn_config = config.clone();
         assert_isolated(&config.data_dir)?;
         ensure_signed(&config.binary)?;
         std::fs::create_dir_all(&config.data_dir)
@@ -129,8 +131,11 @@ impl DaemonHandle {
         // captures the process's stdout/stderr (panics, early failures that
         // precede logging init).
         let log_path = config.data_dir.join("harness-daemon.log");
-        let log =
-            File::create(&log_path).with_context(|| format!("creating {}", log_path.display()))?;
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .with_context(|| format!("opening {}", log_path.display()))?;
         let stderr = log.try_clone()?;
 
         let mut command = Command::new(&config.binary);
@@ -176,7 +181,17 @@ impl DaemonHandle {
             data_dir: config.data_dir,
             log_path,
             phase_marks: PhaseMarks::default(),
+            spawn_config,
         })
+    }
+
+    /// Stops this owned test daemon before editing its isolated on-disk
+    /// configuration, then starts it again with the same launch contract.
+    pub fn restart_with(&mut self, edit: impl FnOnce(&Path) -> Result<()>) -> Result<()> {
+        self.terminate()?;
+        edit(&self.data_dir)?;
+        *self = Self::spawn(self.spawn_config.clone())?;
+        Ok(())
     }
 
     /// Setup-phase timings observed during [`Self::wait_ready`].

@@ -87,6 +87,13 @@ mod platform {
                 force_poweroff_after(grace);
             }
             ShutdownStrategy::DistroInit => {
+                // The boot shim lazily detaches the mounts backing the
+                // overlay root. Distro shutdown only sees the overlay,
+                // so flush all superblocks before asking init to tear
+                // down the agent and power off. Otherwise newly staged
+                // files can survive as empty inodes on the data volume.
+                // SAFETY: sync has no arguments or memory preconditions.
+                unsafe { libc::sync() };
                 match run_distro_poweroff() {
                     Ok(command) => {
                         tracing::info!(command, "Shutdown: asked the machine's init to power off");

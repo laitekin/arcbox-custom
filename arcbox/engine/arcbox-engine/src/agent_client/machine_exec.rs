@@ -21,11 +21,11 @@ use arcbox_connect::v1::{
     MachineTcpConnectRequest, TerminalSize,
 };
 use arcbox_constants::wire::MessageType;
-use arcbox_transport::vsock::{VsockReceiver, VsockSender};
 use buffa::Message;
 use bytes::Bytes;
 use tokio::sync::{Semaphore, mpsc};
 
+use super::session_io::{self, Receiver as VsockReceiver, Sender as VsockSender};
 use super::{AgentClient, wire};
 use crate::error::{EngineError, Result};
 
@@ -308,21 +308,19 @@ impl AgentClient {
             self.connect().await?;
         }
         self.require_agent_protocol().await?;
-        self.transport
-            .async_send(request)
+        let (mut sender, mut receiver) =
+            session_io::split(self.transport).map_err(|source| EngineError::Transport {
+                context: "failed to split exec session transport",
+                source,
+            })?;
+        sender
+            .send(request)
             .await
             .map_err(|source| EngineError::Transport {
                 context: "failed to send exec session request",
                 source,
             })?;
 
-        let (sender, mut receiver) =
-            self.transport
-                .into_split()
-                .map_err(|source| EngineError::Transport {
-                    context: "failed to split exec session transport",
-                    source,
-                })?;
         let stdin_window = match next_frame(&mut receiver, response_type).await? {
             Frame::StdinWindow(bytes) => Arc::new(StdinWindow::new(bytes)?),
             Frame::Output { .. } => {

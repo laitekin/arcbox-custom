@@ -26,6 +26,7 @@ SKIP_RUST_BUILD ?= 1
 SKIP_RESOURCES ?= 0
 SKIP_XCODE_EMBED ?= 0
 ARCBOX_STAGE_RESOURCES ?= 0
+ARCBOX_REUSE_RESOURCES ?= false
 XCODE_AD_HOC_SIGN ?= 1
 ARCBOX_PROFILE ?=
 # Optional manually started development helper with isolated arcbox-dev.local
@@ -37,7 +38,8 @@ ARCBOX_APP_DISPLAY_NAME ?=
 DAEMON_SIGN_IDENTITY ?=
 REQUIRE_GUEST_AGENTS ?= 0
 ARCBOX_HOST_TARGET_DIR ?= $(abspath .build/ArcBoxHost)
-ARCBOX_HOST_BIN_DIR ?= $(ARCBOX_HOST_TARGET_DIR)/release
+ARCBOX_HOST_CARGO_PROFILE ?= release
+ARCBOX_HOST_BIN_DIR ?= $(ARCBOX_HOST_TARGET_DIR)/$(ARCBOX_HOST_CARGO_PROFILE)
 NOTARIZE ?= 0
 VERSION ?=
 SPARKLE_FEED_URL ?=
@@ -45,13 +47,15 @@ PROVISIONING_PROFILE ?=
 
 ABCTL := $(ARCBOX_DIR)/target/release/abctl
 
-.PHONY: build build-runnable check-runnable-prerequisites build-runnable-rust test audit-accessibility resolve format lint lint-xtask test-xtask generate-xcodeproj generate-arcbox-protobuf bump-arcbox verify-arcbox-protobuf test-protoc-plugins build-rust prefetch dmg dmg-signed dmg-release clean help
+.PHONY: build build-runnable build-fast build-ui check-ui-prerequisites check-runnable-prerequisites build-runnable-rust test audit-accessibility resolve format lint lint-xtask test-xtask generate-xcodeproj generate-arcbox-protobuf bump-arcbox verify-arcbox-protobuf test-protoc-plugins build-rust prefetch dmg dmg-signed dmg-release clean help
 
 help:
 	@echo "ArcBox build targets:"
 	@echo ""
 	@echo "  make build          Build the Swift app (Debug, no Rust binaries)"
 	@echo "  make build-runnable Build a complete signed ArcBox Dev app for debugging"
+	@echo "  make build-fast     Build ArcBox Dev with incremental dev-fast host Rust binaries"
+	@echo "  make build-ui       Rebuild Swift using an existing complete ArcBox Dev bundle"
 	@echo "  make test           Build and run the test suite"
 	@echo "  make audit-accessibility"
 	@echo "                         Run Xcode's accessibility audit over the signed ArcBox Dev app"
@@ -160,6 +164,8 @@ XCODEBUILD_FLAGS = \
 	$(if $(XCODE_SIGN_IDENTITY),CODE_SIGN_IDENTITY='$(XCODE_SIGN_IDENTITY)' CODE_SIGN_STYLE=Manual,$(if $(filter 1,$(XCODE_AD_HOC_SIGN)),CODE_SIGN_IDENTITY=-)) \
 	SKIP_RUST_BUILD=$(SKIP_RUST_BUILD) \
 	ARCBOX_STAGE_RESOURCES=$(ARCBOX_STAGE_RESOURCES) \
+	ARCBOX_REUSE_RESOURCES=$(ARCBOX_REUSE_RESOURCES) \
+	ARCBOX_HOST_CARGO_PROFILE='$(ARCBOX_HOST_CARGO_PROFILE)' \
 	ARCBOX_CARGO_BIN_DIR='$(CARGO_BIN_DIR)' \
 	$(if $(NODE_BIN_DIR),ARCBOX_NODE_BIN_DIR='$(NODE_BIN_DIR)') \
 	$(if $(ARCBOX_HOST_BIN_DIR),ARCBOX_HOST_BIN_DIR='$(ARCBOX_HOST_BIN_DIR)') \
@@ -190,11 +196,26 @@ RUNNABLE_BUILD_VARS = \
 	ARCBOX_PRODUCT_NAME=ArcBox \
 	ARCBOX_APP_DISPLAY_NAME='ArcBox Dev' \
 	ARCBOX_HOST_TARGET_DIR='$(ARCBOX_HOST_TARGET_DIR)' \
+	ARCBOX_HOST_CARGO_PROFILE='$(ARCBOX_HOST_CARGO_PROFILE)' \
 	ARCBOX_HOST_BIN_DIR='$(ARCBOX_HOST_BIN_DIR)' \
 	DAEMON_SIGN_IDENTITY='$(SIGN_IDENTITY)'
 
 build-runnable: check-runnable-prerequisites
 	$(MAKE) build $(RUNNABLE_BUILD_VARS)
+
+build-fast:
+	$(MAKE) build-runnable ARCBOX_USE_LOCAL_RUNTIME=1 ARCBOX_HOST_CARGO_PROFILE=dev-fast
+
+# Keep the same DerivedData, app identity and signing as a complete build.
+# The post-build phase still repairs profile metadata and verifies the payload.
+build-ui: check-ui-prerequisites
+	$(MAKE) build $(RUNNABLE_BUILD_VARS) SKIP_RUST_BUILD=1 ARCBOX_REUSE_RESOURCES=true
+
+check-ui-prerequisites:
+	@test -x .build/DerivedData-Runnable/Build/Products/Debug/ArcBox.app/Contents/MacOS/ArcBox || { \
+		echo "ERROR: UI-only builds require a complete ArcBox Dev bundle. Run make run-fast from the repository root first." >&2; exit 1; }
+	@test -n "$(SIGN_IDENTITY)" || { echo "ERROR: SIGN_IDENTITY is required." >&2; exit 1; }
+	@test -n "$(CARGO_BIN_DIR)" || { echo "ERROR: cargo is required for the cached bundle verification tool." >&2; exit 1; }
 
 # Xcode's accessibility audit (XCUIApplication.performAccessibilityAudit) over
 # the main flows of the launched app. Runs the ArcBoxUITests scheme against the
@@ -307,6 +328,8 @@ test-protoc-plugins: verify-arcbox-protobuf
 ## ── Prerequisites ─────────────────────────────────────
 
 build-runnable-rust:
+	@case '$(ARCBOX_HOST_CARGO_PROFILE)' in release|dev-fast) ;; \
+		*) echo "ERROR: ARCBOX_HOST_CARGO_PROFILE must be release or dev-fast." >&2; exit 1 ;; esac
 	@if [ -z "$(ARCBOX_DIR)" ]; then \
 		echo "ERROR: arcbox repo not found at ../arcbox" >&2; \
 		echo "  Set ARCBOX_DIR=/path/to/arcbox" >&2; \
@@ -327,7 +350,7 @@ build-runnable-rust:
 	cd "$(ARCBOX_DIR)" && $(HOST_RUST_ENV) cargo build \
 		--manifest-path "$(ARCBOX_DIR)/Cargo.toml" \
 		-p arcbox-cli -p arcbox-helper -p arcbox-daemon \
-		--release
+		--profile $(ARCBOX_HOST_CARGO_PROFILE)
 	@for binary in abctl arcbox-helper arcbox-daemon; do \
 		if [ ! -x "$(ARCBOX_HOST_BIN_DIR)/$$binary" ]; then \
 			echo "ERROR: missing host binary: $(ARCBOX_HOST_BIN_DIR)/$$binary" >&2; \

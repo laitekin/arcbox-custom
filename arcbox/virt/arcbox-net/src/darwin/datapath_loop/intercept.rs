@@ -79,14 +79,16 @@ pub(super) fn process_inbound_cmd(
 ) {
     match cmd {
         InboundCommand::TcpAccepted {
-            host_port, stream, ..
+            container_port,
+            stream,
+            ..
         } => {
             tracing::debug!(
                 "Inbound TCP accepted: guest_port={} peer={:?}",
-                host_port,
+                container_port,
                 stream.peer_addr().ok(),
             );
-            tcp_bridge.initiate_inbound(host_port, stream, guest_ip, gateway_ip);
+            tcp_bridge.initiate_inbound(container_port, stream, guest_ip, gateway_ip);
         }
         cmd @ InboundCommand::UdpReceived { .. } => {
             let mac = guest_mac.unwrap_or([0xFF; 6]);

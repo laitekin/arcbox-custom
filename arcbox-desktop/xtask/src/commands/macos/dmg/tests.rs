@@ -4,6 +4,56 @@ use super::{
     write_binaries_fragment,
 };
 
+#[test]
+fn resource_reuse_requires_a_development_bundle() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = dir.path().join("ArcBox.app");
+    std::fs::create_dir_all(app.join("Contents")).unwrap();
+    let mut info = plist::Dictionary::new();
+    info.insert("CFBundleIdentifier".into(), "com.arcboxlabs.desktop".into());
+    info.insert("CFBundleExecutable".into(), "ArcBox".into());
+    plist::Value::Dictionary(info)
+        .to_file_xml(app.join("Contents/Info.plist"))
+        .unwrap();
+
+    let error = super::stage_resources_command(crate::MacosStageResourcesArgs {
+        app_bundle: app,
+        dev: false,
+        reuse_resources: true,
+        arcbox_dir: None,
+        sign: "-".into(),
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("only supported for development"));
+}
+
+#[test]
+fn resource_reuse_checks_payload_without_resolving_runtime_checkout() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = dir.path().join("ArcBox.app");
+    std::fs::create_dir_all(app.join("Contents")).unwrap();
+    let mut info = plist::Dictionary::new();
+    info.insert(
+        "CFBundleIdentifier".into(),
+        "com.arcboxlabs.desktop.dev".into(),
+    );
+    info.insert("CFBundleExecutable".into(), "ArcBox".into());
+    plist::Value::Dictionary(info)
+        .to_file_xml(app.join("Contents/Info.plist"))
+        .unwrap();
+
+    let error = super::stage_resources_command(crate::MacosStageResourcesArgs {
+        app_bundle: app,
+        dev: true,
+        reuse_resources: true,
+        arcbox_dir: Some(dir.path().join("missing-runtime")),
+        sign: "-".into(),
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("payload is incomplete"));
+    assert!(format!("{error:#}").contains("Contents/MacOS/ArcBox"));
+}
+
 fn launch_agent_fixture(profile: BundleProfile) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let launch_agents = dir.path().join("Contents/Library/LaunchAgents");
@@ -107,6 +157,40 @@ fn development_launch_agent_uses_private_helper_and_preserves_path() {
         .path()
         .join("Contents/Library/LaunchAgents/com.arcboxlabs.desktop.dev.daemon.plist");
     let plist = plist::Value::from_file(&path).unwrap();
+    super::verify_launch_agent_arguments(
+        plist.as_dictionary().unwrap(),
+        BundleProfile::Development,
+    )
+    .unwrap();
+    let mut malformed = plist.as_dictionary().unwrap().clone();
+    malformed
+        .get_mut("EnvironmentVariables")
+        .unwrap()
+        .as_dictionary_mut()
+        .unwrap()
+        .remove("ARCBOX_HELPER_SOCKET");
+    assert!(super::verify_launch_agent_arguments(&malformed, BundleProfile::Development).is_err());
+    let mut missing_dns = plist.as_dictionary().unwrap().clone();
+    missing_dns.insert(
+        "ProgramArguments".into(),
+        plist::Value::Array(
+            BundleProfile::Development
+                .daemon_arguments()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        ),
+    );
+    assert!(
+        super::verify_launch_agent_arguments(&missing_dns, BundleProfile::Development).is_err()
+    );
+    assert!(
+        super::verify_launch_agent_arguments(
+            plist.as_dictionary().unwrap(),
+            BundleProfile::Production
+        )
+        .is_err()
+    );
     assert_eq!(
         plist.as_dictionary().unwrap()["ProgramArguments"],
         plist::Value::Array(
@@ -136,6 +220,11 @@ fn development_launch_agent_uses_private_helper_and_preserves_path() {
 
     rewrite_launch_agent_plist_with_helper(dir.path(), BundleProfile::Development, None).unwrap();
     let plist = plist::Value::from_file(path).unwrap();
+    super::verify_launch_agent_arguments(
+        plist.as_dictionary().unwrap(),
+        BundleProfile::Development,
+    )
+    .unwrap();
     assert!(
         !plist.as_dictionary().unwrap()["EnvironmentVariables"]
             .as_dictionary()

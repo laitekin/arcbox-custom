@@ -62,6 +62,9 @@ struct MacosStageResourcesArgs {
     /// Stage the development profile (`~/.arcbox-dev`).
     #[arg(long)]
     dev: bool,
+    /// Reuse an existing development payload; only repair metadata and verify.
+    #[arg(long, env = "ARCBOX_REUSE_RESOURCES", requires = "dev")]
+    reuse_resources: bool,
     /// Path to the arcbox checkout (auto-discovered when unset).
     #[arg(long, env = "ARCBOX_DIR")]
     arcbox_dir: Option<PathBuf>,

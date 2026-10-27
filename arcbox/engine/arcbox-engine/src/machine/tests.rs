@@ -6,6 +6,111 @@ fn test_machine_manager(data_dir: &std::path::Path) -> MachineManager {
 }
 
 #[tokio::test]
+async fn custom_initrd_survives_create_reload_and_clone() {
+    let dir = tempdir().unwrap();
+    let initrd = dir.path().join("distribution.initrd");
+    std::fs::write(&initrd, b"initramfs fixture").unwrap();
+    let initrd = initrd.to_string_lossy().into_owned();
+    let manager = test_machine_manager(dir.path());
+    manager
+        .create(MachineConfig {
+            name: "official-kernel".into(),
+            disk_gb: 1,
+            kernel: Some("/official/kernel".into()),
+            initrd: Some(initrd.clone()),
+            distro: Some("ubuntu".into()),
+            rootfs: Some(MachineRootfs {
+                path: dir.path().join("rootfs.squashfs"),
+                format: "squashfs".into(),
+                shim: Some(BootShim {
+                    kernel: dir.path().join("fallback-kernel"),
+                    rootfs: dir.path().join("shim.erofs"),
+                }),
+            }),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let original = manager.get("official-kernel").unwrap();
+    assert_eq!(original.kernel.as_deref(), Some("/official/kernel"));
+    assert_eq!(original.initrd.as_deref(), Some(initrd.as_str()));
+    let archive = dir.path().join("official-kernel.tar.zst");
+    assert!(
+        manager
+            .export("official-kernel", &archive, test_image_manifest(), None)
+            .unwrap_err()
+            .to_string()
+            .contains("does not yet preserve custom kernel/initrd")
+    );
+    assert!(!archive.exists());
+    assert_eq!(
+        manager
+            .vm_manager
+            .config_for_test(&original.vm_id)
+            .unwrap()
+            .initrd
+            .as_ref(),
+        Some(&initrd)
+    );
+    drop(manager);
+    let restored = test_machine_manager(dir.path());
+    let machine = restored.get("official-kernel").unwrap();
+    assert_eq!(machine.initrd.as_ref(), Some(&initrd));
+    assert_eq!(
+        restored
+            .vm_manager
+            .config_for_test(&machine.vm_id)
+            .unwrap()
+            .initrd
+            .as_ref(),
+        Some(&initrd)
+    );
+    restored
+        .clone_machine("official-kernel", "official-clone")
+        .unwrap();
+    let cloned = restored.get("official-clone").unwrap();
+    assert_eq!(cloned.initrd.as_ref(), Some(&initrd));
+    assert_eq!(
+        restored
+            .vm_manager
+            .config_for_test(&cloned.vm_id)
+            .unwrap()
+            .initrd
+            .as_ref(),
+        Some(&initrd)
+    );
+}
+
+#[tokio::test]
+async fn initrd_requires_an_explicit_kernel_and_existing_file() {
+    let dir = tempdir().unwrap();
+    let manager = test_machine_manager(dir.path());
+    let mut config = MachineConfig {
+        name: "invalid-initrd".into(),
+        initrd: Some(dir.path().join("missing").to_string_lossy().into_owned()),
+        ..Default::default()
+    };
+    assert!(
+        manager
+            .create(config.clone())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("explicit kernel")
+    );
+    config.kernel = Some("/kernel".into());
+    assert!(
+        manager
+            .create(config)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("initrd is not")
+    );
+    assert!(manager.list().is_empty());
+}
+
+#[tokio::test]
 async fn storage_reservation_blocks_direct_mutations_but_allows_recovery_machine() {
     let dir = tempdir().unwrap();
     let manager = Arc::new(test_machine_manager(dir.path()));
@@ -1151,6 +1256,10 @@ fn an_isolated_machine_shares_only_its_own_directory_and_user_mounts() {
     let own = machine_dir.join(ISOLATED_SHARE_DIR);
     assert_eq!(shares[0].host_path, own.to_string_lossy());
     assert!(own.is_dir(), "the share is made for the guest to mount");
+    assert!(
+        shares[0].read_only,
+        "the guest cannot replace its boot payload"
+    );
     assert!(shares[1].read_only);
     assert!(
         !shares

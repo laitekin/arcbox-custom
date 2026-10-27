@@ -146,16 +146,16 @@ impl HostEgress {
     ) {
         use super::inbound_relay::InboundCommand;
         if let InboundCommand::UdpReceived {
-            host_port,
+            container_port,
             data,
             reply_tx,
             ..
         } = cmd
         {
-            // Use host_port (the Docker-exposed port on the guest), not
-            // container_port (the port inside the container).
+            // Callers supply the guest destination explicitly. Docker passes
+            // its guest-published port; machine forwards pass their service port.
             self.inbound
-                .inject_udp(host_port, &data, reply_tx, guest_mac);
+                .inject_udp(container_port, &data, reply_tx, guest_mac);
         }
     }
 
@@ -180,6 +180,34 @@ impl HostEgress {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inbound_udp_uses_the_guest_destination_not_the_host_listener_port() {
+        let (tx, mut rx) = mpsc::channel(4);
+        let (reply_tx, _reply_rx) = mpsc::channel(4);
+        let mut egress = HostEgress::new(
+            Ipv4Addr::new(10, 0, 2, 1),
+            [2; 6],
+            Ipv4Addr::new(10, 0, 2, 2),
+            tx,
+            CancellationToken::new(),
+            1500,
+        );
+        egress.handle_inbound_command(
+            crate::inbound_relay::InboundCommand::UdpReceived {
+                host_port: 18053,
+                container_port: 8053,
+                data: b"probe".to_vec(),
+                reply_tx,
+                client_addr: "127.0.0.1:55555".parse().unwrap(),
+            },
+            [4; 6],
+        );
+        let frame = rx.try_recv().unwrap();
+        let udp = ETH_HEADER_LEN + 20;
+        assert_eq!(u16::from_be_bytes([frame[udp + 2], frame[udp + 3]]), 8053);
+        assert_eq!(&frame[udp + 8..], b"probe");
+    }
 
     #[test]
     fn test_host_egress_creation() {

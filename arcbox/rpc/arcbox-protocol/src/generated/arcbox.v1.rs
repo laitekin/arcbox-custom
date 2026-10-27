@@ -2095,6 +2095,10 @@ pub struct CreateMachineRequest {
     /// Locale the machine presents (`en_US.UTF-8`); empty keeps the image's.
     #[prost(string, tag = "16")]
     pub locale: ::prost::alloc::string::String,
+    /// Optional initial ramdisk for a distribution-provided kernel.
+    /// Field 11 remains reserved; this is a new, additive boot option.
+    #[prost(string, tag = "17")]
+    pub initrd: ::prost::alloc::string::String,
 }
 /// Request that targets a machine's guest agent.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -2537,6 +2541,9 @@ pub struct MachineOs {
     /// Kernel version.
     #[prost(string, tag = "3")]
     pub kernel: ::prost::alloc::string::String,
+    /// Initial ramdisk path, when configured.
+    #[prost(string, tag = "4")]
+    pub initrd: ::prost::alloc::string::String,
 }
 /// Request to execute a command in a machine.
 #[derive(Clone, PartialEq, ::prost::Message)]

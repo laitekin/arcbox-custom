@@ -358,17 +358,7 @@ async fn setup_port_forwarding_from_inspect(
         );
     }
 
-    let rules: Vec<_> = bindings
-        .iter()
-        .map(|b| {
-            (
-                b.host_ip.clone(),
-                b.host_port,
-                b.container_port,
-                b.protocol.clone(),
-            )
-        })
-        .collect();
+    let rules: Vec<_> = bindings.iter().map(|b| b.guest_relay_binding()).collect();
 
     let machine_name = state.runtime.default_machine_name();
     if let Err(e) = state

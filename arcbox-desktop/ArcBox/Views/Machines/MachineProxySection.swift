@@ -1,4 +1,5 @@
 import ArcBoxClient
+import GRPCCore
 import SwiftUI
 
 /// The machine's outbound proxy. Picking applies at once — running machines

@@ -24,6 +24,9 @@ pub struct PersistedMachine {
     /// Kernel path.
     #[serde(default)]
     pub kernel: Option<String>,
+    /// Optional initial ramdisk. Older machine records boot without one.
+    #[serde(default)]
+    pub initrd: Option<String>,
     /// Kernel command line.
     #[serde(default)]
     pub cmdline: Option<String>,
@@ -157,6 +160,7 @@ impl From<&MachineInfo> for PersistedMachine {
             memory_mb: info.memory_mb,
             disk_gb: info.disk_gb,
             kernel: info.kernel.clone(),
+            initrd: info.initrd.clone(),
             cmdline: info.cmdline.clone(),
             block_devices: info.block_devices.clone(),
             distro: info.distro.clone(),
@@ -363,6 +367,7 @@ mod tests {
             memory_mb: 4096,
             disk_gb: 50,
             kernel: Some("/path/to/kernel".to_string()),
+            initrd: None,
             cmdline: Some("console=ttyS0".to_string()),
             block_devices: Vec::new(),
             distro: None,
@@ -414,6 +419,7 @@ mod tests {
                 memory_mb: 2048,
                 disk_gb: 20,
                 kernel: None,
+                initrd: None,
                 cmdline: None,
                 block_devices: Vec::new(),
                 distro: None,
@@ -458,6 +464,7 @@ mod tests {
             memory_mb: 2048,
             disk_gb: 20,
             kernel: None,
+            initrd: None,
             cmdline: None,
             block_devices: Vec::new(),
             distro: None,
@@ -500,6 +507,7 @@ mod tests {
             memory_mb: 2048,
             disk_gb: 20,
             kernel: None,
+            initrd: None,
             cmdline: None,
             block_devices: Vec::new(),
             distro: None,
@@ -557,6 +565,7 @@ mod tests {
             memory_mb: 2048,
             disk_gb: 20,
             kernel: None,
+            initrd: None,
             cmdline: None,
             block_devices: Vec::new(),
             distro: None,

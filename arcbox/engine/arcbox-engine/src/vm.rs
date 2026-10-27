@@ -234,7 +234,7 @@ impl VmManager {
                 .map(PathBuf::from)
                 .unwrap_or_default(),
             kernel_cmdline: entry.config.cmdline.clone().unwrap_or_default(),
-            initrd_path: None,
+            initrd_path: entry.config.initrd.as_ref().map(PathBuf::from),
             // The Rosetta share can only be hosted on VZ; `config.rosetta` is
             // the host capability. Gating here (rather than baking it into the
             // config) keeps it correct after `set_backend` switches HV<->VZ.

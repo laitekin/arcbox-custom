@@ -5,6 +5,8 @@ use crate::fuse::{FuseInHeader, FuseOutHeader};
 /// Configuration for the FUSE dispatcher.
 #[derive(Debug, Clone)]
 pub struct DispatcherConfig {
+    /// Enforced at dispatch, regardless of guest mount flags or uid.
+    pub read_only: bool,
     /// Entry cache timeout in seconds.
     pub entry_timeout: u64,
     /// Attribute cache timeout in seconds.
@@ -14,6 +16,7 @@ pub struct DispatcherConfig {
 impl Default for DispatcherConfig {
     fn default() -> Self {
         Self {
+            read_only: false,
             entry_timeout: 10,
             attr_timeout: 10,
         }

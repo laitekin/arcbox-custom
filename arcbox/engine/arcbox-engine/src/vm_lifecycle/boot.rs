@@ -479,6 +479,7 @@ impl LifecycleShared {
             memory_mb: desired_vm.memory_mb,
             disk_gb: desired_vm.disk_gb,
             kernel: Some(boot.kernel),
+            initrd: None,
             cmdline: Some(boot.cmdline),
             block_devices,
             rootfs: None,

@@ -57,6 +57,7 @@ impl MachineManager {
                 cpus: info.cpus,
                 memory_mb: info.memory_mb,
                 kernel: info.kernel.clone(),
+                initrd: info.initrd.clone(),
                 cmdline: info.cmdline.clone(),
                 shared_dirs: vm_shared_dirs(
                     &self.data_dir,
@@ -149,6 +150,7 @@ fn cloned_record(
         memory_mb: src.memory_mb,
         disk_gb: src.disk_gb,
         kernel: src.kernel.clone(),
+        initrd: src.initrd.clone(),
         cmdline: src.cmdline.as_deref().map(|cmdline| {
             identity_cmdline(
                 &cmdline_with_hostname(cmdline, hostname),

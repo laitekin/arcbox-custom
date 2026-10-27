@@ -43,6 +43,7 @@ pub mod archive;
 mod clone;
 mod host_hold;
 pub mod identity;
+mod isolated_share;
 mod maintenance;
 #[cfg(target_os = "macos")]
 mod serial;
@@ -80,6 +81,8 @@ pub struct MachineInfo {
     pub disk_gb: u64,
     /// Kernel path.
     pub kernel: Option<String>,
+    /// Initial ramdisk path for distribution-provided kernels.
+    pub initrd: Option<String>,
     /// Kernel command line.
     pub cmdline: Option<String>,
     /// Block devices (e.g., EROFS rootfs image).
@@ -200,6 +203,8 @@ pub struct MachineConfig {
     pub disk_gb: u64,
     /// Kernel path.
     pub kernel: Option<String>,
+    /// Initial ramdisk path for distribution-provided kernels.
+    pub initrd: Option<String>,
     /// Kernel command line.
     pub cmdline: Option<String>,
     /// Block devices (e.g., EROFS rootfs image).
@@ -253,6 +258,7 @@ impl Default for MachineConfig {
             memory_mb: 4096,
             disk_gb: 50,
             kernel: None,
+            initrd: None,
             cmdline: None,
             block_devices: Vec::new(),
             rootfs: None,
@@ -372,8 +378,9 @@ pub const ISOLATED_SHARE_DIR: &str = "guest-share";
 ///
 /// An isolated machine gets neither `/Users` nor `/private`, and its
 /// `arcbox` tag shares only [`ISOLATED_SHARE_DIR`] in `machine_dir`, so the
-/// guest keeps a place for its logs without seeing other machines' files or
-/// the daemon's. If that directory cannot be made, the tag is left out
+/// guest can execute its private boot agent without seeing other machines'
+/// files or the daemon's. The share is read-only; logs use the serial console.
+/// If that directory cannot be made, the tag is left out
 /// rather than falling back to the data directory.
 fn vm_shared_dirs(
     data_dir: &std::path::Path,
@@ -384,11 +391,12 @@ fn vm_shared_dirs(
     let mut shared_dirs = Vec::new();
     if isolated {
         let own = machine_dir.join(ISOLATED_SHARE_DIR);
-        match std::fs::create_dir_all(&own) {
-            Ok(()) => shared_dirs.push(SharedDirConfig::new(
-                own.to_string_lossy().to_string(),
-                TAG_ARCBOX,
-            )),
+        match std::fs::create_dir_all(machine_dir).and_then(|()| isolated_share::directory(&own)) {
+            Ok(()) => {
+                let mut share = SharedDirConfig::new(own.to_string_lossy().to_string(), TAG_ARCBOX);
+                share.read_only = true;
+                shared_dirs.push(share);
+            }
             Err(e) => tracing::warn!(
                 path = %own.display(),
                 error = %e,
@@ -589,6 +597,7 @@ impl MachineManager {
                 cpus: persisted.cpus,
                 memory_mb: persisted.memory_mb,
                 kernel: persisted.kernel.clone(),
+                initrd: persisted.initrd.clone(),
                 cmdline: persisted.cmdline.clone(),
                 shared_dirs: vm_shared_dirs(
                     &data_dir,
@@ -615,6 +624,7 @@ impl MachineManager {
                     memory_mb: persisted.memory_mb,
                     disk_gb: persisted.disk_gb,
                     kernel: persisted.kernel.clone(),
+                    initrd: persisted.initrd.clone(),
                     cmdline: persisted.cmdline,
                     block_devices: persisted.block_devices.clone(),
                     distro: persisted.distro.clone(),
@@ -743,6 +753,16 @@ impl MachineManager {
         if let Some(locale) = &config.locale {
             identity::validate_locale(locale)?;
         }
+        if let Some(initrd) = &config.initrd {
+            if config.kernel.is_none() {
+                return Err(EngineError::config("an initrd requires an explicit kernel"));
+            }
+            if !std::fs::metadata(initrd).is_ok_and(|metadata| metadata.is_file()) {
+                return Err(EngineError::config(format!(
+                    "initrd is not a readable file: {initrd}"
+                )));
+            }
+        }
         // An isolated machine is distinguishable from every other from the
         // start: its own NIC address and machine ID.
         let (nic_mac, machine_id) = if config.isolated {
@@ -861,6 +881,7 @@ impl MachineManager {
             cpus: config.cpus,
             memory_mb: config.memory_mb,
             kernel: kernel.clone(),
+            initrd: config.initrd.clone(),
             cmdline: cmdline.clone(),
             shared_dirs,
             block_devices: block_devices.clone(),
@@ -882,6 +903,7 @@ impl MachineManager {
             memory_mb: config.memory_mb,
             disk_gb: config.disk_gb,
             kernel,
+            initrd: config.initrd,
             cmdline,
             block_devices,
             distro: config.distro,
@@ -975,6 +997,9 @@ impl MachineManager {
             .get(name)
             .map_or((false, false), |m| (m.distro.is_some(), m.isolated));
 
+        if is_machine_vm && isolated {
+            isolated_share::prepare(&self.data_dir, &self.machines_dir.join(name))?;
+        }
         // Start underlying VM
         let network = machine_network(&self.host_network, name, isolated);
         self.vm_manager.start(&vm_id, network)?;
@@ -2204,6 +2229,7 @@ impl MachineManager {
             memory_mb: 4096,
             disk_gb: 50,
             kernel: None,
+            initrd: None,
             cmdline: None,
             block_devices: Vec::new(),
             distro: None,

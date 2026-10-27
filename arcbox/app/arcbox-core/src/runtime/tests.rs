@@ -698,6 +698,45 @@ fn test_runtime_new_propagates_config_vm_defaults() {
     );
 }
 
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn machine_forwards_survive_container_reconciliation_and_system_vm_retirement() {
+    use arcbox_net::darwin::inbound_relay::{InboundListenerManager, InboundProtocol};
+    let _children = crate::test_support::CHILD_PROCESSES.read().await;
+    let (runtime, _tmp) = networking_test_runtime();
+    let localhost = std::net::Ipv4Addr::LOCALHOST;
+    let (tx, _rx) = tokio::sync::mpsc::channel(4);
+    let mut manager = InboundListenerManager::new(tx);
+    let port = manager
+        .add_rule(localhost, 0, 5901, InboundProtocol::Tcp)
+        .await
+        .unwrap();
+    runtime
+        .adopt_inbound_listener_manager("desktop-guest", manager)
+        .await;
+    let owner = Runtime::machine_forward_owner("desktop-guest");
+    runtime.inbound_rules.write().await.insert(
+        owner.clone(),
+        (
+            "desktop-guest".into(),
+            vec![(localhost, 0, InboundProtocol::Tcp)],
+        ),
+    );
+    assert!(accepting(port).await);
+    assert!(!runtime.registered_container_ids().await.contains(&owner));
+    runtime.retire_system_vm_container_networking().await;
+    assert!(
+        accepting(port).await,
+        "System VM cleanup removed a different machine's forward"
+    );
+    assert!(runtime.inbound_rules.read().await.contains_key(&owner));
+    runtime.stop_port_forwarding_by_id(&owner).await;
+    assert!(
+        !accepting(port).await,
+        "the machine's own cleanup must still release its port"
+    );
+}
+
 #[test]
 fn host_capacity_bounds_system_vm_sizes() {
     let host = super::HostCapacity {

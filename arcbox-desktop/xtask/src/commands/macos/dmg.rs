@@ -1112,11 +1112,10 @@ fn rewrite_launch_agent_plist(app_bundle: &Path, profile: BundleProfile) -> Resu
     rewrite_launch_agent_plist_with_helper(app_bundle, profile, helper_socket.as_deref())
 }
 
-fn rewrite_launch_agent_plist_with_helper(
-    app_bundle: &Path,
+fn launch_agent_arguments(
     profile: BundleProfile,
     helper_socket: Option<&Path>,
-) -> Result<()> {
+) -> Result<Vec<&'static str>> {
     if let Some(socket) = helper_socket {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
@@ -1127,7 +1126,7 @@ fn rewrite_launch_agent_plist_with_helper(
             bail!("{HELPER_SOCKET_ENV} must be an absolute path");
         }
         let parent = socket.parent().context("helper socket has no parent")?;
-        let metadata = std::fs::metadata(parent)
+        let metadata = std::fs::symlink_metadata(parent)
             .with_context(|| format!("reading helper socket directory {}", parent.display()))?;
         let owner = std::fs::metadata(home()).context("reading home directory owner")?;
         if !metadata.is_dir()
@@ -1139,6 +1138,20 @@ fn rewrite_launch_agent_plist_with_helper(
             );
         }
     }
+    let mut arguments = profile.daemon_arguments();
+    if helper_socket.is_some() {
+        // Development explicitly owns a separate resolver domain.
+        arguments.extend(["--dns-domain", "arcbox-dev.local", "--install-dns-resolver"]);
+    }
+    Ok(arguments)
+}
+
+fn rewrite_launch_agent_plist_with_helper(
+    app_bundle: &Path,
+    profile: BundleProfile,
+    helper_socket: Option<&Path>,
+) -> Result<()> {
+    let arguments = launch_agent_arguments(profile, helper_socket)?;
     let launch_agents = app_bundle
         .join("Contents")
         .join("Library")
@@ -1176,11 +1189,6 @@ fn rewrite_launch_agent_plist_with_helper(
         "BundleProgram".into(),
         format!("Contents/Frameworks/{daemon_name}.app/Contents/MacOS/{daemon_name}").into(),
     );
-    let mut arguments = profile.daemon_arguments();
-    if helper_socket.is_some() {
-        // Development must explicitly own a separate resolver domain.
-        arguments.extend(["--dns-domain", "arcbox-dev.local", "--install-dns-resolver"]);
-    }
     dict.insert(
         "ProgramArguments".into(),
         plist::Value::Array(arguments.into_iter().map(Into::into).collect()),
@@ -1245,8 +1253,6 @@ pub fn prepare_resources_command(args: MacosPrepareResourcesArgs) -> Result<()> 
 }
 
 pub fn stage_resources_command(args: MacosStageResourcesArgs) -> Result<()> {
-    let desktop_repo = desktop_repo()?;
-    let arcbox_dir = resolve_arcbox_dir(&desktop_repo, args.arcbox_dir.as_deref())?;
     let profile = BundleProfile::from_dev_flag(args.dev);
     let app_bundle = args
         .app_bundle
@@ -1260,6 +1266,22 @@ pub fn stage_resources_command(args: MacosStageResourcesArgs) -> Result<()> {
     }
     verify_app_identity(&app_bundle, profile)?;
 
+    if args.reuse_resources {
+        if profile != BundleProfile::Development {
+            bail!("resource reuse is only supported for development bundles");
+        }
+        println!("=== Reusing existing ArcBox development resources ===");
+        // Xcode may regenerate Info.plist and copy the production LaunchAgent.
+        // Repair those before Xcode seals the app, without copying/signing assets.
+        inject_profile_key(&app_bundle, profile)?;
+        rewrite_launch_agent_plist(&app_bundle, profile)?;
+        return verify_runnable_bundle(&app_bundle, profile).context(
+            "existing development payload is incomplete; run make run-fast from the repository root",
+        );
+    }
+
+    let desktop_repo = desktop_repo()?;
+    let arcbox_dir = resolve_arcbox_dir(&desktop_repo, args.arcbox_dir.as_deref())?;
     println!("=== Staging ArcBox development resources ===");
     println!("  App bundle  : {}", app_bundle.display());
     println!("  Arcbox dir  : {}", arcbox_dir.display());
@@ -1305,6 +1327,44 @@ fn verify_app_identity(app_bundle: &Path, profile: BundleProfile) -> Result<()> 
         if actual != expected {
             bail!("app {key} must be {expected}, got {actual}");
         }
+    }
+    Ok(())
+}
+
+fn verify_launch_agent_arguments(
+    dictionary: &plist::Dictionary,
+    profile: BundleProfile,
+) -> Result<()> {
+    let arguments = dictionary
+        .get("ProgramArguments")
+        .and_then(plist::Value::as_array)
+        .context("LaunchAgent plist is missing ProgramArguments")?
+        .iter()
+        .map(|value| {
+            value
+                .as_string()
+                .context("LaunchAgent ProgramArguments must contain strings")
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let environment = dictionary
+        .get("EnvironmentVariables")
+        .map(|value| {
+            value
+                .as_dictionary()
+                .context("LaunchAgent EnvironmentVariables must be a dictionary")
+        })
+        .transpose()?;
+    let socket = environment
+        .and_then(|env| env.get(HELPER_SOCKET_ENV))
+        .map(|value| {
+            value
+                .as_string()
+                .context("LaunchAgent helper socket must be a string")
+        })
+        .transpose()?;
+    let expected_arguments = launch_agent_arguments(profile, socket.map(Path::new))?;
+    if arguments != expected_arguments {
+        bail!("LaunchAgent ProgramArguments must be {expected_arguments:?}, got {arguments:?}");
     }
     Ok(())
 }
@@ -1379,21 +1439,7 @@ fn verify_runnable_bundle(app_bundle: &Path, profile: BundleProfile) -> Result<(
             bail!("LaunchAgent {key} must be {expected}, got {actual}");
         }
     }
-    let arguments = launch_agent_dict
-        .get("ProgramArguments")
-        .and_then(plist::Value::as_array)
-        .context("LaunchAgent plist is missing ProgramArguments")?
-        .iter()
-        .map(|value| {
-            value
-                .as_string()
-                .context("LaunchAgent ProgramArguments must contain strings")
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let expected_arguments = profile.daemon_arguments();
-    if arguments != expected_arguments {
-        bail!("LaunchAgent ProgramArguments must be {expected_arguments:?}, got {arguments:?}");
-    }
+    verify_launch_agent_arguments(launch_agent_dict, profile)?;
 
     let boot_version = read_boot_version(&resources.join("assets.lock"))?;
     let boot_dir = resources.join("assets").join(&boot_version);

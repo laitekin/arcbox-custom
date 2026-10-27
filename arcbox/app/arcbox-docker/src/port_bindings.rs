@@ -9,6 +9,20 @@ pub struct PortBindingInfo {
     pub protocol: String,
 }
 
+impl PortBindingInfo {
+    /// The host relay reaches dockerd's published port on the guest. Dockerd
+    /// then performs the second mapping to the container-internal port.
+    #[must_use]
+    pub fn guest_relay_binding(&self) -> (String, u16, u16, String) {
+        (
+            self.host_ip.clone(),
+            self.host_port,
+            self.host_port,
+            self.protocol.clone(),
+        )
+    }
+}
+
 /// Parse port bindings from a Docker container inspect JSON response.
 ///
 /// Extracts `NetworkSettings.Ports` and `HostConfig.PortBindings` into a flat
@@ -137,5 +151,22 @@ mod tests {
         assert_eq!(bindings[0].protocol, "udp");
         assert_eq!(bindings[0].container_port, 53);
         assert_eq!(bindings[0].host_port, 5353);
+        assert_eq!(
+            bindings[0].guest_relay_binding(),
+            (String::new(), 5353, 5353, "udp".into())
+        );
+    }
+
+    #[test]
+    fn relay_reaches_the_guest_publish_before_docker_dnat() {
+        let json = serde_json::json!({"NetworkSettings": {"Ports": {
+            "80/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18080"}]
+        }}});
+        let bindings = parse_port_bindings(&serde_json::to_vec(&json).unwrap());
+        assert_eq!(bindings[0].container_port, 80);
+        assert_eq!(
+            bindings[0].guest_relay_binding(),
+            ("127.0.0.1".into(), 18080, 18080, "tcp".into())
+        );
     }
 }

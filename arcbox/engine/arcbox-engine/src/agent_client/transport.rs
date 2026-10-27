@@ -27,8 +27,8 @@ impl AgentTransport {
         }
     }
 
-    /// Async send — only valid for `Async` variant. Streaming RPCs that
-    /// consume `self` and spawn async tasks must go through the async path.
+    /// Async send — only valid for `Async` variant. Sandbox streams use
+    /// this path; machine sessions use the backend-aware `session_io` adapter.
     pub(super) async fn async_send(
         &mut self,
         data: Bytes,

@@ -100,6 +100,11 @@ from memory. Every new file is added to the index below.
 
 ### Logs
 
+- [2026-10-23 — 私有 Helper 启动后系统 DNS 与容器路由验收通过](logs/2026-10-23-host-network-acceptance.md)
+- [2026-10-23 — 自导入镜像、VNC、双机隔离与开发 Helper 修复验收](logs/2026-10-23-final-acceptance.md)
+- [2026-10-23 — HV/UDP/DNS functional acceptance and remaining DNS capture](logs/2026-10-23-hv-udp-dns-acceptance.md)
+- [2026-10-23 — Isolated machines pass Mac file, proxy-outage and TCP forwarding acceptance](logs/2026-10-23-isolated-machines-e2e.md)
+- [2026-10-23 — Fast local development builds](logs/2026-10-23-fast-development-builds.md)
 - [2026-10-21 — Users can import their own root filesystems as machine images](logs/2026-10-21-machine-image-import.md)
 - [2026-10-21 — Boot assets 0.8.10 restore bind mounts from macOS temporary directories](logs/2026-10-21-boot-0.8.10-private-mountpoint.md)
 - [2026-10-20 — Storage recovery rebinds a moved pair and boots the current recovery init](logs/2026-10-20-storage-recovery-moved-pair.md)

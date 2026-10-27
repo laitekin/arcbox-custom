@@ -13,7 +13,7 @@ use connectrpc::ConnectError;
 
 /// The relay owner of a machine's forwards.
 fn owner(machine: &str) -> String {
-    format!("machine-forward:{machine}")
+    Runtime::machine_forward_owner(machine)
 }
 
 /// The wire forwards as the engine keeps them.

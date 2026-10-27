@@ -283,6 +283,7 @@ impl Vmm {
             let server_config = arcbox_fs::FsConfig {
                 tag: dir.tag.clone(),
                 source: dir.host_path.to_string_lossy().into_owned(),
+                read_only: dir.read_only,
                 ..arcbox_fs::FsConfig::default()
             };
             let mut server = arcbox_fs::FsServer::new(server_config);

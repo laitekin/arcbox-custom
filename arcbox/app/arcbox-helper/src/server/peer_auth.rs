@@ -39,7 +39,6 @@ const ALLOWED_IDENTIFIERS: &[&str] = &[
 // SOL_LOCAL sockopts (sys/un.h / XNU). Not always exposed by libc bindings.
 #[cfg(not(debug_assertions))]
 const LOCAL_PEERPID: libc::c_int = 0x002;
-#[cfg(not(debug_assertions))]
 const LOCAL_PEERTOKEN: libc::c_int = 0x006;
 
 /// Returns `true` if the peer on `stream` is allowed to call privileged RPCs.
@@ -118,14 +117,12 @@ fn peer_pid(stream: &tokio::net::UnixStream) -> Option<i32> {
 }
 
 /// macOS `audit_token_t` — 8 × u32.
-#[cfg(not(debug_assertions))]
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct AuditToken {
     vals: [u32; 8],
 }
 
-#[cfg(not(debug_assertions))]
 impl AuditToken {
     fn zeroed() -> Self {
         Self { vals: [0; 8] }
@@ -143,7 +140,6 @@ impl AuditToken {
 }
 
 /// Peer audit token via `LOCAL_PEERTOKEN` (macOS).
-#[cfg(not(debug_assertions))]
 fn peer_audit_token(stream: &tokio::net::UnixStream) -> Option<AuditToken> {
     use std::os::unix::io::AsRawFd;
 
@@ -179,7 +175,6 @@ fn requirement_string(identifier: &str, team_id: &str) -> String {
 /// Strict validation retains additional bundle-structure checks. Nested-code
 /// recursion is static-only and makes the dynamic API fail with
 /// `errSecCSInvalidFlags`.
-#[cfg(all(target_os = "macos", any(test, not(debug_assertions))))]
 fn dynamic_validation_flags() -> security_framework::os::macos::code_signing::Flags {
     use security_framework::os::macos::code_signing::Flags;
     Flags::STRICT_VALIDATE
@@ -203,6 +198,28 @@ fn check_code_signature_pid(pid: i32, identifier: &str, team_id: &str) -> bool {
 
 #[cfg(not(debug_assertions))]
 fn check_code_signature_audit(token: &AuditToken, identifier: &str, team_id: &str) -> bool {
+    check_requirement_audit(token, &requirement_string(identifier, team_id))
+}
+
+/// Explicit development grants are pinned to a live peer's code hash and
+/// UID. They never fall back to a PID or to the debug-build auth bypass.
+pub(super) fn verify_development(
+    stream: &tokio::net::UnixStream,
+    uid: u32,
+    hashes: &[String],
+) -> bool {
+    if !stream.peer_cred().is_ok_and(|peer| peer.uid() == uid) {
+        return false;
+    }
+    let Some(token) = peer_audit_token(stream) else {
+        return false;
+    };
+    hashes
+        .iter()
+        .any(|hash| check_requirement_audit(&token, &format!("cdhash H\"{hash}\"")))
+}
+
+fn check_requirement_audit(token: &AuditToken, requirement: &str) -> bool {
     use core_foundation::base::TCFType;
     use core_foundation::data::CFData;
     use security_framework::os::macos::code_signing::{GuestAttributes, SecCode, SecRequirement};
@@ -214,7 +231,7 @@ fn check_code_signature_audit(token: &AuditToken, identifier: &str, team_id: &st
     let Ok(code) = SecCode::copy_guest_with_attribues(None, &attrs, Default::default()) else {
         return false;
     };
-    let Ok(req) = requirement_string(identifier, team_id).parse::<SecRequirement>() else {
+    let Ok(req) = requirement.parse::<SecRequirement>() else {
         return false;
     };
     code.check_validity(dynamic_validation_flags(), &req)

@@ -4,8 +4,9 @@
 //! squashfs plus a `manifest.json` — registered in the local image
 //! registry under the user's name, so creating, booting, exporting and
 //! removing a machine never needs to know where its image came from. The
-//! machine still boots ArcBox's kernel and shim; the image only supplies
-//! the root filesystem.
+//! image only supplies the root filesystem. Machines use ArcBox's kernel
+//! by default, or an explicit distribution kernel and initrd; the boot shim
+//! still performs the writable-root and guest-agent handoff.
 //!
 //! An import is staged under `machine-images/.import-*` and renamed into
 //! place only once the squashfs is written and hashed, so a failure or a
@@ -125,17 +126,17 @@ RUN set -e; \
     if command -v apt-get >/dev/null; then \
         export DEBIAN_FRONTEND=noninteractive; \
         apt-get update; \
-        apt-get install -y --no-install-recommends systemd systemd-sysv dbus iproute2 ifupdown isc-dhcp-client ca-certificates; \
+        apt-get install -y --no-install-recommends systemd systemd-sysv dbus iproute2 ifupdown isc-dhcp-client ca-certificates tzdata; \
         rm -rf /var/lib/apt/lists/*; \
     elif command -v apk >/dev/null; then \
-        apk add --no-cache openrc busybox-openrc ifupdown-ng; \
+        apk add --no-cache openrc busybox-openrc ifupdown-ng tzdata; \
         rc-update add networking boot; \
     elif command -v dnf >/dev/null; then \
-        dnf install -y systemd iproute NetworkManager; dnf clean all; \
+        dnf install -y systemd iproute NetworkManager tzdata; dnf clean all; \
     elif command -v zypper >/dev/null; then \
-        zypper --non-interactive install systemd iproute2 wicked; \
+        zypper --non-interactive install systemd iproute2 wicked timezone; \
     elif command -v pacman >/dev/null; then \
-        pacman -Sy --noconfirm systemd iproute2; \
+        pacman -Sy --noconfirm systemd iproute2 tzdata; \
     else \
         echo "no supported package manager to install an init system" >&2; exit 1; \
     fi; \

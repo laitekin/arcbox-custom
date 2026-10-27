@@ -41,7 +41,8 @@ impl MachineManager {
     /// # Errors
     ///
     /// Returns an error if the machine is unknown, is not a stopped distro
-    /// machine, or the archive cannot be written.
+    /// machine, uses an initrd the archive cannot preserve, or the archive
+    /// cannot be written.
     pub fn export(
         &self,
         name: &str,
@@ -57,6 +58,14 @@ impl MachineManager {
             let machine = machines
                 .get(name)
                 .ok_or_else(|| EngineError::not_found(name.to_owned()))?;
+            // Archive manifests do not carry external kernel/initrd assets.
+            // Refuse to silently restore this machine with the default kernel.
+            if machine.initrd.is_some() {
+                return Err(EngineError::config(
+                    "export does not yet preserve custom kernel/initrd assets; \
+                     use a local clone and retain the boot files",
+                ));
+            }
             let disk = stopped_data_disk(machine)?;
             std::fs::create_dir_all(&self.machines_dir)?;
             let snapshot = tempfile::Builder::new()
