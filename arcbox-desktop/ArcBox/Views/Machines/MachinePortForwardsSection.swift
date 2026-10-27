@@ -1,4 +1,5 @@
 import AppKit
+import ArcBoxClient
 import SwiftUI
 
 /// Machine Info › Forwarded ports: ports on this Mac's 127.0.0.1 that reach
@@ -11,6 +12,7 @@ struct MachinePortForwardsSection: View {
     @State private var guestPort = ""
     @State private var hostPort = ""
     @State private var isSaving = false
+    @State private var isOpeningDesktop = false
     @State private var error: String?
 
     var body: some View {
@@ -34,7 +36,11 @@ struct MachinePortForwardsSection: View {
                         .font(.body.monospacedDigit())
                         .textSelection(.enabled)
                         Spacer()
-                        if forward.guestPort == 5900 || forward.guestPort == 5901 {
+                        if !forward.udp {
+                            Button("Open in Browser") { Task { await openDesktop(forward) } }
+                                .disabled(!machine.isRunning || client == nil || isOpeningDesktop)
+                        }
+                        if !forward.udp && (forward.guestPort == 5900 || forward.guestPort == 5901) {
                             Button("Open VNC") { open("vnc://localhost:\(forward.hostPort)") }
                         }
                         Button("Copy") { copy("localhost:\(forward.hostPort)") }
@@ -76,6 +82,21 @@ struct MachinePortForwardsSection: View {
             .infoSectionStyle()
         }
         .task(id: machine.id) { error = nil }
+        .onChange(of: machine.isRunning) { _, running in
+            if !running { WebDesktopServer.shared.stop(machine: machine.id) }
+        }
+    }
+
+    private func openDesktop(_ forward: MachinePortForwardViewModel) async {
+        guard let client else { return }
+        isOpeningDesktop = true
+        defer { isOpeningDesktop = false }
+        do {
+            let url = try await WebDesktopServer.shared.open(machine: machine, forward: forward, client: client)
+            NSWorkspace.shared.open(url)
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 
     private func add() async {

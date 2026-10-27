@@ -133,6 +133,9 @@ targets:
           - Local.xcconfig
           - Version.xcconfig
         buildPhase: none
+      - path: WebDesktop
+        type: folder
+        buildPhase: resources
       - path: CHANGELOG.md
         buildPhase: resources
       - path: arcbox.version

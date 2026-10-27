@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ArcBox · 网页桌面</title><link rel="stylesheet" href="desktop.css"></head>
+<body>
+<header><div class="identity"><strong>ArcBox</strong><span id="machine">网页桌面</span><span id="connection" role="status">正在连接…</span></div>
+<nav aria-label="桌面工具"><button id="network">网络检测</button><button id="fullscreen">全屏</button>
+<details id="settings"><summary>更多</summary><div class="settings-panel">
+<label><input id="sync" type="checkbox" checked> 同步文字 / 图片</label>
+<label><input id="terminal" type="checkbox"> 终端快捷键（⌘C/V → Ctrl+Shift+C/V）</label>
+<div class="clipboard-actions"><button id="copy">复制到 Mac</button><button id="paste">粘贴到机器</button></div>
+<label>X 显示 :<input id="display" type="number" min="0" max="99" value="1"></label>
+<p>直接点击桌面输入；中英文切换沿用 Mac 设置。</p><button id="disconnect">断开连接</button>
+</div></details></nav></header>
+<main id="screen" aria-label="虚拟机桌面"></main>
+<textarea id="input" class="ime-target" aria-label="远程桌面键盘输入" rows="1" autocomplete="off" autocapitalize="off" spellcheck="false" tabindex="-1"></textarea>
+<div id="status" class="toast" role="status" hidden></div>
+<dialog id="network-dialog" aria-labelledby="network-title"><div class="dialog-title"><h2 id="network-title">机器网络检测</h2><button id="network-close" aria-label="关闭网络检测">关闭</button></div>
+<p class="muted">在当前虚拟机内检测出口 IP、DNS 和 HTTPS；结果不代表 Mac 的网络。</p>
+<pre id="network-result" role="status">正在检测…</pre><button id="network-retry">重新检测</button></dialog>
+<dialog id="password-dialog"><form id="password-form"><h2>连接桌面</h2><p>请输入机器的 VNC 密码</p><input id="password" type="password" autocomplete="off" aria-label="VNC 密码" required><button type="submit">连接</button></form></dialog>
+<script type="module" src="desktop.js"></script>
+</body></html>

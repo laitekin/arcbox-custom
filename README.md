@@ -53,6 +53,40 @@ make run
 
 `make run` 默认只为本机开发使用 ad-hoc 签名，明确启用本地 runtime 模式以接受本仓库的二开修改。原有固定上游 tag、干净 worktree 的构建模式仍保留在桌面构建脚本中。
 
+### 快速开发
+
+在仓库根目录执行：
+
+| 命令 | 用途 |
+| --- | --- |
+| `make run-fast` | 编译并启动：Swift Debug + Rust 宿主端 `dev-fast` |
+| `make run-ui` | 仅重新编译并启动 Swift 界面，复用 App 中已有后端和资源 |
+| `make build-fast` / `make build-ui` | 对应模式只构建，不启动 App |
+| `make run` | 保留原流程：Swift Debug + Rust Release + 资源准备 |
+
+先运行一次 `make run-fast`（或原来的 `make run`），之后只改 Swift 界面用
+`make run-ui`。修改 Rust、protobuf、启动资源或打包配置后，重新用
+`make run-fast`；protobuf 仍需执行下文的生成步骤。仅界面模式不会更新这些内容，
+也不会自动下载缺失资源；已有 App 不完整时会报错并提示完整构建。
+
+`dev-fast` 使用增量编译、`opt-level=1`、关闭 LTO、16 个 codegen units，
+第三方依赖使用 `opt-level=2`；保留 Release 的 panic/断言语义和行号调试信息。
+根目录入口把宿主产物放在 `arcbox/target/dev-fast`，与 `target/release` 分开缓存。
+Linux guest agents 仍使用原来的 Release 交叉编译，未变化时由 Cargo 复用缓存。
+首次快速构建需要建立新缓存；不要在日常修改后执行 `clean`。
+
+两种模式共用 `.build/DerivedData-Runnable`。仅界面模式跳过后端编译、资源复制和
+资源重新签名，保留启动配置修复、已有资源校验及 Xcode 的 App 签名。
+正式 Release profile、DMG 打包和发布入口保持不变。
+
+需要调试或启动健康检查时，可组合脚本选项：
+
+```sh
+cd arcbox-desktop
+ARCBOX_USE_LOCAL_RUNTIME=1 SIGN_IDENTITY=- ./script/build_and_run.sh --fast --verify
+SIGN_IDENTITY=- ./script/build_and_run.sh --ui-only --debug
+```
+
 ```sh
 cd arcbox-desktop
 make test-xtask lint-xtask
@@ -70,6 +104,8 @@ make -C arcbox-desktop generate-arcbox-protobuf ARCBOX_DIR=../arcbox   # Swift �
 `cargo xtask protocol verify` 会按 `arcbox.version` 拉取上游 tag 的 proto，因此在本二开仓库中不适用；以上述本地生成结果为准。
 
 ## 二开功能速览
+
+- 网页桌面：机器 Info › Forwarded ports › **Open in Browser**，内置 noVNC；支持 Mac ↔ X11 文字/PNG 剪贴板、⌘C/⌘V、终端快捷键模式和 Mac 拼音组合输入。客体需安装 xclip，支持范围与验证方法见 [网页桌面说明](arcbox-desktop/WebDesktop/README.md)。
 
 - 代理库：设置 › 网络 › Import SOCKS URL，粘贴带可选账号密码的 URL，测试后保存；支持多套代理的编辑、测试和删除。默认代理可选择已保存的代理。
 - 每台机器独立代理：新建机器的 Network 或已有机器 Info › Outbound proxy 中选择 Follow default、Direct 或某个已保存代理。运行中可切换，修改代理也会更新引用它的机器；[完整设计与验证](arcbox/docs/architecture/proxy-library-machines.md)。

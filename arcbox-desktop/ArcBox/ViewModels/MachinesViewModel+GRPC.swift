@@ -63,6 +63,9 @@ extension MachinesViewModel {
             for i in viewModels.indices where transitioning.contains(viewModels[i].id) {
                 viewModels[i].isTransitioning = true
             }
+            for previous in machines where !viewModels.contains(where: { $0.id == previous.id && $0.isRunning }) {
+                WebDesktopServer.shared.stop(machine: previous.id)
+            }
             machines = viewModels
             loadState = .loaded
             refreshError = nil
@@ -227,6 +230,7 @@ extension MachinesViewModel {
         request.forwards = forwards.map(\.proto)
         do {
             _ = try await client.machines.setPortForwards(request, options: ArcBoxClient.defaultCallOptions)
+            WebDesktopServer.shared.stop(machine: id)
             await loadMachineDetails(id, client: client)
             return nil
         } catch {
