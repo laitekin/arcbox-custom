@@ -1119,6 +1119,7 @@ name = "arcbox-storage"
 version = "0.10.4"
 dependencies = [
  "arcbox-atomic-file",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",

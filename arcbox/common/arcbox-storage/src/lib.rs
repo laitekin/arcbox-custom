@@ -192,18 +192,27 @@ impl StorageManifest {
     /// # Errors
     /// Returns an error for missing, replaced, unreadable, or unrecognized images.
     pub fn verify_images(&self, directory: &Path) -> Result<()> {
+        self.verified_images(directory).map(|_| ())
+    }
+
+    /// Refreshes host observations only while they still match the recorded
+    /// identities. Unlike recovery rebinding, this cannot authorize a new inode.
+    fn verified_images(&self, directory: &Path) -> Result<Self> {
+        let mut verified = self.clone();
         for role in [VolumeRole::Data, VolumeRole::Metadata] {
             let volume = self.volume(role);
             let path = directory.join(&volume.filename);
-            if ImageIdentity::read(&path)? != volume.image {
+            let image = ImageIdentity::read(&path)?;
+            if !image.matches(volume.image) {
                 return Err(Error::RecoveryRequired(format!(
                     "{} was replaced; restore the paired images",
                     path.display()
                 )));
             }
             self.verify_volume(role, &path)?;
+            verified.volume_mut(role).image = image;
         }
-        Ok(())
+        Ok(verified)
     }
 
     /// Verifies both filesystems in `directory` and ignores host file

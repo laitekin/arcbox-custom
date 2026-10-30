@@ -105,7 +105,7 @@ pub fn prepare_pair(
     lock.lock()?;
     match fs::read(&path) {
         Ok(bytes) => {
-            let manifest: StorageManifest = serde_json::from_slice(&bytes)?;
+            let mut manifest: StorageManifest = serde_json::from_slice(&bytes)?;
             manifest.validate()?;
             if manifest.data.filename != filename(data)?
                 || manifest.metadata.filename != filename(metadata)?
@@ -115,6 +115,13 @@ pub fn prepare_pair(
                 ));
             }
             publish_images(&manifest, directory)?;
+            // Publication verified both recorded file identities and filesystem
+            // UUIDs. Only now may a legacy device identity gain a volume UUID.
+            let current = manifest.verified_images(directory)?;
+            if current != manifest {
+                current.save(&path)?;
+                manifest = current;
+            }
             grow_image(data, data_size)?;
             grow_image(metadata, metadata_size)?;
             return Ok(manifest);
@@ -211,12 +218,13 @@ fn publish_images(manifest: &StorageManifest, directory: &Path) -> Result<()> {
         let record = manifest.volume(role);
         let destination = directory.join(&record.filename);
         match ImageIdentity::read(&destination) {
-            Ok(identity) if identity == record.image => {
+            Ok(identity) if identity.matches(record.image) => {
                 manifest.verify_volume(role, &destination)?;
             }
             Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
                 let staged = staging_path(directory, record.filesystem_uuid);
-                if record.state != VolumeState::New || ImageIdentity::read(&staged)? != record.image
+                if record.state != VolumeState::New
+                    || !ImageIdentity::read(&staged)?.matches(record.image)
                 {
                     return Err(Error::RecoveryRequired(format!(
                         "{} has no authorized staged image",
@@ -241,7 +249,7 @@ fn publish_images(manifest: &StorageManifest, directory: &Path) -> Result<()> {
     for record in [&manifest.data, &manifest.metadata] {
         let staged = staging_path(directory, record.filesystem_uuid);
         match ImageIdentity::read(&staged) {
-            Ok(identity) if identity == record.image => fs::remove_file(staged)?,
+            Ok(identity) if identity.matches(record.image) => fs::remove_file(staged)?,
             Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {}
             Ok(_) => {
                 return Err(Error::RecoveryRequired(format!(

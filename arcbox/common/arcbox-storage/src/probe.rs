@@ -14,10 +14,13 @@ const PROVISION_MAGIC: &[u8; 16] = b"ARCBOX-NEW-VOL-1";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ImageIdentity {
-    /// Host filesystem device.
+    /// Host filesystem device (a mount-local fallback for older manifests).
     pub device: u64,
     /// Host inode.
     pub inode: u64,
+    /// Persistent host volume identity; macOS device numbers can change on reboot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume_uuid: Option<Uuid>,
 }
 
 impl ImageIdentity {
@@ -36,8 +39,64 @@ impl ImageIdentity {
         Ok(Self {
             device: metadata.dev(),
             inode: metadata.ino(),
+            #[cfg(target_os = "macos")]
+            volume_uuid: Some(host_volume_uuid(path)?),
+            #[cfg(not(target_os = "macos"))]
+            volume_uuid: None,
         })
     }
+
+    /// Compares persistent volume and inode identities, retaining strict device
+    /// checks until an older manifest has been verified and upgraded.
+    #[must_use]
+    pub fn matches(self, other: Self) -> bool {
+        self.inode == other.inode
+            && match (self.volume_uuid, other.volume_uuid) {
+                (Some(left), Some(right)) => left == right,
+                _ => self.device == other.device,
+            }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn host_volume_uuid(path: &Path) -> Result<Uuid> {
+    use std::os::fd::AsRawFd;
+
+    let file = File::open(path)?;
+    let mut attributes = libc::attrlist {
+        bitmapcount: libc::ATTR_BIT_MAP_COUNT,
+        reserved: 0,
+        commonattr: 0,
+        volattr: libc::ATTR_VOL_INFO | libc::ATTR_VOL_UUID,
+        dirattr: 0,
+        fileattr: 0,
+        forkattr: 0,
+    };
+    // getattrlist packs a four-byte length followed by the 16-byte UUID.
+    let mut buffer = [0_u8; 20];
+    // SAFETY: the fd remains open; attributes and buffer are writable, valid
+    // for their declared sizes, and no pointers are retained by fgetattrlist.
+    let result = unsafe {
+        libc::fgetattrlist(
+            file.as_raw_fd(),
+            std::ptr::from_mut(&mut attributes).cast(),
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            0,
+        )
+    };
+    if result != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    let length = u32::from_ne_bytes(buffer[..4].try_into().unwrap());
+    let uuid = Uuid::from_bytes(buffer[4..].try_into().unwrap());
+    if length != 20 || uuid.is_nil() {
+        return Err(Error::RecoveryRequired(format!(
+            "{} has no persistent host volume identity",
+            path.display()
+        )));
+    }
+    Ok(uuid)
 }
 
 /// Reads an existing filesystem UUID without interpreting absence as blankness.

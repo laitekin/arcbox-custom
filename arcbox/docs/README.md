@@ -100,6 +100,7 @@ from memory. Every new file is added to the index below.
 
 ### Logs
 
+- [2026-10-30 — macOS 设备编号变化不再误判 Docker 磁盘被替换](logs/2026-10-30-storage-volume-identity.md)
 - [2026-10-23 — 私有 Helper 启动后系统 DNS 与容器路由验收通过](logs/2026-10-23-host-network-acceptance.md)
 - [2026-10-23 — 自导入镜像、VNC、双机隔离与开发 Helper 修复验收](logs/2026-10-23-final-acceptance.md)
 - [2026-10-23 — HV/UDP/DNS functional acceptance and remaining DNS capture](logs/2026-10-23-hv-udp-dns-acceptance.md)

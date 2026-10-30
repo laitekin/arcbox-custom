@@ -9,6 +9,103 @@ use crate::*;
 
 const IMAGE_SIZE: u64 = 128 * 1024;
 
+#[test]
+fn persistent_volume_identity_survives_device_renumbering_but_rejects_replacements() {
+    let original = ImageIdentity {
+        device: 17,
+        inode: 42,
+        volume_uuid: Some(Uuid::new_v4()),
+    };
+    let renumbered = ImageIdentity {
+        device: 19,
+        ..original
+    };
+    assert!(original.matches(renumbered));
+    assert!(!original.matches(ImageIdentity {
+        inode: 43,
+        ..renumbered
+    }));
+    assert!(!original.matches(ImageIdentity {
+        volume_uuid: Some(Uuid::new_v4()),
+        ..original
+    }));
+
+    let legacy: ImageIdentity = serde_json::from_str(r#"{"device":17,"inode":42}"#).unwrap();
+    assert!(legacy.matches(original));
+    assert!(!legacy.matches(renumbered));
+    assert_eq!(
+        serde_json::to_value(legacy).unwrap(),
+        serde_json::json!({"device":17,"inode":42})
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn verified_legacy_pair_gains_persistent_volume_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let (data, metadata) = pair(dir.path());
+    let mut legacy = prepare_pair(&data, &metadata, IMAGE_SIZE, IMAGE_SIZE).unwrap();
+    legacy.data.image.volume_uuid = None;
+    legacy.metadata.image.volume_uuid = None;
+    legacy.save(&manifest_path(&data)).unwrap();
+
+    let upgraded = prepare_pair(&data, &metadata, IMAGE_SIZE, IMAGE_SIZE).unwrap();
+    assert!(
+        upgraded
+            .data
+            .image
+            .volume_uuid
+            .is_some_and(|uuid| !uuid.is_nil())
+    );
+    assert_eq!(
+        upgraded.data.image.volume_uuid,
+        upgraded.metadata.image.volume_uuid
+    );
+    assert_eq!(
+        StorageManifest::load(&manifest_path(&data)).unwrap(),
+        upgraded
+    );
+    assert_eq!(upgraded.data.filesystem_uuid, legacy.data.filesystem_uuid);
+    assert_eq!(upgraded.layout, legacy.layout);
+
+    // A legacy record with a changed device still needs explicit recovery.
+    legacy.data.image.device ^= 1;
+    legacy.save(&manifest_path(&data)).unwrap();
+    let before = fs::read(manifest_path(&data)).unwrap();
+    assert!(prepare_pair(&data, &metadata, IMAGE_SIZE, IMAGE_SIZE).is_err());
+    assert_eq!(fs::read(manifest_path(&data)).unwrap(), before);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn preparing_pair_after_device_renumbering_keeps_images_and_rejects_wrong_volume() {
+    let dir = tempfile::tempdir().unwrap();
+    let (data, metadata) = pair(dir.path());
+    let original = prepare_pair(&data, &metadata, IMAGE_SIZE, IMAGE_SIZE).unwrap();
+    let before = [fs::read(&data).unwrap(), fs::read(&metadata).unwrap()];
+    let mut renumbered = original.clone();
+    renumbered.data.image.device ^= 1;
+    renumbered.metadata.image.device ^= 1;
+    renumbered.save(&manifest_path(&data)).unwrap();
+    verify_pair(&data, &metadata).unwrap();
+    assert_eq!(
+        prepare_pair(&data, &metadata, IMAGE_SIZE, IMAGE_SIZE).unwrap(),
+        original
+    );
+    assert_eq!(
+        [fs::read(&data).unwrap(), fs::read(&metadata).unwrap()],
+        before
+    );
+
+    let mut foreign = original;
+    foreign.metadata.image.volume_uuid = Some(Uuid::new_v4());
+    foreign.save(&manifest_path(&data)).unwrap();
+    let saved = fs::read(manifest_path(&data)).unwrap();
+    assert!(verify_pair(&data, &metadata).is_err());
+    assert!(prepare_pair(&data, &metadata, IMAGE_SIZE, IMAGE_SIZE).is_err());
+    assert_eq!(fs::read(manifest_path(&data)).unwrap(), saved);
+}
+
 fn pair(directory: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
     (
         directory.join("docker.img"),
